@@ -1,0 +1,6 @@
+{
+  "name": "Monte Napoleone 1974",
+  "description": "Multi-region luxury Italian menswear e-commerce storefront and RBAC management backend with localized pricing, regional inventory, DHL shipping, localized payments, and a WordPress-style media library.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

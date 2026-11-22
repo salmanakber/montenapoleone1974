@@ -1,0 +1,446 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  calculateB2BMoqSummary,
+  calculateBulkPurchaseDiscount,
+  calculateCheckoutTotals,
+  DEFAULT_BULK_DISCOUNT_SETTINGS,
+  DEFAULT_PROMO_POPUP_SETTINGS,
+  evaluateStockState,
+  formatRegionalPrice,
+  generateBankReference,
+  getAvailablePaymentMethods,
+  hasPermission,
+  OWNER_PERMISSIONS,
+  DEFAULT_STAFF_PERMISSIONS,
+  parseProductImportCsv,
+  resolveOrderDiscounts,
+  toCsv,
+  calculateTailoringSurcharge,
+  resolveVariantPriceAndStock,
+  computeBulkPriceAdjustment,
+  computeDefaultSizeMeasurements,
+  calculateB2BTierDiscount,
+  estimateB2BUnitRate,
+  isWooCommerceCsvHeader,
+  normalizeBillingAddress,
+  parseWooCommerceCsv,
+  parseWordPressCategoriesXml,
+} from './commerce.ts';
+import { buildOrderEmailTemplate } from './emailTemplates.ts';
+import type { OrderRecord } from '../types.ts';
+
+test('formats prices cleanly per regional currency rules', () => {
+  assert.equal(formatRegionalPrice(200, 'en'), '$200.00');
+  assert.match(formatRegionalPrice(1699, 'no'), /1\s?699 kr/);
+  assert.match(formatRegionalPrice(179, 'it'), /€179,00/);
+  assert.match(formatRegionalPrice(4890000, 'vn'), /4\.890\.000\s?₫/);
+});
+
+test('evaluates regional inventory states accurately including pre-order', () => {
+  assert.equal(evaluateStockState(18, false), 'in_stock');
+  assert.equal(evaluateStockState(3, false), 'low_stock');
+  assert.equal(evaluateStockState(0, true), 'preorder');
+  assert.equal(evaluateStockState(0, false), 'out_of_stock');
+});
+
+test('calculates checkout totals with MONTE10 discount and free DHL economy threshold', () => {
+  const noRegion = {
+    code: 'no' as const,
+    vat_rate: 0.25,
+    free_shipping_threshold: 2500,
+    dhl_base_rate: 149,
+    dhl_express_rate: 299,
+  };
+
+  // Below threshold
+  const res1 = calculateCheckoutTotals({
+    items: [{ unitPrice: 1699, quantity: 1 }],
+    region: noRegion,
+    shippingMethod: 'dhl_economy',
+    discountCode: 'MONTE10',
+  });
+  assert.equal(res1.subtotal, 1699);
+  assert.equal(res1.discountAmount, 170);
+  assert.equal(res1.shippingCost, 149);
+  assert.equal(res1.freeShippingApplied, false);
+  assert.equal(res1.total, 1699 - 170 + 149);
+
+  // Above threshold -> free DHL economy
+  const res2 = calculateCheckoutTotals({
+    items: [{ unitPrice: 1699, quantity: 2 }],
+    region: noRegion,
+    shippingMethod: 'dhl_economy',
+  });
+  assert.equal(res2.shippingCost, 0);
+  assert.equal(res2.freeShippingApplied, true);
+  assert.equal(res2.total, 3398);
+});
+
+test('restricts Vipps strictly to Norway region', () => {
+  const norwayMethods = getAvailablePaymentMethods({
+    code: 'no',
+    enabled_payments: ['vipps', 'stripe', 'paypal', 'bank_transfer'],
+  });
+  assert.equal(norwayMethods.includes('vipps'), true);
+
+  const italyMethods = getAvailablePaymentMethods({
+    code: 'it',
+    enabled_payments: ['vipps', 'stripe', 'paypal', 'bank_transfer'],
+  });
+  assert.equal(italyMethods.includes('vipps'), false);
+  assert.deepEqual(italyMethods, ['stripe', 'paypal', 'bank_transfer']);
+});
+
+test('generates deterministic bank KID reference numbers', () => {
+  const ref = generateBankReference('MN', 'MN-2026-10042');
+  assert.equal(ref.startsWith('MN'), true);
+  assert.equal(ref.length, 9);
+});
+
+test('enforces Owner vs Staff RBAC permissions accurately', () => {
+  const owner = { role: 'owner' as const, permissions: OWNER_PERMISSIONS, active: true };
+  const staff = { role: 'staff' as const, permissions: DEFAULT_STAFF_PERMISSIONS, active: true };
+  const inactiveStaff = { role: 'staff' as const, permissions: OWNER_PERMISSIONS, active: false };
+
+  assert.equal(hasPermission(owner, 'manage_staff'), true);
+  assert.equal(hasPermission(staff, 'manage_orders'), true);
+  assert.equal(hasPermission(staff, 'manage_staff'), false);
+  assert.equal(hasPermission(staff, 'manage_pricing'), false);
+  assert.equal(hasPermission(inactiveStaff, 'manage_orders'), false);
+});
+
+test('calculates B2B MOQ totals per color accurately', () => {
+  const below = calculateB2BMoqSummary({ 'S / 37': 4, 'M / 39': 8 }, 20);
+  assert.equal(below.totalPieces, 12);
+  assert.equal(below.meetsMoq, false);
+  assert.equal(below.remainingForMoq, 8);
+
+  const meets = calculateB2BMoqSummary({ 'S / 37': 5, 'M / 39': 10, 'L / 41': 10 }, 20);
+  assert.equal(meets.totalPieces, 25);
+  assert.equal(meets.meetsMoq, true);
+  assert.equal(meets.remainingForMoq, 0);
+});
+
+test('serializes and parses multi-region product CSV with escaping', () => {
+  const csv = toCsv(
+    ['sku', 'region_code', 'title', 'price', 'stock_qty'],
+    [
+      ['MN-L3', 'no', 'BEIGE Linskjorte #L3, Sommerskjorte', 1699, 18],
+      ['MN-B1', 'it', 'Camicia "Bianca" 100/2-Ply', 159, 50],
+    ]
+  );
+
+  const parsed = parseProductImportCsv(csv);
+  assert.equal(parsed.errors.length, 0);
+  assert.equal(parsed.rows.length, 2);
+  assert.equal(parsed.rows[0].title, 'BEIGE Linskjorte #L3, Sommerskjorte');
+  assert.equal(parsed.rows[0].price, 1699);
+  assert.equal(parsed.rows[1].title, 'Camicia "Bianca" 100/2-Ply');
+  assert.equal(parsed.rows[1].stock_qty, 50);
+
+  const badParsed = parseProductImportCsv('sku,region_code,price\nMN-L3,fr,120');
+  assert.equal(badParsed.errors.length, 1);
+  assert.equal(badParsed.rows.length, 0);
+});
+
+test('calculates bespoke tailoring surcharges keeping shirt & sleeve length free', () => {
+  assert.equal(
+    calculateTailoringSurcharge({ waistAdjustmentCm: 0, chestAdjustmentCm: 0 }, 'en'),
+    0
+  );
+  assert.equal(
+    calculateTailoringSurcharge({ waistAdjustmentCm: -2, chestAdjustmentCm: 2 }, 'en'),
+    20
+  );
+  assert.equal(
+    calculateTailoringSurcharge({ waistAdjustmentCm: -2, shoulderAdjustmentCm: 1, bottomHemAdjustmentCm: -1 }, 'no'),
+    300
+  );
+});
+
+test('resolves variant pricing and stock overrides per fit and size', () => {
+  const product = {
+    sku: 'MN-L3',
+    price: 185,
+    stock_qty: 18,
+    variants: [
+      {
+        product_id: 1,
+        fit: 'Slim Fit' as const,
+        size_label: '45 / 3XL',
+        sku_variant: 'MN-L3-SLIM-45',
+        price_en: 205,
+        price_no: 1899,
+        price_it: 189,
+        price_vn: 4990000,
+        stock_en: 4,
+        stock_no: 2,
+        stock_it: 5,
+        stock_vn: 1,
+        active: true,
+      },
+    ],
+  };
+
+  const matched = resolveVariantPriceAndStock(product, 'en', 'Slim Fit', '45 / 3XL');
+  assert.equal(matched.price, 205);
+  assert.equal(matched.stockQty, 4);
+  assert.equal(matched.variantSku, 'MN-L3-SLIM-45');
+
+  const fallback = resolveVariantPriceAndStock(product, 'en', 'Regular Fit', '40 / M');
+  assert.equal(fallback.price, 185);
+  assert.equal(fallback.stockQty, 18);
+});
+
+test('computes bulk price adjustments and distinct size measurements cleanly', () => {
+  assert.equal(computeBulkPriceAdjustment(100, 'percent', 10, 'en'), 110);
+  assert.equal(computeBulkPriceAdjustment(1699, 'percent', 10, 'no'), 1869);
+
+  const m34 = computeDefaultSizeMeasurements('Slim Fit', '34 / 2XS');
+  const m40 = computeDefaultSizeMeasurements('Regular Fit', '40 / M');
+  const m45 = computeDefaultSizeMeasurements('Regular Fit', '45 / 3XL');
+  assert.ok(m34.chest_cm < m40.chest_cm && m40.chest_cm < m45.chest_cm);
+  assert.ok(m34.waist_cm < m40.waist_cm && m40.waist_cm < m45.waist_cm);
+});
+
+test('calculates B2B corporate tier discounts and localized unit prices', () => {
+  assert.deepEqual(calculateB2BTierDiscount(10), { tierLabel: 'Sample / Under MOQ (<20)', discountPct: 0 });
+  assert.deepEqual(calculateB2BTierDiscount(25), { tierLabel: 'Standard MOQ 20–49', discountPct: 15 });
+  assert.deepEqual(calculateB2BTierDiscount(60), { tierLabel: 'Corporate 50–99', discountPct: 22 });
+  assert.deepEqual(calculateB2BTierDiscount(120), { tierLabel: 'Enterprise 100+', discountPct: 30 });
+
+  assert.equal(estimateB2BUnitRate(185, 20, 'en'), 157.25);
+  assert.equal(estimateB2BUnitRate(1599, 100, 'no'), 1119);
+});
+
+test('calculates retail bulk tiers, disable toggles, stacking vs best-discount, and first-order restriction', () => {
+  // 2 units -> no bulk discount yet, next tier is 3
+  const q2 = calculateBulkPurchaseDiscount(2, 400, DEFAULT_BULK_DISCOUNT_SETTINGS, 'en');
+  assert.equal(q2.discountPct, 0);
+  assert.equal(q2.discountAmount, 0);
+  assert.equal(q2.unitsNeededForNext, 1);
+  assert.equal(q2.nextTier?.minQty, 3);
+
+  // 5 units -> 15% bulk tier
+  const q5 = calculateBulkPurchaseDiscount(5, 1000, DEFAULT_BULK_DISCOUNT_SETTINGS, 'en');
+  assert.equal(q5.discountPct, 15);
+  assert.equal(q5.discountAmount, 150);
+
+  // Disabled bulk setting -> 0 discount
+  const disabledBulk = calculateBulkPurchaseDiscount(
+    5,
+    1000,
+    { ...DEFAULT_BULK_DISCOUNT_SETTINGS, enabled: false },
+    'en'
+  );
+  assert.equal(disabledBulk.discountAmount, 0);
+
+  // Best-discount vs stacking with MONTE10
+  const nonStacked = resolveOrderDiscounts({
+    subtotal: 1000,
+    totalQty: 5,
+    regionCode: 'en',
+    discountCode: 'MONTE10',
+    promoSettings: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkSettings: { ...DEFAULT_BULK_DISCOUNT_SETTINGS, stackWithCoupon: false },
+    isFirstOrder: true,
+  });
+  assert.equal(nonStacked.bulkDiscountAmount, 150);
+  assert.equal(nonStacked.couponDiscountAmount, 0);
+  assert.equal(nonStacked.totalDiscountAmount, 150);
+
+  const stacked = resolveOrderDiscounts({
+    subtotal: 1000,
+    totalQty: 5,
+    regionCode: 'en',
+    discountCode: 'MONTE10',
+    promoSettings: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkSettings: { ...DEFAULT_BULK_DISCOUNT_SETTINGS, stackWithCoupon: true },
+    isFirstOrder: true,
+  });
+  assert.equal(stacked.bulkDiscountAmount, 150);
+  assert.equal(stacked.couponDiscountAmount, 100);
+  assert.equal(stacked.totalDiscountAmount, 250);
+
+  // Repeat customer rejected when firstOrderOnly is true
+  const repeatOrder = resolveOrderDiscounts({
+    subtotal: 200,
+    totalQty: 1,
+    regionCode: 'en',
+    discountCode: 'MONTE10',
+    promoSettings: { ...DEFAULT_PROMO_POPUP_SETTINGS, firstOrderOnly: true },
+    bulkSettings: DEFAULT_BULK_DISCOUNT_SETTINGS,
+    isFirstOrder: false,
+  });
+  assert.equal(repeatOrder.couponDiscountAmount, 0);
+  assert.ok(repeatOrder.promoRejectedReason);
+});
+
+test('parses WooCommerce product export CSV including Parent > Child categories and sale prices', () => {
+  const wooCsv = [
+    'ID,Type,SKU,Name,Published,Short description,Description,"Regular price","Sale price",Categories,Images,Stock,"Attribute 1 name","Attribute 1 value(s)"',
+    '101,simple,MN-WOO-1,"Veneto Sea Island Poplin",1,"Crisp dress shirt","Woven in Italy",210,185,"Business > Dress Shirts, Linen","https://example.com/a.jpg, https://example.com/b.jpg",24,Fabric,"100% Sea Island Cotton"',
+  ].join('\n');
+
+  assert.equal(isWooCommerceCsvHeader(wooCsv), true);
+  const parsed = parseWooCommerceCsv(wooCsv, 'en');
+  assert.equal(parsed.errors.length, 0);
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0].sku, 'MN-WOO-1');
+  assert.equal(parsed.rows[0].regularPrice, 210);
+  assert.equal(parsed.rows[0].salePrice, 185);
+  assert.equal(parsed.rows[0].stockQty, 24);
+  assert.equal(parsed.rows[0].images.length, 2);
+
+  const slugs = parsed.categories.map((c) => c.slug);
+  assert.equal(slugs.includes('business'), true);
+  assert.equal(slugs.includes('dress-shirts'), true);
+  const dressChild = parsed.categories.find((c) => c.slug === 'dress-shirts');
+  assert.equal(dressChild?.parentSlug, 'business');
+});
+
+test('parses WordPress WXR XML taxonomy categories preserving parent hierarchy', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8" ?>
+  <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+    <channel>
+      <wp:term>
+        <wp:term_taxonomy>product_cat</wp:term_taxonomy>
+        <wp:term_slug>menswear</wp:term_slug>
+        <wp:term_parent></wp:term_parent>
+        <wp:term_name><![CDATA[Menswear]]></wp:term_name>
+      </wp:term>
+      <wp:term>
+        <wp:term_taxonomy>product_cat</wp:term_taxonomy>
+        <wp:term_slug>italian-linen</wp:term_slug>
+        <wp:term_parent>menswear</wp:term_parent>
+        <wp:term_name><![CDATA[Italian Linen]]></wp:term_name>
+      </wp:term>
+    </channel>
+  </rss>`;
+
+  const res = parseWordPressCategoriesXml(xml);
+  assert.equal(res.errors.length, 0);
+  assert.equal(res.categories.length, 2);
+  assert.equal(res.categories[0].slug, 'menswear');
+  assert.equal(res.categories[1].slug, 'italian-linen');
+  assert.equal(res.categories[1].parentSlug, 'menswear');
+});
+
+test('normalizes shipping vs billing addresses cleanly', () => {
+  const ship = {
+    name: 'Henrik Solberg',
+    email: 'henrik@oslo.no',
+    phone: '+47 90000001',
+    address: 'Karl Johans gate 12',
+    city: 'Oslo',
+    postalCode: '0154',
+    country: 'Norway',
+  };
+  const same = normalizeBillingAddress(ship, true, { name: 'Ignored' });
+  assert.equal(same.address, 'Karl Johans gate 12');
+
+  const separate = normalizeBillingAddress(ship, false, {
+    name: 'Nordic Finance AS',
+    address: 'Aker Brygge 4',
+    city: 'Oslo',
+    postalCode: '0250',
+  });
+  assert.equal(separate.name, 'Nordic Finance AS');
+  assert.equal(separate.address, 'Aker Brygge 4');
+  assert.equal(separate.country, 'Norway');
+});
+
+test('builds localized Resend order confirmation and DHL tracking emails across all 4 regions', () => {
+  const baseOrder: OrderRecord = {
+    id: 1,
+    order_number: 'MN-2026-88412',
+    region_code: 'no',
+    currency_code: 'NOK',
+    customer_name: 'Olav Lind',
+    customer_email: 'olav@example.no',
+    customer_phone: '+47 91234567',
+    shipping_address: 'Bogstadveien 15',
+    shipping_city: 'Oslo',
+    shipping_postal_code: '0355',
+    shipping_country: 'Norway',
+    billing_name: 'Olav Billing AS',
+    billing_address: 'Storgata 9',
+    billing_city: 'Oslo',
+    billing_postal_code: '0155',
+    billing_country: 'Norway',
+    is_b2b: false,
+    company_name: null,
+    org_number: null,
+    subtotal: 1699,
+    shipping_cost: 0,
+    discount_amount: 0,
+    vat_amount: 340,
+    total: 1699,
+    payment_method: 'bank_transfer',
+    payment_status: 'awaiting_transfer',
+    payment_reference: 'MN884127',
+    shipping_method: 'dhl_economy',
+    dhl_tracking_number: 'DHL-NO-449911223',
+    dhl_status: 'in_transit',
+    order_status: 'shipped',
+    items: [
+      {
+        productId: 1,
+        sku: 'MN-L3',
+        title: 'BEIGE Linskjorte',
+        image: '/img.jpg',
+        unitPrice: 1699,
+        quantity: 1,
+        tailoring: {
+          fit: 'Slim Fit',
+          size: '40 / M',
+          collar: 'Cutaway',
+          cuff: 'Single Cuff (Round)',
+          sleeveAdjustmentCm: -1,
+          lengthAdjustmentCm: 0,
+        },
+      },
+    ],
+    notes: null,
+    created_at: '2026-11-22T10:00:00Z',
+  };
+
+  const regionMock = {
+    code: 'no' as const,
+    name: 'Norway',
+    warehouse_name: 'Oslo Distribusjonslager',
+    bank_name: 'DNB Bank ASA Norway',
+    bank_account_display: '1506.88.41920',
+    bank_iban: 'NO9315068841920',
+    bank_bic: 'DNBANOKKXXX',
+  };
+
+  const confirmNo = buildOrderEmailTemplate({ type: 'order_confirmation', order: baseOrder, region: regionMock });
+  assert.match(confirmNo.subject, /Ordrebekreftelse/);
+  assert.match(confirmNo.html, /KID/);
+  assert.match(confirmNo.html, /Olav Billing AS/);
+
+  const trackNo = buildOrderEmailTemplate({ type: 'shipping_tracking', order: baseOrder, region: regionMock });
+  assert.match(trackNo.subject, /sendt med DHL/);
+  assert.match(trackNo.html, /DHL-NO-449911223/);
+
+  const trackIt = buildOrderEmailTemplate({
+    type: 'shipping_tracking',
+    order: { ...baseOrder, region_code: 'it', currency_code: 'EUR' },
+    region: { ...regionMock, code: 'it', name: 'Italy' },
+  });
+  assert.match(trackIt.subject, /spedito con DHL/);
+
+  const confirmVn = buildOrderEmailTemplate({
+    type: 'order_confirmation',
+    order: { ...baseOrder, region_code: 'vn', currency_code: 'VND' },
+    region: { ...regionMock, code: 'vn', name: 'Việt Nam' },
+  });
+  assert.match(confirmVn.subject, /Xác nhận đơn hàng/);
+});
+
+
+
+
+
