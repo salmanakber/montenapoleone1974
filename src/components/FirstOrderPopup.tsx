@@ -3,18 +3,26 @@ import { CheckCircle2, Gift, Sparkles, X } from 'lucide-react';
 import type { PromotionPopupSettings, RegionCode } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
 
+const PROMO_CLAIMED_STORAGE_KEY = 'mn_first_order_promo_claimed_v1';
+
 interface FirstOrderPopupProps {
   regionCode: RegionCode;
   copy: RegionCopy;
   promoRules: PromotionPopupSettings;
+  isProductPage?: boolean;
+  offerAlreadyUsed?: boolean;
   onCodeUnlocked: (code: string) => void;
+  onOfferClaimed?: () => void;
 }
 
 export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
   regionCode,
   copy,
   promoRules,
+  isProductPage = false,
+  offerAlreadyUsed = false,
   onCodeUnlocked,
+  onOfferClaimed,
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -22,9 +30,18 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [unlockedCode, setUnlockedCode] = useState<string | null>(null);
   const [syncLabel, setSyncLabel] = useState<string | null>(null);
+  const [claimedDismissed, setClaimedDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage?.getItem(PROMO_CLAIMED_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const isPermanentlyHidden = claimedDismissed || offerAlreadyUsed;
 
   useEffect(() => {
-    if (!promoRules.popupEnabled || promoRules.delaySeconds <= 0) return;
+    if (!promoRules.popupEnabled || promoRules.delaySeconds <= 0 || isPermanentlyHidden) return;
     const alreadySeen = window.sessionStorage?.getItem('mn_promo_seen');
     if (alreadySeen) return;
     const timer = window.setTimeout(() => {
@@ -36,9 +53,10 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
       }
     }, promoRules.delaySeconds * 1000);
     return () => window.clearTimeout(timer);
-  }, [promoRules.popupEnabled, promoRules.delaySeconds]);
+  }, [promoRules.popupEnabled, promoRules.delaySeconds, isPermanentlyHidden]);
 
   if (!promoRules.popupEnabled) return null;
+  if (isPermanentlyHidden && !modalOpen) return null;
 
   const title =
     (promoRules[`title_${regionCode}` as keyof PromotionPopupSettings] as string) ||
@@ -49,6 +67,14 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
   const buttonLabel =
     (promoRules[`button_${regionCode}` as keyof PromotionPopupSettings] as string) ||
     promoRules.button_en;
+
+  const closeModal = () => {
+    setModalOpen(false);
+    if (unlockedCode) {
+      setClaimedDismissed(true);
+      onOfferClaimed?.();
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,9 +93,21 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
         return;
       }
       const code = String(data.discountCode || promoRules.discountCode || 'MONTE10');
+      try {
+        window.localStorage?.setItem(PROMO_CLAIMED_STORAGE_KEY, '1');
+      } catch {
+        // ignore
+      }
+      if (data.alreadyClaimedOrUsed) {
+        setErrorMsg('This first-order welcome offer has already been used for this email.');
+        setClaimedDismissed(true);
+        onOfferClaimed?.();
+        return;
+      }
       setUnlockedCode(code);
       setSyncLabel(data.mailchimpStatus === 'synced' ? 'Mailchimp Live Synced' : 'Mailchimp Audience Queued');
       onCodeUnlocked(code);
+      onOfferClaimed?.();
     } catch {
       setErrorMsg('Network error subscribing to offer.');
     } finally {
@@ -77,14 +115,19 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
     }
   };
 
+  const floatingPosClass = isProductPage
+    ? 'bottom-[116px] left-3 lg:bottom-[78px] lg:left-4'
+    : 'bottom-[70px] left-3.5 lg:bottom-3.5 lg:left-3.5';
+
   return (
     <>
-      {promoRules.showFloatingButton && (
+      {promoRules.showFloatingButton && !isPermanentlyHidden && !unlockedCode && (
         <button
           type="button"
+          data-testid="first-order-floating-btn"
           onClick={() => setModalOpen(true)}
           aria-label={title}
-          className="fixed bottom-[70px] left-3.5 lg:bottom-3.5 lg:left-3.5 z-30 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#142B4E] hover:bg-[#0f213d] text-white shadow-lg border border-white/15 text-[10px] font-medium uppercase tracking-[0.12em] transition-transform hover:scale-[1.02] cursor-pointer"
+          className={`fixed ${floatingPosClass} z-30 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#142B4E] hover:bg-[#0f213d] text-white shadow-lg border border-white/15 text-[10px] font-medium uppercase tracking-[0.12em] transition-all hover:scale-[1.02] cursor-pointer`}
         >
           <Gift className="w-3.5 h-3.5 text-[#FFCC00]" />
           <span>{copy.promo.floatingTrigger}</span>
@@ -99,7 +142,7 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
         >
           <div
             className="fixed inset-0 bg-black/55 backdrop-blur-[1px]"
-            onClick={() => setModalOpen(false)}
+            onClick={closeModal}
           />
           <div className="relative w-full max-w-lg bg-white text-[#1A1A1A] border border-black/15 shadow-2xl overflow-hidden grid grid-cols-1 sm:grid-cols-12">
             <div className="hidden sm:block sm:col-span-5 bg-[#E6E6E6]">
@@ -114,7 +157,7 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
             <div className="sm:col-span-7 p-6 sm:p-7 relative flex flex-col justify-center space-y-4">
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={closeModal}
                 aria-label={copy.promo.close}
                 className="absolute top-3 right-3 p-1.5 text-neutral-400 hover:text-black cursor-pointer"
               >

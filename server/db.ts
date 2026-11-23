@@ -57,6 +57,7 @@ export function initializeDatabase(): void {
       sku TEXT UNIQUE NOT NULL,
       slug TEXT UNIQUE NOT NULL,
       category_slug TEXT NOT NULL,
+      category_slugs_json TEXT NOT NULL DEFAULT '[]',
       fabric_spec TEXT NOT NULL,
       is_featured INTEGER NOT NULL DEFAULT 0,
       is_b2b_eligible INTEGER NOT NULL DEFAULT 1,
@@ -347,6 +348,10 @@ export function initializeDatabase(): void {
   ensureColumn('newsletter_subscribers', 'mailchimp_status', "TEXT NOT NULL DEFAULT 'sandbox_queued'");
   ensureColumn('newsletter_subscribers', 'mailchimp_member_id', 'TEXT');
   ensureColumn('newsletter_subscribers', 'synced_at', 'TEXT');
+  ensureColumn('products', 'category_slugs_json', "TEXT NOT NULL DEFAULT '[]'");
+  db.exec(
+    "UPDATE products SET category_slugs_json = json_array(category_slug) WHERE category_slugs_json = '[]' OR category_slugs_json = ''"
+  );
 
   seedInitialData();
 }
@@ -471,9 +476,9 @@ function seedInitialData(): void {
   if (existingProducts.count === 0) {
     const insertProduct = db.prepare(`
       INSERT INTO products (
-        sku, slug, category_slug, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
+        sku, slug, category_slug, category_slugs_json, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
         preorder_allowed, primary_image, secondary_image, gallery_json, collars_json, cuffs_json, sizes_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertLoc = db.prepare(`
@@ -941,14 +946,27 @@ function seedInitialData(): void {
       '/src/assets/images/editorial_corporate_b2b_1795248294517.jpg',
     ];
 
+    const multiCategorySeed: Record<string, string[]> = {
+      'MN-L3': ['linen'],
+      'MN-L23': ['linen', 'business'],
+      'MN-B11': ['business', 'b2b'],
+      'MN-B1': ['business', 'b2b'],
+      'MN-OX4': ['oxford', 'business'],
+      'MN-B2B1': ['b2b', 'stretch', 'outlet'],
+      'MN-F30': ['flannel', 'outlet'],
+      'MN-S14': ['stretch', 'linen'],
+    };
+
     for (const p of catalogSeed) {
       const gallery = Array.from(
         new Set([p.primary_image, p.secondary_image, ...DETAIL_SHOTS])
       ).slice(0, 4);
+      const cats = multiCategorySeed[p.sku] || [p.category_slug];
       const info = insertProduct.run(
         p.sku,
         p.slug,
         p.category_slug,
+        JSON.stringify(cats),
         p.fabric_spec,
         p.is_featured,
         p.is_b2b_eligible,
@@ -1365,6 +1383,22 @@ function seedInitialData(): void {
   );
 
   upsertSetting.run('api_credentials', JSON.stringify({}));
+
+  upsertSetting.run(
+    'top_banner',
+    JSON.stringify({
+      enabled: true,
+      visibility: 'both',
+      text_en: 'COMPLIMENTARY BESPOKE SLEEVE & SHIRT LENGTH TAILORING · FREE DHL SHIPPING OVER $250',
+      text_no: 'KOSTNADSFRI SKREDDERSYDD ERME- OG SKJORTELENGDE · FRI FRAKT OVER 2 500 KR',
+      text_it: 'LUNGHEZZA MANICHE E BUSTO SU MISURA GRATUITA · SPEDIZIONE DHL GRATUITA',
+      text_vn: 'MIỄN PHÍ ĐO CHỈNH CHIỀU DÀI TAY & THÂN ÁO · MIỄN PHÍ VẬN CHUYỂN DHL',
+      linkView: 'catalog',
+      linkCategory: 'all',
+      bgColor: '#142B4E',
+      textColor: '#FFFFFF',
+    })
+  );
 
   const existingVisitors = db.prepare('SELECT COUNT(*) AS count FROM visitor_sessions').get() as { count: number };
   if (existingVisitors.count === 0) {

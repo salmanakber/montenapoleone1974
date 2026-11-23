@@ -39,7 +39,9 @@ import type {
   AuthUser,
   B2BInquiry,
   BulkDiscountSettings,
+  CategoryRecord,
   CsvImportRow,
+  CustomerAuthSettings,
   HeroSlideRecord,
   MediaAsset,
   NewsletterSubscriber,
@@ -54,11 +56,14 @@ import type {
   StaffPermissions,
   StockMovement,
   TailoringSizeSpec,
+  TopBannerSettings,
 } from '../types.ts';
 import {
   DEFAULT_BULK_DISCOUNT_SETTINGS,
+  DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_STAFF_PERMISSIONS,
+  DEFAULT_TOP_BANNER_SETTINGS,
   formatRegionalPrice,
   hasPermission,
   isWooCommerceCsvHeader,
@@ -182,8 +187,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [tailoringSpecs, setTailoringSpecs] = useState<TailoringSizeSpec[]>([]);
   const [reportData, setReportData] = useState<AdminReportData | null>(null);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRecord[]>([]);
+  const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [topBanner, setTopBanner] = useState<TopBannerSettings>(DEFAULT_TOP_BANNER_SETTINGS);
   const [promoRules, setPromoRules] = useState<PromotionPopupSettings>(DEFAULT_PROMO_POPUP_SETTINGS);
   const [bulkDiscount, setBulkDiscount] = useState<BulkDiscountSettings>(DEFAULT_BULK_DISCOUNT_SETTINGS);
+  const [customerAuth, setCustomerAuth] = useState<CustomerAuthSettings>(DEFAULT_CUSTOMER_AUTH_SETTINGS);
+  const [customerAuthMsg, setCustomerAuthMsg] = useState<string | null>(null);
   const [aiSettings, setAiSettings] = useState<AiAdminSettings>({
     enabled: true,
     displayMode: 'agent',
@@ -226,7 +235,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // New Product Form
   const [newSku, setNewSku] = useState('');
-  const [newCategory, setNewCategory] = useState('business');
+  const [newCategories, setNewCategories] = useState<string[]>(['business']);
   const [newFabric, setNewFabric] = useState('100% Italian 2-Ply Cotton');
   const [newTitleEn, setNewTitleEn] = useState('');
   const [newPriceEn, setNewPriceEn] = useState(175);
@@ -331,7 +340,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       reqs.push(
         fetch('/api/admin/hero-slides', { headers })
           .then((r) => (r.ok ? r.json() : null))
-          .then((d) => d?.slides && setHeroSlides(d.slides))
+          .then((d) => d?.slides && setHeroSlides(d.slides)),
+        fetch('/api/admin/categories', { headers })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d?.categories && setCategories(d.categories))
       );
     }
 
@@ -346,8 +358,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         fetch('/api/admin/site-settings', { headers })
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => {
+            if (d?.topBanner) setTopBanner(d.topBanner);
             if (d?.promoRules) setPromoRules(d.promoRules);
             if (d?.bulkDiscount) setBulkDiscount(d.bulkDiscount);
+            if (d?.customerAuth) setCustomerAuth(d.customerAuth);
             if (d?.aiSettings) setAiSettings(d.aiSettings);
           })
       );
@@ -632,13 +646,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleSaveProductEdit = async () => {
     if (!authToken || !editingProduct) return;
+    const assigned =
+      Array.isArray(editingProduct.category_slugs) && editingProduct.category_slugs.length > 0
+        ? editingProduct.category_slugs
+        : [editingProduct.category_slug || 'business'];
+    const payload: Product = {
+      ...editingProduct,
+      category_slug: assigned[0],
+      category_slugs: assigned,
+    };
     const res = await fetch(`/api/admin/products/${editingProduct.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${authToken}`,
       },
-      body: JSON.stringify(editingProduct),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       setEditingProduct(null);
@@ -650,6 +673,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authToken) return;
+    const assignedCategories = newCategories.length > 0 ? newCategories : ['business'];
     const res = await fetch('/api/admin/products', {
       method: 'POST',
       headers: {
@@ -658,7 +682,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       },
       body: JSON.stringify({
         sku: newSku,
-        category_slug: newCategory,
+        category_slug: assignedCategories[0],
+        category_slugs: assignedCategories,
         fabric_spec: newFabric,
         is_featured: true,
         preorder_allowed: true,
@@ -676,6 +701,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setCreatingProduct(false);
       setNewSku('');
       setNewTitleEn('');
+      setNewCategories(['business']);
       loadAdminData();
       onRefreshStorefront();
     }
@@ -1581,7 +1607,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <div>
                                 <div className="font-medium">{locs?.en?.title || p.sku}</div>
                                 <div className="text-[11px] font-mono-tabular text-neutral-500">
-                                  {p.sku} · {p.category_slug}
+                                  {p.sku} ·{' '}
+                                  {(p.category_slugs && p.category_slugs.length > 0
+                                    ? p.category_slugs
+                                    : [p.category_slug]
+                                  ).join(', ')}
                                 </div>
                               </div>
                             </div>
@@ -1606,7 +1636,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <td className="p-3 text-right">
                             <button
                               type="button"
-                              onClick={() => setEditingProduct(JSON.parse(JSON.stringify(p)))}
+                              onClick={() => {
+                                const cloned: Product = JSON.parse(JSON.stringify(p));
+                                cloned.category_slugs =
+                                  Array.isArray(cloned.category_slugs) && cloned.category_slugs.length > 0
+                                    ? cloned.category_slugs
+                                    : [cloned.category_slug || 'business'];
+                                setEditingProduct(cloned);
+                              }}
                               className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
                             >
                               Edit Regions
@@ -1718,12 +1755,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               />
             )}
 
-          {/* PROMOTIONS (10% FIRST-ORDER MAILCHIMP POPUP) & BULK DISCOUNTS */}
+          {/* PROMOTIONS (TOP BANNER + 10% FIRST-ORDER MAILCHIMP POPUP) & BULK DISCOUNTS */}
           {safeActiveTab === 'promotions' &&
             authToken &&
             hasPermission(authUser, 'manage_settings') && (
               <PromotionsAndBulkAdminPanel
                 authToken={authToken}
+                topBanner={topBanner}
                 promoRules={promoRules}
                 bulkDiscount={bulkDiscount}
                 onRefresh={loadAdminData}
@@ -2287,11 +2325,131 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <Check className="w-3.5 h-3.5" /> Live API Key Configured
                         </span>
                       ) : (
-                        <span className="text-amber-700">Sandbox Mode (Set Secret in Env)</span>
+                        <span className="text-amber-700">Sandbox Mode (Set Secret in API Vault)</span>
                       )}
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Customer Gmail / Google OAuth Login & Auto-Mailchimp Settings */}
+              <div className="border border-neutral-200 bg-white p-5 space-y-4 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+                  <div>
+                    <div className="font-semibold text-sm text-[#142B4E]">
+                      Customer Gmail / Google Login & Auto-Mailchimp Subscription
+                    </div>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      Control Gmail OAuth sign-in, corner welcome popup, and automatic Mailchimp audience subscription for shoppers.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('credentials')}
+                    className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
+                  >
+                    Configure Google Client ID & Secret
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <label className="flex items-start gap-2.5 p-3 border border-neutral-200 bg-[#FAFAFA] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={customerAuth.googleLoginEnabled}
+                      onChange={(e) =>
+                        setCustomerAuth((prev) => ({ ...prev, googleLoginEnabled: e.target.checked }))
+                      }
+                      className="mt-0.5 accent-[#142B4E]"
+                    />
+                    <div>
+                      <div className="font-semibold">Enable Gmail Login</div>
+                      <div className="text-[11px] text-neutral-500">Show Continue with Gmail on customer login</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 p-3 border border-neutral-200 bg-[#FAFAFA] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={customerAuth.showCornerPopup}
+                      onChange={(e) =>
+                        setCustomerAuth((prev) => ({ ...prev, showCornerPopup: e.target.checked }))
+                      }
+                      className="mt-0.5 accent-[#142B4E]"
+                    />
+                    <div>
+                      <div className="font-semibold">Corner Sign-In Popup</div>
+                      <div className="text-[11px] text-neutral-500">Prompt guests cleanly at top-right corner</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 p-3 border border-neutral-200 bg-[#FAFAFA] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={customerAuth.autoSubscribeMailchimp}
+                      onChange={(e) =>
+                        setCustomerAuth((prev) => ({ ...prev, autoSubscribeMailchimp: e.target.checked }))
+                      }
+                      className="mt-0.5 accent-[#142B4E]"
+                    />
+                    <div>
+                      <div className="font-semibold">Auto-Sync to Mailchimp</div>
+                      <div className="text-[11px] text-neutral-500">Send customer email directly to Mailchimp on login</div>
+                    </div>
+                  </label>
+
+                  <div className="p-3 border border-neutral-200 bg-[#FAFAFA]">
+                    <label htmlFor="corner-delay-input" className="block font-semibold mb-1">
+                      Popup Delay (seconds)
+                    </label>
+                    <input
+                      id="corner-delay-input"
+                      type="number"
+                      min={0}
+                      max={30}
+                      value={customerAuth.cornerPopupDelaySeconds}
+                      onChange={(e) =>
+                        setCustomerAuth((prev) => ({
+                          ...prev,
+                          cornerPopupDelaySeconds: Math.max(0, Math.min(30, Number(e.target.value))),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1 border border-neutral-300 bg-white font-mono-tabular"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {customerAuthMsg ? (
+                    <span className="text-xs text-[#2E5D28] font-medium">{customerAuthMsg}</span>
+                  ) : (
+                    <span className="text-[11px] text-neutral-500">
+                      Callback URI: {typeof window !== 'undefined' ? `${window.location.origin}/api/auth/google/callback` : '/api/auth/google/callback'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!authToken) return;
+                      setCustomerAuthMsg(null);
+                      const res = await fetch('/api/admin/site-settings/customer_auth', {
+                        method: 'PATCH',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${authToken}`,
+                        },
+                        body: JSON.stringify(customerAuth),
+                      });
+                      if (res.ok) {
+                        setCustomerAuthMsg('Customer Gmail login settings saved & applied to storefront.');
+                        onRefreshStorefront();
+                      }
+                    }}
+                    className="px-4 py-2 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer"
+                  >
+                    Save Gmail Login Settings
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -2476,6 +2634,83 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     Choose from Media Library
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Multi-Category Assignment (Parent & Child Categories) */}
+            <div className="border border-neutral-200 p-3.5 bg-[#FAFAFA] space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                  Assigned Categories (Multiple Parent & Child Supported)
+                </span>
+                <span className="font-mono-tabular text-[11px] text-neutral-500">
+                  Selected: {(editingProduct.category_slugs || [editingProduct.category_slug]).join(', ')}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-40 overflow-y-auto pt-1">
+                {(() => {
+                  const usableCats = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
+                  const parents = usableCats.filter((c) => !c.parent_id);
+                  const ordered: Array<{ slug: string; label: string; isChild: boolean }> = [];
+                  parents.forEach((par) => {
+                    ordered.push({ slug: par.slug, label: par.name_en, isChild: false });
+                    usableCats
+                      .filter((ch) => ch.parent_id === par.id)
+                      .forEach((ch) =>
+                        ordered.push({ slug: ch.slug, label: `↳ ${ch.name_en}`, isChild: true })
+                      );
+                  });
+                  usableCats
+                    .filter((c) => !ordered.some((o) => o.slug === c.slug))
+                    .forEach((c) => ordered.push({ slug: c.slug, label: c.name_en, isChild: Boolean(c.parent_id) }));
+                  const fallbackSlugs =
+                    ordered.length > 0
+                      ? ordered
+                      : ['linen', 'business', 'oxford', 'flannel', 'stretch'].map((s) => ({
+                          slug: s,
+                          label: s.toUpperCase(),
+                          isChild: false,
+                        }));
+                  const selectedList =
+                    editingProduct.category_slugs && editingProduct.category_slugs.length > 0
+                      ? editingProduct.category_slugs
+                      : [editingProduct.category_slug];
+                  return fallbackSlugs.map((item) => {
+                    const checked = selectedList.includes(item.slug);
+                    return (
+                      <label
+                        key={item.slug}
+                        className={`flex items-center gap-1.5 px-2 py-1.5 border cursor-pointer ${
+                          checked
+                            ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                            : 'bg-white text-neutral-700 border-neutral-300'
+                        } ${item.isChild ? 'pl-3' : 'font-medium'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? Array.from(new Set([...selectedList, item.slug]))
+                              : selectedList.filter((s) => s !== item.slug);
+                            const safeNext = next.length > 0 ? next : [item.slug];
+                            setEditingProduct((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    category_slug: safeNext[0],
+                                    category_slugs: safeNext,
+                                  }
+                                : prev
+                            );
+                          }}
+                          className="accent-white"
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </label>
+                    );
+                  });
+                })()}
               </div>
             </div>
 
@@ -2667,7 +2902,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <input
                 required
                 placeholder="SKU (e.g. MN-L50)"
@@ -2675,17 +2910,65 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 onChange={(e) => setNewSku(e.target.value)}
                 className="px-3 py-2 border border-neutral-300 font-mono-tabular"
               />
-              <select
-                value={newCategory}
-                onChange={(e) => setNewCategory(e.target.value)}
-                className="px-3 py-2 border border-neutral-300"
-              >
-                <option value="linen">Linen</option>
-                <option value="business">Business</option>
-                <option value="oxford">Oxford</option>
-                <option value="flannel">Flannel</option>
-                <option value="stretch">Stretch</option>
-              </select>
+              <div className="border border-neutral-200 p-3 bg-[#FAFAFA] space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                  Assign Categories (Select multiple parent & child categories)
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                  {(() => {
+                    const usableCats = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
+                    const parents = usableCats.filter((c) => !c.parent_id);
+                    const ordered: Array<{ slug: string; label: string; isChild: boolean }> = [];
+                    parents.forEach((par) => {
+                      ordered.push({ slug: par.slug, label: par.name_en, isChild: false });
+                      usableCats
+                        .filter((ch) => ch.parent_id === par.id)
+                        .forEach((ch) =>
+                          ordered.push({ slug: ch.slug, label: `↳ ${ch.name_en}`, isChild: true })
+                        );
+                    });
+                    usableCats
+                      .filter((c) => !ordered.some((o) => o.slug === c.slug))
+                      .forEach((c) =>
+                        ordered.push({ slug: c.slug, label: c.name_en, isChild: Boolean(c.parent_id) })
+                      );
+                    const list =
+                      ordered.length > 0
+                        ? ordered
+                        : ['linen', 'business', 'oxford', 'flannel', 'stretch'].map((s) => ({
+                            slug: s,
+                            label: s.toUpperCase(),
+                            isChild: false,
+                          }));
+                    return list.map((item) => {
+                      const checked = newCategories.includes(item.slug);
+                      return (
+                        <label
+                          key={item.slug}
+                          className={`flex items-center gap-1.5 px-2 py-1 border cursor-pointer ${
+                            checked
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white text-neutral-700 border-neutral-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? Array.from(new Set([...newCategories, item.slug]))
+                                : newCategories.filter((s) => s !== item.slug);
+                              setNewCategories(next.length > 0 ? next : [item.slug]);
+                            }}
+                            className="accent-white"
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
             </div>
             <input
               required

@@ -38,6 +38,8 @@ export const API_CREDENTIAL_CATALOG: Array<{
   { key: 'DHL_API_KEY', label: 'DHL MyDHL API Key', group: 'logistics', secret: true, placeholder: 'MyDHL API Key' },
   { key: 'DHL_API_SECRET', label: 'DHL MyDHL API Secret', group: 'logistics', secret: true, placeholder: 'MyDHL API Secret' },
   { key: 'DHL_ACCOUNT_NUMBER', label: 'DHL Shipper Account Number', group: 'logistics', secret: false, placeholder: '123456789' },
+  { key: 'GOOGLE_CLIENT_ID', label: 'Google / Gmail OAuth Client ID', group: 'auth', secret: false, placeholder: '1234567890-xxxx.apps.googleusercontent.com' },
+  { key: 'GOOGLE_CLIENT_SECRET', label: 'Google / Gmail OAuth Client Secret', group: 'auth', secret: true, placeholder: 'GOCSPX-xxxxxxxxxxxxxxxxxxxx' },
   { key: 'GEOIP_API_KEY', label: 'GeoIP Lookup Token (ipinfo.io)', group: 'analytics', secret: true, placeholder: 'ipinfo token for live visitor globe' },
   { key: 'GEMINI_API_KEY', label: 'Gemini AI API Key Override', group: 'ai', secret: true, placeholder: 'AIza...' },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', group: 'ai', secret: true, placeholder: 'sk-...' },
@@ -119,6 +121,7 @@ export function getCredentialsMaskedStatus(): ApiCredentialItem[] {
 }
 
 export interface GatewayConfigurationStatus {
+  google: { configured: boolean; label: string };
   stripe: { configured: boolean; label: string };
   paypal: { configured: boolean; label: string };
   vipps: { configured: boolean; label: string };
@@ -131,6 +134,12 @@ export interface GatewayConfigurationStatus {
 
 export function getGatewayConfigurationStatus(): GatewayConfigurationStatus {
   return {
+    google: {
+      configured:
+        getResolvedSecret('GOOGLE_CLIENT_ID').length > 0 &&
+        getResolvedSecret('GOOGLE_CLIENT_SECRET').length > 0,
+      label: 'Google / Gmail Client Login',
+    },
     stripe: {
       configured: getResolvedSecret('STRIPE_SECRET_KEY').length > 0,
       label: 'Stripe Checkout & Cards',
@@ -549,8 +558,36 @@ export async function sendResendTestEmail(params: {
 }
 
 export async function verifyProviderOnboarding(
-  provider: 'paypal' | 'stripe' | 'wix' | 'vipps' | 'resend'
+  provider: 'google' | 'paypal' | 'stripe' | 'wix' | 'vipps' | 'resend'
 ): Promise<GatewayVerificationResult> {
+  if (provider === 'google') {
+    const clientId = getResolvedSecret('GOOGLE_CLIENT_ID');
+    const clientSecret = getResolvedSecret('GOOGLE_CLIENT_SECRET');
+    if (!clientId || !clientSecret) {
+      return {
+        provider,
+        ok: false,
+        mode: 'not_configured',
+        message: 'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the API Vault to enable Gmail OAuth sign-in.',
+      };
+    }
+    const looksValidId = clientId.includes('.apps.googleusercontent.com') || clientId.length >= 16;
+    if (!looksValidId) {
+      return {
+        provider,
+        ok: false,
+        mode: 'error',
+        message: 'GOOGLE_CLIENT_ID does not match standard Google Cloud OAuth format (*.apps.googleusercontent.com).',
+      };
+    }
+    return {
+      provider,
+      ok: true,
+      mode: 'live',
+      message: 'Google OAuth 2.0 Client ID & Secret configured cleanly. Register the authorized redirect URI in Google Cloud Console.',
+      accountInfo: `${clientId.slice(0, 16)}...`,
+    };
+  }
   if (provider === 'paypal') {
     const clientId = getResolvedSecret('PAYPAL_CLIENT_ID');
     const clientSecret = getResolvedSecret('PAYPAL_CLIENT_SECRET');
@@ -799,6 +836,92 @@ export async function exchangeWixOAuthCode(code: string): Promise<{
     return { ok: true, accessToken: data.access_token, refreshToken: data.refresh_token };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Wix OAuth failed' };
+  }
+}
+
+export function buildGoogleAuthorizeUrl(
+  redirectUri: string,
+  state: string
+): { url: string | null; error?: string } {
+  const clientId = getResolvedSecret('GOOGLE_CLIENT_ID');
+  const clientSecret = getResolvedSecret('GOOGLE_CLIENT_SECRET');
+  if (!clientId || !clientSecret) {
+    return {
+      url: null,
+      error: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured in Admin -> API Vault.',
+    };
+  }
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    access_type: 'online',
+    prompt: 'select_account',
+    state,
+  });
+  return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` };
+}
+
+export async function exchangeGoogleOAuthCode(
+  code: string,
+  redirectUri: string
+): Promise<{
+  ok: boolean;
+  email?: string;
+  name?: string;
+  emailVerified?: boolean;
+  error?: string;
+}> {
+  const clientId = getResolvedSecret('GOOGLE_CLIENT_ID');
+  const clientSecret = getResolvedSecret('GOOGLE_CLIENT_SECRET');
+  if (!clientId || !clientSecret) {
+    return { ok: false, error: 'Google OAuth credentials are not configured.' };
+  }
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }).toString(),
+    });
+    const tokenJson = (await tokenRes.json().catch(() => ({}))) as {
+      access_token?: string;
+      error_description?: string;
+      error?: string;
+    };
+    if (!tokenRes.ok || !tokenJson.access_token) {
+      return {
+        ok: false,
+        error: tokenJson.error_description || tokenJson.error || `Google token error (${tokenRes.status})`,
+      };
+    }
+
+    const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+    });
+    const userJson = (await userRes.json().catch(() => ({}))) as {
+      email?: string;
+      email_verified?: boolean;
+      name?: string;
+      given_name?: string;
+    };
+    if (!userRes.ok || !userJson.email) {
+      return { ok: false, error: 'Failed to retrieve verified Gmail profile.' };
+    }
+    return {
+      ok: true,
+      email: userJson.email.trim().toLowerCase(),
+      name: (userJson.name || userJson.given_name || userJson.email.split('@')[0]).trim(),
+      emailVerified: Boolean(userJson.email_verified),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Google OAuth exchange failed' };
   }
 }
 

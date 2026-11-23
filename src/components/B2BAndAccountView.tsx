@@ -5,28 +5,36 @@ import {
   Check,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   FileText,
   Layers,
+  LogOut,
+  Mail,
   PackageSearch,
   Ruler,
-  ShieldCheck,
   ShoppingBag,
+  Sparkles,
   Trash2,
   Truck,
+  User,
 } from 'lucide-react';
 import type {
+  AuthUser,
   B2BQuotationItem,
   CategoryRecord,
+  CustomerAuthPublicConfig,
   OrderRecord,
   Product,
   RegionConfig,
 } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
+import { GoogleIcon } from './GmailLoginCornerPopup.tsx';
 import {
   calculateB2BMoqSummary,
   calculateB2BTierDiscount,
   estimateB2BUnitRate,
   formatRegionalPrice,
+  productMatchesCategories,
 } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
 
@@ -66,6 +74,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
   const qtySectionRef = useRef<HTMLDivElement>(null);
   const specSectionRef = useRef<HTMLDivElement>(null);
   const notesSectionRef = useRef<HTMLDivElement>(null);
+  const b2bCatCarouselRef = useRef<HTMLDivElement>(null);
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
@@ -170,8 +179,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
     }
     return products.filter((p) => {
       if (selectedCategory === 'outlet') return p.is_outlet;
-      if (selectedCategory !== 'all' && !allowedSlugs.has(p.category_slug)) return false;
-      return true;
+      return productMatchesCategories(p, allowedSlugs.size > 0 ? allowedSlugs : null);
     });
   }, [products, selectedCategory, activeB2BCategory, b2bVisibleCategories]);
 
@@ -825,38 +833,62 @@ export const B2BView: React.FC<B2BViewProps> = ({
       {/* VIEW 3: DEFAULT MONTE CONNECTED B2B PRICE-FREE 4-COL CATALOG */}
       {!submittedId && !showCheckoutSummary && !activeProduct && (
         <div className="space-y-6">
-          {/* Category Tabs (B2B Scoped + Subcategories) */}
-          <div className="flex flex-col items-center gap-2">
-            <nav
-              aria-label="B2B shirt categories"
-              className="inline-flex flex-wrap items-center justify-center bg-white border border-black/10 shadow-sm rounded-xl p-1 gap-1"
+          {/* Horizontal Snap-Scroll Category Carousel (B2B Scoped + Subcategories) */}
+          <div className="flex flex-col items-center gap-2.5">
+            <div
+              data-testid="b2b-category-carousel"
+              className="w-full max-w-4xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1"
             >
               <button
                 type="button"
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  selectedCategory === 'all'
-                    ? 'bg-[#142B4E] text-white font-medium'
-                    : 'text-neutral-700 hover:bg-neutral-100'
-                }`}
+                onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
+                aria-label="Scroll B2B categories left"
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
               >
-                {copy.b2b.allCategoriesTab}
+                <ChevronLeft className="w-4 h-4" />
               </button>
-              {b2bTopCategories.map((cat) => (
+
+              <nav
+                ref={b2bCatCarouselRef}
+                aria-label="B2B shirt categories"
+                className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5"
+              >
                 <button
-                  key={cat.slug}
                   type="button"
-                  onClick={() => setSelectedCategory(cat.slug)}
-                  className={`px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    selectedCategory === cat.slug || activeB2BParent?.id === cat.id
+                  onClick={() => setSelectedCategory('all')}
+                  className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    selectedCategory === 'all'
                       ? 'bg-[#142B4E] text-white font-medium'
                       : 'text-neutral-700 hover:bg-neutral-100'
                   }`}
                 >
-                  {getCategoryName(cat)}
+                  {copy.b2b.allCategoriesTab}
                 </button>
-              ))}
-            </nav>
+                {b2bTopCategories.map((cat) => (
+                  <button
+                    key={cat.slug}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.slug)}
+                    className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      selectedCategory === cat.slug || activeB2BParent?.id === cat.id
+                        ? 'bg-[#142B4E] text-white font-medium'
+                        : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    {getCategoryName(cat)}
+                  </button>
+                ))}
+              </nav>
+
+              <button
+                type="button"
+                onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
+                aria-label="Scroll B2B categories right"
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
 
             {b2bChildCategories.length > 0 && activeB2BParent && (
               <nav
@@ -916,15 +948,179 @@ export const B2BView: React.FC<B2BViewProps> = ({
 interface AccountViewProps {
   region: RegionConfig;
   copy: RegionCopy;
-  onOpenAdmin: () => void;
+  authToken: string | null;
+  authUser: AuthUser | null;
+  customerAuthConfig: CustomerAuthPublicConfig;
+  onAuthChange: (token: string | null, user: AuthUser | null) => void;
+  onPromoUnlocked: (code: string) => void;
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ region, copy, onOpenAdmin }) => {
+export const AccountView: React.FC<AccountViewProps> = ({
+  region,
+  copy,
+  authToken,
+  authUser,
+  customerAuthConfig,
+  onAuthChange,
+  onPromoUnlocked,
+}) => {
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regSubscribeMailchimp, setRegSubscribeMailchimp] = useState<boolean>(
+    customerAuthConfig.autoSubscribeMailchimp
+  );
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
+  const [authMessage, setAuthMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const [myOrders, setMyOrders] = useState<OrderRecord[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+
   const [orderNumber, setOrderNumber] = useState('MN-2026-1001');
   const [email, setEmail] = useState('henrik.solberg@nordicexec.no');
   const [foundOrder, setFoundOrder] = useState<OrderRecord | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setRegSubscribeMailchimp(customerAuthConfig.autoSubscribeMailchimp);
+  }, [customerAuthConfig.autoSubscribeMailchimp]);
+
+  useEffect(() => {
+    if (!authToken || !authUser) {
+      setMyOrders([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingOrders(true);
+    fetch('/api/account/orders', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then((res) => (res.ok ? res.json() : { orders: [] }))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data.orders)) {
+          setMyOrders(data.orders);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingOrders(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, authUser]);
+
+  const handleGoogleSignIn = async () => {
+    setGoogleSubmitting(true);
+    setAuthMessage(null);
+    try {
+      const subFlag = customerAuthConfig.autoSubscribeMailchimp ? '1' : '0';
+      const res = await fetch(
+        `/api/auth/google/url?region=${encodeURIComponent(region.code)}&subscribe=${subFlag}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setAuthMessage({
+          type: 'err',
+          text:
+            data.error ||
+            'Google sign-in requires Google OAuth Client ID and Secret in Admin API Vault.',
+        });
+        return;
+      }
+      const popup = window.open(
+        data.url,
+        'mn_google_oauth',
+        'width=540,height=660,menubar=no,toolbar=no,location=yes,status=no'
+      );
+      if (!popup) {
+        setAuthMessage({
+          type: 'err',
+          text: 'Popup blocked by browser. Please allow popups for Gmail sign-in.',
+        });
+      }
+    } catch {
+      setAuthMessage({ type: 'err', text: 'Unable to initiate Gmail authentication.' });
+    } finally {
+      setGoogleSubmitting(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthSubmitting(true);
+    setAuthMessage(null);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthMessage({ type: 'err', text: data.error || 'Invalid credentials' });
+        return;
+      }
+      onAuthChange(data.token, data.user);
+      setAuthMessage({ type: 'ok', text: `Signed in as ${data.user.email}` });
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleEmailRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthSubmitting(true);
+    setAuthMessage(null);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: regName,
+          email: regEmail,
+          password: regPassword,
+          phone: regPhone,
+          regionCode: region.code,
+          subscribeMailchimp: regSubscribeMailchimp,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthMessage({ type: 'err', text: data.error || 'Could not create account' });
+        return;
+      }
+      onAuthChange(data.token, data.user);
+      if (data.discountCode) {
+        onPromoUnlocked(data.discountCode);
+      }
+      setAuthMessage({
+        type: 'ok',
+        text: data.discountCode
+          ? `Account created & subscribed to Mailchimp. Code ${data.discountCode} unlocked!`
+          : `Welcome to Monte Napoleone 1974, ${data.user.name}.`,
+      });
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (authToken) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      }).catch(() => {});
+    }
+    onAuthChange(null, null);
+    setAuthMessage(null);
+  };
 
   const handleLookup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -948,28 +1144,250 @@ export const AccountView: React.FC<AccountViewProps> = ({ region, copy, onOpenAd
 
   return (
     <main className="pt-24 pb-20 max-w-4xl mx-auto px-4 sm:px-8 space-y-10">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-black/10 pb-4">
-        <div>
-          <h1 className="text-xl font-medium uppercase tracking-wide">{copy.nav.account}</h1>
-          <p className="text-xs text-neutral-500 mt-1">
-            Track DHL Express shipments, view bank transfer references, or access Staff/Owner Admin.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onOpenAdmin}
-          className="px-4 py-2 bg-[#142B4E] text-white text-xs uppercase tracking-wider inline-flex items-center gap-2 cursor-pointer"
-        >
-          <ShieldCheck className="w-4 h-4" />
-          <span>Owner / Staff Portal</span>
-        </button>
+      <div className="border-b border-black/10 pb-4">
+        <h1 className="text-xl font-medium uppercase tracking-wide">{copy.nav.account}</h1>
+        <p className="text-xs text-neutral-500 mt-1">
+          Sign in with Gmail or email for faster bespoke checkout, personal orders, and live DHL tracking.
+        </p>
       </div>
+
+      {/* Customer Authentication / Signed-In Account Card */}
+      {!authUser ? (
+        <section
+          data-testid="customer-auth-card"
+          className="border border-black/15 p-6 bg-white space-y-5 shadow-xs"
+        >
+          {customerAuthConfig.googleLoginEnabled && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                data-testid="account-gmail-signin-btn"
+                onClick={handleGoogleSignIn}
+                disabled={googleSubmitting}
+                className="w-full py-3 px-4 bg-white hover:bg-neutral-50 border border-black/25 text-[#1A1A1A] text-xs uppercase tracking-[0.14em] font-medium flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
+              >
+                <GoogleIcon className="w-4 h-4" />
+                <span>{googleSubmitting ? 'Connecting to Google...' : 'Continue with Gmail'}</span>
+              </button>
+              {customerAuthConfig.autoSubscribeMailchimp && (
+                <div className="text-[11px] text-[#142B4E] bg-[#F4F6F9] border border-[#142B4E]/15 px-3 py-2 flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Signing in with Gmail automatically joins our Mailchimp client list &amp; applies first-order savings (MONTE10).
+                  </span>
+                </div>
+              )}
+              <div className="relative flex items-center py-1">
+                <div className="flex-grow border-t border-black/10" />
+                <span className="shrink mx-3 text-[10px] uppercase tracking-[0.2em] text-neutral-400">
+                  Or with Email
+                </span>
+                <div className="flex-grow border-t border-black/10" />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-6 border-b border-black/10 text-xs uppercase tracking-wider">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthTab('login');
+                setAuthMessage(null);
+              }}
+              className={`pb-2.5 cursor-pointer transition-colors ${
+                authTab === 'login'
+                  ? 'border-b-2 border-[#142B4E] font-semibold text-[#142B4E]'
+                  : 'text-neutral-500 hover:text-[#1A1A1A]'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthTab('register');
+                setAuthMessage(null);
+              }}
+              className={`pb-2.5 cursor-pointer transition-colors ${
+                authTab === 'register'
+                  ? 'border-b-2 border-[#142B4E] font-semibold text-[#142B4E]'
+                  : 'text-neutral-500 hover:text-[#1A1A1A]'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authMessage && (
+            <div
+              className={`p-3 text-xs border ${
+                authMessage.type === 'err'
+                  ? 'bg-red-50 border-red-200 text-red-700'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              }`}
+            >
+              {authMessage.text}
+            </div>
+          )}
+
+          {authTab === 'login' ? (
+            <form onSubmit={handleEmailLogin} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="Email address"
+                className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+              />
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="Password"
+                className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+              />
+              <button
+                type="submit"
+                disabled={authSubmitting}
+                className="px-5 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>{authSubmitting ? 'Signing in...' : 'Sign In'}</span>
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleEmailRegister} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  required
+                  value={regName}
+                  onChange={(e) => setRegName(e.target.value)}
+                  placeholder="Full name"
+                  className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+                <input
+                  type="email"
+                  required
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  placeholder="Email address (Gmail or personal)"
+                  className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  placeholder="Password (min 6 characters)"
+                  className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+                <input
+                  type="tel"
+                  value={regPhone}
+                  onChange={(e) => setRegPhone(e.target.value)}
+                  placeholder="Phone (optional, for DHL courier)"
+                  className="px-3 py-2.5 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-neutral-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={regSubscribeMailchimp}
+                  onChange={(e) => setRegSubscribeMailchimp(e.target.checked)}
+                />
+                <span>Join our Mailchimp client list &amp; receive 10% off your first order (MONTE10)</span>
+              </label>
+              <button
+                type="submit"
+                disabled={authSubmitting}
+                className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer"
+              >
+                {authSubmitting ? 'Creating account...' : 'Create Customer Account'}
+              </button>
+            </form>
+          )}
+        </section>
+      ) : (
+        <section
+          data-testid="signed-in-account-panel"
+          className="border border-black/15 p-6 bg-white space-y-6"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-black/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#142B4E] text-white flex items-center justify-center">
+                <User className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-[#1A1A1A]">{authUser.name}</div>
+                <div className="text-xs text-neutral-500">{authUser.email}</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-4 py-2 border border-black/15 hover:border-[#142B4E] text-xs uppercase tracking-wider inline-flex items-center gap-2 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+
+          {authMessage && authMessage.type === 'ok' && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+              {authMessage.text}
+            </div>
+          )}
+
+          <div>
+            <h2 className="text-xs uppercase tracking-[0.16em] font-semibold text-[#142B4E] mb-3">
+              My Order History
+            </h2>
+            {loadingOrders ? (
+              <div className="text-xs text-neutral-500">Loading your orders...</div>
+            ) : myOrders.length === 0 ? (
+              <div className="text-xs text-neutral-500 bg-[#FAFAFA] border border-black/10 p-4">
+                No previous orders matched <strong>{authUser.email}</strong> yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {myOrders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    className="border border-black/10 bg-[#FAFAFA] p-4 flex flex-wrap items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div className="font-mono-tabular font-semibold text-[#1A1A1A]">
+                        {ord.order_number}
+                      </div>
+                      <div className="text-neutral-500">
+                        {ord.shipping_city}, {ord.shipping_country} · {ord.payment_method.toUpperCase()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="px-2 py-0.5 bg-white border border-black/10 uppercase text-[11px]">
+                        {ord.order_status}
+                      </span>
+                      <span className="font-mono-tabular font-semibold">
+                        {formatRegionalPrice(ord.total, ord.region_code)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Order Lookup */}
       <section className="border border-black/15 p-6 space-y-5 bg-[#FAFAFA]">
         <div className="flex items-center gap-2 text-xs uppercase tracking-wider font-semibold text-[#142B4E]">
           <PackageSearch className="w-4 h-4" />
-          <span>Track Order & DHL Waybill</span>
+          <span>Track Order &amp; DHL Waybill</span>
         </div>
 
         <form onSubmit={handleLookup} className="grid grid-cols-1 sm:grid-cols-3 gap-3">

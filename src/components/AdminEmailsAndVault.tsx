@@ -268,6 +268,7 @@ export const EmailsResendPanel: React.FC<{
 };
 
 const GROUP_TITLES: Record<ApiCredentialItem['group'], string> = {
+  auth: 'Google / Gmail Client Login OAuth',
   payments: 'Payment Gateways (Vipps, PayPal, Stripe)',
   email: 'Resend Transactional Email API',
   commerce: 'Wix E-Commerce OAuth & Mailchimp Newsletter',
@@ -396,6 +397,7 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
   };
 
   const groups: ApiCredentialItem['group'][] = [
+    'auth',
     'payments',
     'email',
     'commerce',
@@ -404,7 +406,17 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
     'ai',
   ];
 
+  const googleCallbackUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/api/auth/google/callback`
+      : '/api/auth/google/callback';
+
   const onboardingProviders = [
+    {
+      id: 'google',
+      title: 'Google / Gmail Client OAuth',
+      desc: `Enables "Continue with Gmail" customer login + automatic Mailchimp audience sync. Authorized Redirect URI: ${googleCallbackUrl}`,
+    },
     {
       id: 'vipps',
       title: 'Vipps MobilePay (Norway)',
@@ -437,7 +449,7 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
       <div className="border-b border-neutral-200 pb-3">
         <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
           <KeyRound className="w-4 h-4 text-[#142B4E]" />
-          <span>Owner API Vault & Gateway Onboarding (PayPal · Stripe · Vipps · Wix · Resend)</span>
+          <span>Owner API Vault & Gateway Onboarding (Gmail · PayPal · Stripe · Vipps · Wix · Resend)</span>
         </h1>
         <p className="text-neutral-500 mt-0.5">
           Add, update, or remove environment keys directly from Admin. Values are stored server-side and masked immediately after saving.

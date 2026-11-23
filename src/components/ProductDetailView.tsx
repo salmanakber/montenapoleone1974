@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, useScroll, useSpring } from 'motion/react';
+import { motion, useScroll, useTransform } from 'motion/react';
 import {
   Building2,
   Check,
@@ -128,9 +128,14 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   onOpenSizeGuide,
   onOpenReturnForm,
 }) => {
-  const { scrollYProgress } = useScroll();
-  const smoothProgress = useSpring(scrollYProgress, { stiffness: 180, damping: 28, restDelta: 0.001 });
   const [showStickyBar, setShowStickyBar] = useState(false);
+  const desktopSectionRef = useRef<HTMLDivElement>(null);
+  const { scrollYProgress: sectionProgress } = useScroll({
+    target: desktopSectionRef,
+    offset: ['start start', 'end end'],
+  });
+  const yColLeft = useTransform(sectionProgress, [0, 1], [0, -18]);
+  const yColRight = useTransform(sectionProgress, [0, 1], [14, -14]);
 
   const fitSectionRef = useRef<HTMLButtonElement>(null);
   const collarSectionRef = useRef<HTMLDivElement>(null);
@@ -181,12 +186,17 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
 
+  // Mobile-only horizontal image slider state
+  const [mobileSlide, setMobileSlide] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+
   const [justAdded, setJustAdded] = useState(false);
 
   useEffect(() => {
     setLightboxIndex(null);
     setLightboxZoomed(false);
     setFitDrawerOpen(false);
+    setMobileSlide(0);
     setSize((prev) =>
       product.sizes.includes(prev)
         ? prev
@@ -371,29 +381,29 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   };
 
   return (
-    <main className="pt-16 pb-20 max-w-[1660px] mx-auto px-2 sm:px-4">
-      {/* Top Scroll Reading Progress Bar */}
-      <motion.div
-        style={{ scaleX: smoothProgress, transformOrigin: '0% 50%' }}
-        className="fixed top-16 left-0 right-0 h-[2px] bg-[#142B4E] z-30 pointer-events-none"
-      />
-
+    <main className="pt-16 pb-36 lg:pb-32 max-w-[1920px] mx-auto px-0 md:pr-6 lg:pr-10">
       {/* Compact Shipping & Regional Warehouse Notice Bar */}
-      <div className="py-2 border-b border-black/10 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-600 mb-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span>{copy.pdp.freeShippingBanner}</span>
+      <div className="px-4 md:px-6 py-1.5 md:py-2 border-b border-black/10 flex items-center justify-between gap-2 text-[11px] md:text-xs text-neutral-600 mb-2 md:mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="truncate">{copy.pdp.freeShippingBanner}</span>
           <span className="hidden sm:inline text-neutral-300">·</span>
           <span className="hidden sm:inline font-medium text-neutral-700">{region.dhl_eta_days}</span>
         </div>
-        <span className="text-[11px] font-mono-tabular text-neutral-500">
+        <span className="hidden sm:inline text-[11px] font-mono-tabular text-neutral-500 shrink-0">
           SKU {variantInfo.variantSku} · {product.warehouse_location}
         </span>
       </div>
 
-      {/* Main 2-Column Split: Enlarged Studio Lightbox Grid Left (8 cols) + Configurator Right (4 cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-start">
-        {/* Left Enlarged Scroll-Reveal Studio Gallery (8 cols) */}
-        <div className="lg:col-span-8 relative">
+      {/* Main 2-Column Split: Sticky Parallax Studio 4-Image Grid Left (desktop) + Scrollable Configurator Right */}
+      <div
+        ref={desktopSectionRef}
+        className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 md:gap-6 lg:gap-8 items-start"
+      >
+        {/* Left Sticky Parallax Studio Gallery (7 cols on desktop, flush left) */}
+        <div
+          data-testid="sticky-pdp-gallery-col"
+          className="lg:col-span-7 relative md:pl-0 lg:sticky lg:top-20"
+        >
           <button
             type="button"
             onClick={onBack}
@@ -403,38 +413,166 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <ChevronLeft className="w-4 h-4" />
           </button>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {gallery.map((imgUrl, idx) => (
-              <motion.button
-                key={`${imgUrl}-${idx}`}
-                type="button"
-                initial={{ opacity: 0, y: 14 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.1 }}
-                transition={{ duration: 0.4, delay: (idx % 2) * 0.06 }}
+          {/* MOBILE ONLY (< md): Compact Swipeable Image Slider */}
+          <div className="md:hidden px-3" data-testid="mobile-pdp-slider">
+            <div
+              className="relative aspect-[4/3] bg-[#E6E6E6] overflow-hidden"
+              onTouchStart={(e) => {
+                touchStartX.current = e.touches[0]?.clientX ?? null;
+              }}
+              onTouchEnd={(e) => {
+                if (touchStartX.current === null) return;
+                const endX = e.changedTouches[0]?.clientX ?? touchStartX.current;
+                const diff = touchStartX.current - endX;
+                if (Math.abs(diff) > 40 && gallery.length > 1) {
+                  setMobileSlide((prev) =>
+                    diff > 0
+                      ? (prev + 1) % gallery.length
+                      : prev === 0
+                      ? gallery.length - 1
+                      : prev - 1
+                  );
+                }
+                touchStartX.current = null;
+              }}
+            >
+              <img
+                src={gallery[mobileSlide] || product.primary_image}
+                alt={`${product.title} slide ${mobileSlide + 1}`}
+                referrerPolicy="no-referrer"
                 onClick={() => {
-                  setLightboxIndex(idx);
+                  setLightboxIndex(mobileSlide);
                   setLightboxZoomed(false);
                 }}
-                aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
-                className="group relative aspect-[4/4.65] bg-[#E6E6E6] overflow-hidden cursor-zoom-in text-left block"
-              >
-                <img
-                  src={imgUrl}
-                  alt={`${product.title} view ${idx + 1}`}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                />
-                <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </span>
-              </motion.button>
-            ))}
+                className="w-full h-full object-cover cursor-zoom-in"
+              />
+
+              <span className="absolute top-3 right-3 px-2 py-0.5 bg-white/90 border border-black/10 text-[11px] font-mono-tabular text-[#1A1A1A]">
+                {mobileSlide + 1} / {gallery.length}
+              </span>
+
+              {gallery.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMobileSlide((prev) => (prev === 0 ? gallery.length - 1 : prev - 1))
+                    }
+                    aria-label="Previous product image"
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 hover:bg-white border border-black/10 flex items-center justify-center text-[#1A1A1A] shadow cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMobileSlide((prev) => (prev + 1) % gallery.length)}
+                    aria-label="Next product image"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 hover:bg-white border border-black/10 flex items-center justify-center text-[#1A1A1A] shadow cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {gallery.length > 1 && (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-center justify-center gap-1.5">
+                  {gallery.map((_, idx) => (
+                    <button
+                      key={`dot-${idx}`}
+                      type="button"
+                      onClick={() => setMobileSlide(idx)}
+                      aria-label={`Select image ${idx + 1}`}
+                      className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                        idx === mobileSlide ? 'w-5 bg-[#142B4E]' : 'w-1.5 bg-neutral-300'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  {gallery.map((thumb, idx) => (
+                    <button
+                      key={`mobile-thumb-${idx}`}
+                      type="button"
+                      onClick={() => setMobileSlide(idx)}
+                      className={`w-10 h-11 shrink-0 overflow-hidden border-2 bg-[#E6E6E6] cursor-pointer ${
+                        idx === mobileSlide ? 'border-[#142B4E]' : 'border-transparent opacity-70'
+                      }`}
+                    >
+                      <img src={thumb} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* DESKTOP ONLY (>= md): Compact Viewport-Fit 2x2 Sticky Parallax Gallery */}
+          <div
+            data-testid="desktop-pdp-gallery"
+            className="hidden md:grid md:grid-cols-2 gap-2"
+          >
+            <motion.div style={{ y: yColLeft }} className="space-y-2">
+              {gallery
+                .map((imgUrl, idx) => ({ imgUrl, idx }))
+                .filter((_, pos) => pos % 2 === 0)
+                .map(({ imgUrl, idx }) => (
+                  <button
+                    key={`${imgUrl}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      setLightboxIndex(idx);
+                      setLightboxZoomed(false);
+                    }}
+                    aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
+                    className="group relative aspect-square bg-[#E6E6E6] overflow-hidden cursor-zoom-in text-left block w-full"
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`${product.title} view ${idx + 1}`}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                    />
+                    <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </span>
+                  </button>
+                ))}
+            </motion.div>
+
+            <motion.div style={{ y: yColRight }} className="space-y-2">
+              {gallery
+                .map((imgUrl, idx) => ({ imgUrl, idx }))
+                .filter((_, pos) => pos % 2 === 1)
+                .map(({ imgUrl, idx }) => (
+                  <button
+                    key={`${imgUrl}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      setLightboxIndex(idx);
+                      setLightboxZoomed(false);
+                    }}
+                    aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
+                    className="group relative aspect-square bg-[#E6E6E6] overflow-hidden cursor-zoom-in text-left block w-full"
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`${product.title} view ${idx + 1}`}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                    />
+                    <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </span>
+                  </button>
+                ))}
+            </motion.div>
           </div>
         </div>
 
-        {/* Right Purchase Configurator (4 cols, Sticky on Desktop Scroll) */}
-        <div className="lg:col-span-4 lg:sticky lg:top-20 space-y-3.5">
+        {/* Right Purchase Configurator (5 cols, scrolls naturally while left gallery stays sticky) */}
+        <div className="lg:col-span-5 px-4 md:px-0 space-y-3.5">
           {/* Universal B2C Retail <-> B2B Corporate Switcher on Every Single Product */}
           {onSwitchToB2B && (
             <div
@@ -482,7 +620,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </div>
 
           {/* Smooth Quick-Jump Anchor Bar */}
-          <div className="flex flex-wrap gap-1.5 text-[11px] pt-0.5">
+          <div className="hidden md:flex flex-wrap gap-1.5 text-[11px] pt-0.5">
             <button
               type="button"
               onClick={() => scrollToSection(fitSectionRef)}
@@ -522,7 +660,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center justify-between border-y border-black/10 py-3">
+          <div className="flex items-center justify-between border-y border-black/10 py-2.5 md:py-3">
             <div>
               <div className="flex items-baseline gap-2.5">
                 <span className="text-2xl font-mono-tabular font-semibold text-[#142B4E]" data-testid="pdp-live-price">
@@ -923,7 +1061,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
       {/* Recommendations Row Using Hover Scrubber Cards */}
       {recommendations.length > 0 && (
-        <section className="mt-10 pt-7 border-t border-black/10">
+        <section className="mt-10 pt-7 border-t border-black/10 px-4 md:px-6">
           <h2 className="text-sm font-medium uppercase tracking-[0.1em] text-[#1A1A1A] mb-3.5">
             {copy.pdp.recommendationsTitle}
           </h2>
@@ -946,14 +1084,14 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
       {/* Floating Scroll Summary & Add-to-Bag Sticky Dock */}
       {showStickyBar && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-black/15 shadow-lg px-4 sm:px-8 py-2.5">
-          <div className="max-w-[1660px] mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-black/15 shadow-lg px-4 sm:px-8 py-2 md:py-2.5">
+          <div className="max-w-[1660px] mx-auto flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <img
                 src={product.primary_image}
                 alt={product.title}
                 referrerPolicy="no-referrer"
-                className="w-10 h-10 object-cover bg-[#E6E6E6] shrink-0"
+                className="hidden sm:block w-10 h-10 object-cover bg-[#E6E6E6] shrink-0"
               />
               <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wide truncate">

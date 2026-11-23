@@ -5,6 +5,7 @@ import {
   Gift,
   Image as ImageIcon,
   Layers,
+  Megaphone,
   Plus,
   Sparkles,
   Trash2,
@@ -14,7 +15,10 @@ import type {
   BulkDiscountSettings,
   HeroSlideRecord,
   PromotionPopupSettings,
+  TopBannerSettings,
+  TopBannerVisibility,
 } from '../types.ts';
+import { DEFAULT_TOP_BANNER_SETTINGS } from '../utils/commerce.ts';
 
 // ---------------------------------------------------------------------------
 // 1. HERO SLIDER MANAGER PANEL
@@ -400,6 +404,7 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
 
 interface PromotionsAndBulkAdminPanelProps {
   authToken: string;
+  topBanner?: TopBannerSettings;
   promoRules: PromotionPopupSettings;
   bulkDiscount: BulkDiscountSettings;
   onRefresh: () => void;
@@ -408,15 +413,21 @@ interface PromotionsAndBulkAdminPanelProps {
 
 export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelProps> = ({
   authToken,
+  topBanner = DEFAULT_TOP_BANNER_SETTINGS,
   promoRules,
   bulkDiscount,
   onRefresh,
   onRefreshStorefront,
 }) => {
+  const [bannerDraft, setBannerDraft] = useState<TopBannerSettings>(topBanner);
   const [promoDraft, setPromoDraft] = useState<PromotionPopupSettings>(promoRules);
   const [bulkDraft, setBulkDraft] = useState<BulkDiscountSettings>(bulkDiscount);
-  const [busy, setBusy] = useState<'promo' | 'bulk' | null>(null);
+  const [busy, setBusy] = useState<'banner' | 'promo' | 'bulk' | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBannerDraft(topBanner);
+  }, [topBanner]);
 
   useEffect(() => {
     setPromoDraft(promoRules);
@@ -425,6 +436,33 @@ export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelPr
   useEffect(() => {
     setBulkDraft(bulkDiscount);
   }, [bulkDiscount]);
+
+  const saveTopBanner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy('banner');
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/site-settings/top_banner', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(bannerDraft),
+      });
+      if (!res.ok) {
+        setFeedback('Failed to update top announcement banner settings.');
+        return;
+      }
+      setFeedback(
+        `Top Promotional Banner saved (${bannerDraft.enabled ? `Visible: ${bannerDraft.visibility}` : 'Disabled'}).`
+      );
+      onRefresh();
+      onRefreshStorefront();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const savePromo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -481,10 +519,10 @@ export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelPr
       <div className="border-b border-neutral-200 pb-3">
         <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
           <Gift className="w-4 h-4 text-[#142B4E]" />
-          <span>First-Order Mailchimp Popup & Bulk Purchase Discount Rules</span>
+          <span>Top Announcement Banner, First-Order Popup & Bulk Discount Rules</span>
         </h1>
         <p className="text-xs text-neutral-500 mt-0.5">
-          Control the bottom-left 10% First-Order Mailchimp floating badge + modal, and configure automatic multi-shirt bulk quantity discounts.
+          Configure the announcement banner above the navbar (with desktop/mobile visibility rules), the 10% First-Order Mailchimp popup, and multi-shirt bulk quantity tiers.
         </p>
       </div>
 
@@ -493,6 +531,146 @@ export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelPr
           {feedback}
         </div>
       )}
+
+      {/* Section 0: Top Promotional Announcement Banner */}
+      <form onSubmit={saveTopBanner} className="border border-neutral-200 bg-white p-5 space-y-4 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+          <div className="font-semibold text-sm uppercase tracking-wider flex items-center gap-2">
+            <Megaphone className="w-4 h-4 text-[#142B4E]" />
+            <span>0. Top Promotional Announcement Banner (Above Navbar)</span>
+          </div>
+          <label className="inline-flex items-center gap-2 cursor-pointer font-semibold text-[#142B4E]">
+            <input
+              type="checkbox"
+              checked={bannerDraft.enabled}
+              onChange={(e) => setBannerDraft((b) => ({ ...b, enabled: e.target.checked }))}
+              className="accent-[#142B4E] w-4 h-4"
+            />
+            <span>Enable Top Banner</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-[11px] text-neutral-500 mb-1">Device Visibility Mode</label>
+            <select
+              aria-label="Top banner device visibility"
+              value={bannerDraft.visibility}
+              onChange={(e) =>
+                setBannerDraft((b) => ({
+                  ...b,
+                  visibility: e.target.value as TopBannerVisibility,
+                }))
+              }
+              className="w-full px-3 py-2 border border-neutral-300 bg-white font-medium"
+            >
+              <option value="both">Desktop & Phone (Both)</option>
+              <option value="desktop_only">Desktop Only</option>
+              <option value="mobile_only">Phone / Mobile Only</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] text-neutral-500 mb-1">Click Action Destination</label>
+            <select
+              aria-label="Top banner destination"
+              value={bannerDraft.linkView}
+              onChange={(e) =>
+                setBannerDraft((b) => ({
+                  ...b,
+                  linkView: e.target.value as TopBannerSettings['linkView'],
+                }))
+              }
+              className="w-full px-3 py-2 border border-neutral-300 bg-white"
+            >
+              <option value="catalog">Open Shirts Catalog</option>
+              <option value="b2b">Open Corporate B2B Portal</option>
+              <option value="about">Open About Us / Heritage</option>
+              <option value="none">No Click Link (Text Only)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] text-neutral-500 mb-1">Catalog Category Filter</label>
+            <input
+              value={bannerDraft.linkCategory || 'all'}
+              onChange={(e) => setBannerDraft((b) => ({ ...b, linkCategory: e.target.value }))}
+              placeholder="all / linen / business"
+              className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] text-neutral-500 mb-1">Background</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={bannerDraft.bgColor || '#142B4E'}
+                  onChange={(e) => setBannerDraft((b) => ({ ...b, bgColor: e.target.value }))}
+                  className="w-8 h-8 border border-neutral-300 p-0 cursor-pointer"
+                />
+                <input
+                  value={bannerDraft.bgColor || '#142B4E'}
+                  onChange={(e) => setBannerDraft((b) => ({ ...b, bgColor: e.target.value }))}
+                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular text-[11px]"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] text-neutral-500 mb-1">Text Color</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={bannerDraft.textColor || '#FFFFFF'}
+                  onChange={(e) => setBannerDraft((b) => ({ ...b, textColor: e.target.value }))}
+                  className="w-8 h-8 border border-neutral-300 p-0 cursor-pointer"
+                />
+                <input
+                  value={bannerDraft.textColor || '#FFFFFF'}
+                  onChange={(e) => setBannerDraft((b) => ({ ...b, textColor: e.target.value }))}
+                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular text-[11px]"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-[#FAFAFA] p-4 border border-neutral-200">
+          {(['en', 'no', 'it', 'vn'] as const).map((rc) => {
+            const key = `text_${rc}` as 'text_en' | 'text_no' | 'text_it' | 'text_vn';
+            return (
+              <div key={rc}>
+                <label className="block text-[10px] uppercase font-semibold text-[#142B4E] mb-1">
+                  Announcement Text ({rc.toUpperCase()})
+                </label>
+                <input
+                  value={bannerDraft[key] || ''}
+                  onChange={(e) => setBannerDraft((b) => ({ ...b, [key]: e.target.value }))}
+                  placeholder={`Promotion text (${rc.toUpperCase()})`}
+                  className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <div
+            className="flex-1 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] truncate text-center border border-black/10"
+            style={{
+              backgroundColor: bannerDraft.bgColor || '#142B4E',
+              color: bannerDraft.textColor || '#FFFFFF',
+            }}
+          >
+            Preview: {bannerDraft.text_en || 'Announcement banner text'}
+          </div>
+          <button
+            type="submit"
+            disabled={busy === 'banner'}
+            className="px-5 py-2 bg-[#142B4E] text-white uppercase tracking-wider font-medium cursor-pointer shrink-0"
+          >
+            {busy === 'banner' ? 'Saving...' : 'Save Top Banner'}
+          </button>
+        </div>
+      </form>
 
       {/* Section A: First-Order Popup & Mailchimp */}
       <form onSubmit={savePromo} className="border border-neutral-200 bg-white p-5 space-y-4 text-xs">
@@ -903,6 +1081,7 @@ export const AiSettingsAdminPanel: React.FC<AiSettingsAdminPanelProps> = ({
                 className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white font-mono-tabular"
               >
                 <option value="gemini-4-hydrogen">gemini-4-hydrogen (Recommended Fast Flash)</option>
+                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Flash Lite)</option>
                 <option value="gemini-4-neon">gemini-4-neon (Pro Quality)</option>
               </select>
             </div>

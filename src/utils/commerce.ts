@@ -5,6 +5,7 @@ import type {
   BulkDiscountTier,
   CartItem,
   CsvImportRow,
+  CustomerAuthSettings,
   PaymentMethod,
   Product,
   PromotionPopupSettings,
@@ -14,7 +15,21 @@ import type {
   StaffPermissionKey,
   StaffPermissions,
   TailoringSizeSpec,
+  TopBannerSettings,
 } from '../types.ts';
+
+export const DEFAULT_TOP_BANNER_SETTINGS: TopBannerSettings = {
+  enabled: true,
+  visibility: 'both',
+  text_en: 'COMPLIMENTARY BESPOKE SLEEVE & SHIRT LENGTH TAILORING · FREE DHL SHIPPING OVER $250',
+  text_no: 'KOSTNADSFRI SKREDDERSYDD ERME- OG SKJORTELENGDE · FRI FRAKT OVER 2 500 KR',
+  text_it: 'LUNGHEZZA MANICHE E BUSTO SU MISURA GRATUITA · SPEDIZIONE DHL GRATUITA',
+  text_vn: 'MIỄN PHÍ ĐO CHỈNH CHIỀU DÀI TAY & THÂN ÁO · MIỄN PHÍ VẬN CHUYỂN DHL',
+  linkView: 'catalog',
+  linkCategory: 'all',
+  bgColor: '#142B4E',
+  textColor: '#FFFFFF',
+};
 
 export const DEFAULT_BULK_DISCOUNT_SETTINGS: BulkDiscountSettings = {
   enabled: true,
@@ -969,6 +984,37 @@ export function parseWordPressCategoriesXml(xmlText: string): {
 
   return { categories: list, errors: [] };
 }
+
+export function productMatchesCategories(
+  product: Pick<Product, 'category_slug' | 'category_slugs'>,
+  allowedSlugs: Set<string> | null
+): boolean {
+  if (!allowedSlugs || allowedSlugs.size === 0) return true;
+  if (allowedSlugs.has(product.category_slug)) return true;
+  if (Array.isArray(product.category_slugs)) {
+    return product.category_slugs.some((slug) => allowedSlugs.has(slug));
+  }
+  return false;
+}
+
+export function isTopBannerVisibleOnViewport(
+  banner: Pick<TopBannerSettings, 'enabled' | 'visibility'>,
+  viewportWidth: number
+): boolean {
+  if (!banner.enabled) return false;
+  if (banner.visibility === 'desktop_only') return viewportWidth >= 768;
+  if (banner.visibility === 'mobile_only') return viewportWidth < 768;
+  return true;
+}
+
+export const DEFAULT_CUSTOMER_AUTH_SETTINGS: CustomerAuthSettings = {
+  googleLoginEnabled: true,
+  showCornerPopup: true,
+  autoSubscribeMailchimp: true,
+  cornerPopupDelaySeconds: 3,
+};
+
+
 
 
 

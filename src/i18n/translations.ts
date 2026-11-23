@@ -132,13 +132,25 @@ export interface RegionCopy {
     send: string;
     cookieNotice: string;
     infoLinks: string[];
+    infoUrls: string[];
   };
   aboutPage: {
     eyebrow: string;
     title: string;
     lead: string;
     paragraphs: string[];
+    pullQuote: string;
+    videoCaption: string;
+    storyEyebrow: string;
+    storyHeading: string;
+    storyBody: string[];
+    traditionsHeading: string;
+    traditions: Array<{ title: string; body: string }>;
     pillars: Array<{ title: string; body: string }>;
+    features: Array<{ eyebrow: string; title: string; paragraphs: string[]; quote?: string }>;
+    commitmentEyebrow: string;
+    commitmentHeading: string;
+    commitmentCards: Array<{ eyebrow: string; title: string; body: string }>;
     showroomHeading: string;
     showroomAddress: string;
     ctaCatalog: string;
@@ -299,52 +311,150 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
     footer: {
       aboutHeading: 'About Us',
       aboutText:
-        'Monte Napoleone was founded in Treviso, Italy in 1974. Ever since, we have crafted exclusive shirts defined by timeless elegance and uncompromising two-ply textiles.',
+        'Monte Napoleone was founded in Treviso, Italy in 1974. Ever since, we have created exclusive shirting defined by timeless elegance and uncompromising quality. More than aesthetics — it is a promise of perfection and heritage.',
       contactHeading: 'Contact',
       contactNote:
-        'We respond to all customer and bespoke tailoring inquiries within 24 hours.',
-      addressHeading: 'Showroom',
+        'We prefer all important inquiries by email, so we can provide thorough and concrete answers. Our goal is always to respond within 24 hours.',
+      addressHeading: 'Address',
       infoHeading: 'Information',
-      followHeading: 'Follow Us',
+      followHeading: 'Follow us',
       newsletterLabel: 'Newsletter',
       newsletterPlaceholder: 'Enter your email',
       send: 'Send',
       cookieNotice:
-        'Regional pricing, warehouse inventory, and payment methods adapt dynamically to your selected country.',
+        'We use cookies to improve your experience on our website. By continuing, you agree to our use of cookies.',
       infoLinks: [
         'Returns & Exchanges',
-        'Withdrawal Form',
-        'Stockists & Partners',
-        'Careers',
-        'FAQ',
+        'Withdrawal Form (PDF)',
+        'Dealers & Partners',
+        'Careers & Opportunities',
+        'Frequently Asked Questions',
         'Privacy Policy',
+      ],
+      infoUrls: [
+        'https://montenapoleone1974.com/retur-og-bytte/',
+        'https://montenapoleone1974.com/wp-content/uploads/2025/03/return-policy-A5.pdf',
+        'https://montenapoleone1974.com/forhandlere-og-partnere/',
+        'https://montenapoleone1974.com/karrierer/',
+        'https://montenapoleone1974.com/faqs/',
+        'https://montenapoleone1974.com/personvernerklaering/',
       ],
     },
     aboutPage: {
-      eyebrow: 'TREVISO, ITALY · ESTABLISHED 1974',
-      title: 'Timeless Italian Shirt Craftsmanship — Now Tailored Worldwide',
-      lead: 'Monte Napoleone was founded in Treviso, Italy in 1974 with a singular dedication: weaving two-ply cotton and European linen into shirts that hold their poise from morning meetings in Oslo to evenings in Milan.',
+      eyebrow: 'About Us · WHY WE EXIST',
+      title: 'WHY WE EXIST',
+      lead: 'A great shirt does more than complete an outfit. It changes how you feel when you wear it.',
       paragraphs: [
-        'For more than five decades, our family-led atelier has combined Northern Italian pattern precision with modern Scandinavian direct-to-wardrobe simplicity. Every dress and leisure shirt begins with extra-long-staple 100/2-ply cotton or breathable Normandy flax woven for lasting drape and crisp collars.',
-        'True fit is never one-size-fits-all. That is why every online and showroom shirt at Monte Napoleone 1974 includes complimentary custom sleeve length and shirt body length tailoring before dispatch — alongside optional waist, chest, bottom hem, and shoulder adjustments.',
-        'In addition to our direct consumer (B2C) collection, we partner with Nordic and European hotels, aviation teams, and executive offices through Monte Connected B2B corporate uniform programs with custom cuff and chest embroidery.',
+        'It should give you confidence, comfort and the feeling that everything is exactly as it should be.',
+        'Whether you’re walking into an important meeting, meeting a business partner, or simply starting another day at work, we believe the right shirt should help you feel comfortable and confident.',
+        'We believe buying one online should feel just as effortless. No unnecessary complexity. No uncertainty. No surprises.',
+        'Our goal has never been to sell the most shirts. Our goal is to create shirts people genuinely enjoy wearing—and choose again when it’s time for the next one.',
+      ],
+      pullQuote: 'Because in the end, the most important shirt is not the one we make. It’s the one you look forward to wearing.',
+      videoCaption: 'Treviso 1974 Atelier — Precision Pattern Development, Two-Ply Weaving & Inspection',
+      storyEyebrow: 'Our Foundation',
+      storyHeading: 'OUR STORY',
+      storyBody: [
+        'Monte Napoleone was founded in Treviso, Italy, in 1974 with one simple belief: Quality never goes out of style. More than fifty years later, that belief still guides every decision we make.',
+        'We respect tradition. But we also believe craftsmanship should continue to evolve. We believe the best shirts are created when experience, ideas and craftsmanship come together with a shared commitment to quality.',
+      ],
+      traditionsHeading: 'Today, Monte Napoleone brings together the strengths of three traditions.',
+      traditions: [
+        {
+          title: 'Italian Heritage',
+          body: 'Gives us an appreciation for timeless design and elegance.',
+        },
+        {
+          title: 'Scandinavian Thinking',
+          body: 'Inspires simplicity, functionality and honesty.',
+        },
+        {
+          title: 'Vietnamese Craftsmanship and Manufacturing Expertise',
+          body: 'Allow us to transform ideas into products with precision and consistency.',
+        },
       ],
       pillars: [
         {
-          title: 'Two-Ply 100/2 Weaving',
-          body: 'Double-twisted yarns deliver natural wrinkle recovery, silky skin feel, and wash-after-wash collar structure.',
+          title: 'Italian Heritage',
+          body: 'Timeless Treviso tailoring proportions and crisp collar engineering.',
         },
         {
-          title: 'Complimentary Length Tailoring',
-          body: 'Adjust sleeve and shirt length free of charge on every shirt — calibrated per collar size from 30 to 45.',
+          title: 'Scandinavian Thinking',
+          body: 'Simplicity, functionality, honest transparent pricing, and effortless ordering.',
         },
         {
-          title: 'Oslo & Treviso Showrooms',
-          body: 'Regional fulfillment from Treviso Atelier, Gulbrandsens Agencies AS in Oslo, and Ho Chi Minh City Hub.',
+          title: 'Craftsmanship & Precision',
+          body: 'Close manufacturing control from 100/2-ply fabric selection to final inspection.',
         },
       ],
-      showroomHeading: 'Nordic Showroom & Representation',
-      showroomAddress: 'Gulbrandsens Agencies AS · Maridalsveien 87, 0461 Oslo, Norway · monte@montenapoleone1974.com',
+      features: [
+        {
+          eyebrow: 'Expertise',
+          title: 'WHY WE SPECIALIZE',
+          paragraphs: [
+            'We made a conscious decision. Instead of producing everything, we chose to focus on what we do best: shirts, polo shirts and T-shirts.',
+            'Over decades, our team has refined the craft of shirtmaking through international manufacturing experience and by meeting the quality standards of demanding brands and retail partners around the world.',
+            'Working closely with our own manufacturing allows us to oversee every stage of production, from fabric selection and pattern development to cutting, sewing, pressing, quality control and final packaging.',
+            'Some fabrics are offered as Pre-Order, giving customers access to a wider selection of carefully chosen materials beyond our regular stock.',
+          ],
+          quote: 'Real expertise comes from specialization — measured by the knowledge, precision and pride of the people who make every shirt.',
+        },
+        {
+          eyebrow: 'Customer',
+          title: 'DESIGNED AROUND YOU',
+          paragraphs: [
+            'One of the biggest concerns when buying a shirt online is simple. Will it fit the way I expect?',
+            'We understand that. That’s why every shirt ordered through our online store is made specifically for you. Not taken from a warehouse shelf. Not a product that has been sitting there for months.',
+            'Every Made-to-Order shirt includes complimentary adjustments to shirt length and sleeve length. Additional tailoring options for waist, chest, bottom hem and shoulder are also available.',
+          ],
+          quote: 'We don’t believe customers should adapt to the shirt. We believe the shirt should adapt to the customer.',
+        },
+        {
+          eyebrow: 'Monte Napoleone 1974',
+          title: 'HERITAGE COLLECTION',
+          paragraphs: [
+            'Monte Napoleone 1974 marks the beginning of a new chapter in our story. Our HERITAGE COLLECTION celebrates more than fifty years of inspiration while embracing the possibilities of modern craftsmanship and a more personal experience for every customer.',
+            'Every shirt is made to order using carefully selected natural fabrics and can be personalized with embroidered initials. The collection also introduces mother-of-pearl buttons, expanded tailoring options and an even greater attention to the details that define a truly exceptional shirt.',
+          ],
+          quote: 'Not because luxury needs to be louder. But because the smallest details often make the biggest difference over time.',
+        },
+      ],
+      commitmentEyebrow: 'Brand Purpose',
+      commitmentHeading: 'OUR COMMITMENT',
+      commitmentCards: [
+        {
+          eyebrow: 'Designed Around You',
+          title: 'Will it fit the way I expect?',
+          body: 'Every shirt ordered through our online store is crafted for you — not pulled from dead warehouse inventory.',
+        },
+        {
+          eyebrow: 'Personalization',
+          title: 'The Shirt Should Adapt to You',
+          body: 'Complimentary adjustments to shirt length and sleeve length, plus fine waist, chest, bottom hem and shoulder tailoring.',
+        },
+        {
+          eyebrow: 'Transparency',
+          title: 'A Better Way to Buy Online',
+          body: 'No uncertainty on fit or hidden surprises at checkout. Earning your trust is worth far more than making a single sale.',
+        },
+        {
+          eyebrow: 'Value',
+          title: 'The Price You See Is the Price You Pay',
+          body: 'No hidden fees or unexpected surprises — a straightforward, honest experience from order to doorstep.',
+        },
+        {
+          eyebrow: 'Our Promise',
+          title: 'Never Stop Improving',
+          body: 'Trust is built through experience, consistency, quality, honesty and service — never through empty advertising.',
+        },
+        {
+          eyebrow: 'Our Promise',
+          title: 'Better, Every Day',
+          body: 'If your first Monte Napoleone shirt makes choosing the second one easy, then we’ve achieved exactly what we set out to do.',
+        },
+      ],
+      showroomHeading: 'GULBRANDSENS AGENCIES SHOWROOM · OSLO',
+      showroomAddress: 'Maridalsveien 87, 0461 Oslo, Norway · monte@montenapoleone1974.com',
       ctaCatalog: 'Explore Shirt Collection',
       ctaB2B: 'Corporate B2B Agreements',
     },
@@ -501,10 +611,10 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
     footer: {
       aboutHeading: 'Om oss',
       aboutText:
-        'Monte Napoleone ble grunnlagt i Treviso, Italia i 1974. Siden den gang har vi skapt eksklusive skjorteprodukter preget av tidløs eleganse og kompromissløs kvalitet.',
+        'Monte Napoleone ble grunnlagt i Treviso, Italia i 1974. Siden den gang har vi skapt eksklusive skjorteprodukter preget av tidløs eleganse og kompromissløs kvalitet. Når du velger oss, velger du en arv.',
       contactHeading: 'Kontakt',
       contactNote:
-        'Vi besvarer alle henvendelser på e-post innen 24 timer.',
+        'Vi foretrekker alle viktige henvendelser på epost, slik at vi kan gi gode og konkrete svar. Vårt mål er alltid å svare på alle henvendelser innen 24 timer.',
       addressHeading: 'Adresse',
       infoHeading: 'Informasjon',
       followHeading: 'Følg oss',
@@ -512,7 +622,7 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       newsletterPlaceholder: 'Din e-postadresse',
       send: 'Send',
       cookieNotice:
-        'Norske priser inkluderer 25 % MVA med utsendelse fra vårt Oslo-showroom.',
+        'Vi bruker informasjonskapsler for å forbedre opplevelsen på nettstedet vårt. Ved å fortsette godtar du vår bruk av informasjonskapsler.',
       infoLinks: [
         'Retur og bytte',
         'Angrefrist skjema',
@@ -521,32 +631,103 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
         'Ofte Stilte Spørsmål',
         'Personvernerklæring',
       ],
+      infoUrls: [
+        'https://montenapoleone1974.com/retur-og-bytte/',
+        'https://montenapoleone1974.com/wp-content/uploads/2025/03/return-policy-A5.pdf',
+        'https://montenapoleone1974.com/forhandlere-og-partnere/',
+        'https://montenapoleone1974.com/karrierer/',
+        'https://montenapoleone1974.com/faqs/',
+        'https://montenapoleone1974.com/personvernerklaering/',
+      ],
     },
     aboutPage: {
-      eyebrow: 'TREVISO, ITALIA · ETABLERT 1974',
-      title: 'Om Monte Napoleone 1974 — Italiensk Skjortekunst Siden 1974',
-      lead: 'Monte Napoleone ble grunnlagt i Treviso, Italia i 1974. Siden den gang har vi skapt eksklusive skjorter preget av tidløs italiensk eleganse, kompromissløs tekstilkvalitet og perfekt passform.',
+      eyebrow: 'Om oss · HVORFOR VI EKSISTERER',
+      title: 'HVORFOR VI EKSISTERER',
+      lead: 'En god skjorte gjør mer enn å fullføre et antrekk. Den endrer hvordan du føler deg når du har den på.',
       paragraphs: [
-        'Gjennom mer enn fem tiår har vår filosofi vært enkel: å kombinere norditaliensk skreddertradisjon med slitesterke to-tråds stoffer (100/2-ply cotton) og pustende europeisk lin som holder fasongen hele dagen – fra styremøter i Oslo til sommerkvelder ved Middelhavet.',
-        'Ingen kropper er helt like. Derfor inkluderer hver eneste skjorte hos Monte Napoleone 1974 kostnadsfritt skreddersydd erme- og skjortelengde før utsendelse, samt valgfri tilpasning av midje, bryst, nederkant og skuldre i vår skreddersøm-konfigurator.',
-        'Via vårt nordiske showroom i Maridalsveien 87 i Oslo (Gulbrandsens Agencies AS) betjener vi både privatkunder (B2C) og bedriftskunder (B2B) som ønsker skjorteuniformer med brodert firmalogo og rask levering med DHL Express.',
+        'Den skal gi deg selvtillit, komfort og følelsen av at alt sitter akkurat slik det skal.',
+        'Enten du går inn i et viktig møte, møter en forretningspartner eller bare starter en ny arbeidsdag, mener vi den rette skjorten skal hjelpe deg å føle deg vel.',
+        'Å handle skjorte på nett skal føles like enkelt – uten unødvendig kompleksitet, usikkerhet eller overraskelser.',
+        'Målet vårt har aldri vært å selge flest mulig skjorter, men å lage skjorter folk virkelig liker å gå med – og velger igjen neste gang.',
+      ],
+      pullQuote: 'For til syvende og sist er den viktigste skjorten ikke den vi syr – det er den du gleder deg til å ta på.',
+      videoCaption: 'Treviso 1974 Atelier — Mønsterutvikling, Two-Ply veving og kvalitetskontroll',
+      storyEyebrow: 'Vårt Fundament',
+      storyHeading: 'VÅR HISTORIE',
+      storyBody: [
+        'Monte Napoleone ble grunnlagt i Treviso i Italia i 1974 med én enkel overbevisning: Kvalitet går aldri av moten. Mer enn femti år senere styrer denne troen fortsatt hvert valg vi tar.',
+        'Vi respekterer tradisjonen, men mener håndverket alltid skal utvikle seg videre når erfaring, ideer og stolthet møtes.',
+      ],
+      traditionsHeading: 'I dag forener Monte Napoleone styrken fra tre tradisjoner.',
+      traditions: [
+        {
+          title: 'Italiensk Arv',
+          body: 'Gir oss sansen for tidløs italiensk design og eleganse.',
+        },
+        {
+          title: 'Skandinavisk Tenkemåte',
+          body: 'Inspirerer til enkelhet, funksjonalitet og ærlighet.',
+        },
+        {
+          title: 'Vietnamesisk Håndverk & Presisjon',
+          body: 'Gjør det mulig å forvandle ideer til produkter med høy presisjon og jevn kvalitet.',
+        },
       ],
       pillars: [
         {
           title: 'Two-Ply 100/2-kvalitet',
-          body: 'Tettvevde dobbeltvridde bomullstråder gir naturlig krøllmotstand, fast krage og silkemyk komfort.',
+          body: 'Tettvevde dobbeltvridde bomullstråder gir naturlig krøllmotstand og fast krage.',
         },
         {
-          title: 'Gratis Skreddersøm på Lengde',
-          body: 'Tilpass erme- og skjortelengde kostnadsfritt på alle modeller – basert på eksakte mål fra størrelse 30 til 45.',
+          title: 'Kostnadsfritt Skreddersydd Lengde',
+          body: 'Tilpass erme- og skjortelengde gratis på alle skjorter fra str. 30 til 45.',
         },
         {
           title: 'Norsk Lager & Oslo Showroom',
-          body: 'Priser inkludert 25 % norsk MVA, Vipps-betaling og rask levering fra vårt showroom på Sagene i Oslo.',
+          body: 'Priser inkl. 25 % MVA, Vipps og utsendelse fra vårt showroom i Oslo.',
         },
       ],
-      showroomHeading: 'Norsk Showroom & Representasjon',
-      showroomAddress: 'Gulbrandsens Agencies AS · Maridalsveien 87, 0461 Oslo, Norge · monte@montenapoleone1974.com',
+      features: [
+        {
+          eyebrow: 'Ekspertise',
+          title: 'HVORFOR VI SPESIALISERER OSS',
+          paragraphs: [
+            'Vi tok et bevisst valg: i stedet for å produsere alt, spesialiserer vi oss på det vi kan aller best – skjorter, piqueskjorter og t-skjorter.',
+            'Gjennom vårt tette samarbeid med egen produksjon kontrollerer vi hvert eneste steg, fra stoffvalg og mønsterkonstruksjon til søm, stryking og kvalitetskontroll.',
+            'Utvalgte metervare-stoffer tilbys også som Pre-Order for et enda bredere utvalg.',
+          ],
+          quote: 'Ekte ekspertise måles i kunnskapen, presisjonen og stoltheten til menneskene bak hver skjorte.',
+        },
+        {
+          eyebrow: 'Kunde i Fokus',
+          title: 'DESIGNET RUNDT DEG',
+          paragraphs: [
+            'En av de største bekymringene ved netthandel er enkel: Kommer den til å sitte slik jeg forventer?',
+            'Hver skjorte inkluderer kostnadsfri justering av skjortelengde og ermelengde, samt mulighet for skreddersøm på midje, bryst, nederkant og skuldre.',
+          ],
+          quote: 'Vi mener ikke at kunden skal tilpasse seg skjorten – skjorten skal tilpasse seg deg.',
+        },
+        {
+          eyebrow: 'Monte Napoleone 1974',
+          title: 'HERITAGE COLLECTION',
+          paragraphs: [
+            'Vår HERITAGE COLLECTION feirer over 50 år med italiensk skjortetradisjon, oppgradert med perlemorsknapper, valgfri monogram-brodering og utvidet skreddersøm.',
+          ],
+          quote: 'Luksus trenger ikke å rope høyere – de minste detaljene utgjør den største forskjellen over tid.',
+        },
+      ],
+      commitmentEyebrow: 'Vårt Løfte',
+      commitmentHeading: 'VÅR FORPLIKTELSE',
+      commitmentCards: [
+        { eyebrow: 'Tilpasset Deg', title: 'Sitter den slik du forventer?', body: 'Skreddersydd på bestilling med eksakte mål i stedet for hyllevare.' },
+        { eyebrow: 'Personalisering', title: 'Skjorten tilpasser seg deg', body: 'Gratis tilpasning av erme- og skjortelengde samt detaljmål på overkropp.' },
+        { eyebrow: 'Åpenhet', title: 'En bedre måte å handle på nett', body: 'Ingen usikkerhet om passform og ingen skjulte overraskelser i kassen.' },
+        { eyebrow: 'Verdi', title: 'Prisen du ser er prisen du betaler', body: 'Inkludert norsk MVA, ærlig prising og tydelig leveringstid med DHL.' },
+        { eyebrow: 'Kvalitet', title: 'Slutter aldri å forbedre', body: 'Tillit bygges gjennom kvalitet, konsistens og personlig service.' },
+        { eyebrow: 'Hver Dag', title: 'Bedre for hver skjorte', body: 'Når din første skjorte gjør valg nummer to enkelt, har vi nådd målet vårt.' },
+      ],
+      showroomHeading: 'GULBRANDSENS AGENCIES SHOWROOM · OSLO',
+      showroomAddress: 'Maridalsveien 87, 0461 Oslo, Norge · monte@montenapoleone1974.com',
       ctaCatalog: 'Utforsk Alle Skjorter',
       ctaB2B: 'Se Bedriftsavtale (B2B)',
     },
@@ -706,49 +887,88 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
         'Monte Napoleone nasce a Treviso nel 1974. Da cinquant’anni realizziamo camicie d’eccellenza con i migliori cotoni doppio ritorto e lini europei.',
       contactHeading: 'Contatti',
       contactNote:
-        'Rispondiamo a tutte le richieste entro 24 ore lavorative.',
-      addressHeading: 'Atelier',
+        'Preferiamo ricevere tutte le richieste importanti via e-mail per offrire risposte complete e concrete entro 24 ore.',
+      addressHeading: 'Showroom',
       infoHeading: 'Informazioni',
       followHeading: 'Seguici',
       newsletterLabel: 'Newsletter',
       newsletterPlaceholder: 'La tua email',
       send: 'Invia',
       cookieNotice:
-        'Prezzi in Euro comprensivi di IVA 22% con spedizione diretta dal magazzino di Treviso.',
+        'Utilizziamo i cookie per migliorare la tua esperienza sul nostro sito. Continuando accetti l’utilizzo dei cookie.',
       infoLinks: [
         'Resi e Cambi',
-        'Modulo di Recesso',
+        'Modulo di Recesso (PDF)',
         'Rivenditori e Partner',
         'Lavora con Noi',
         'Domande Frequenti',
         'Privacy Policy',
       ],
+      infoUrls: [
+        'https://montenapoleone1974.com/retur-og-bytte/',
+        'https://montenapoleone1974.com/wp-content/uploads/2025/03/return-policy-A5.pdf',
+        'https://montenapoleone1974.com/forhandlere-og-partnere/',
+        'https://montenapoleone1974.com/karrierer/',
+        'https://montenapoleone1974.com/faqs/',
+        'https://montenapoleone1974.com/personvernerklaering/',
+      ],
     },
     aboutPage: {
-      eyebrow: 'TREVISO, ITALIA · DAL 1974',
-      title: 'La Storia di Monte Napoleone 1974 — L’Arte della Camicia Italiana',
-      lead: 'Fondata a Treviso nel 1974, Monte Napoleone realizza da cinquant’anni camicie esclusive caratterizzate da eleganza senza tempo, tessuti doppio ritorto 100/2 e vestibilità sartoriale.',
+      eyebrow: 'Chi Siamo · PERCHÉ ESISTIAMO',
+      title: 'PERCHÉ ESISTIAMO',
+      lead: 'Una grande camicia fa molto più che completare un look: trasforma come ti senti ogni volta che la indossi.',
       paragraphs: [
-        'Ogni nostro capo nasce dalla selezione dei migliori cotoni doppio ritorto e lini europei, lavorati per garantire morbidezza sulla pelle, resistenza alle pieghe e una tenuta impeccabile del colletto dal mattino alla sera.',
-        'La vestibilità perfetta richiede attenzione al dettaglio: per questo includiamo la regolazione gratuita della lunghezza maniche e del busto su ogni camicia, insieme alla possibilità di personalizzare vita, torace, fondo e spalle.',
-        'Oltre alle collezioni B2C per l’uomo contemporaneo, Monte Connected B2B supporta hotel, compagnie aeree e team aziendali in tutta Europa con forniture su misura e ricamo logo.',
+        'Deve donare sicurezza, comfort naturale e la sensazione che ogni dettaglio sia al posto giusto.',
+        'In riunione o nel tempo libero, acquistare una camicia online deve essere semplice, trasparente e privo di sorprese.',
+      ],
+      pullQuote: 'Perché la camicia più importante non è quella che realizziamo: è quella che non vedi l’ora di indossare.',
+      videoCaption: 'Atelier di Treviso dal 1974 — Controllo Qualità e Sartoria su Misura',
+      storyEyebrow: 'Le Nostre Radici',
+      storyHeading: 'LA NOSTRA STORIA',
+      storyBody: [
+        'Fondata a Treviso nel 1974 con una convinzione chiara: la qualità autentica non passa mai di moda.',
+      ],
+      traditionsHeading: 'Monte Napoleone unisce la forza di tre tradizioni.',
+      traditions: [
+        { title: 'Patrimonio Italiano', body: 'Eleganza senza tempo, proporzioni classiche e amore per i dettagli.' },
+        { title: 'Mentalità Scandinava', body: 'Semplicità, funzionalità e trasparenza assoluta.' },
+        { title: 'Maestria Produttiva Vietnamita', body: 'Precisione sartoriale costante in ogni fase di confezione.' },
       ],
       pillars: [
+        { title: 'Tessuti Doppio Ritorto', body: 'Filati 100/2 ad alta densità per camicie business no-stiro.' },
+        { title: 'Sartoria Lunghezza Inclusa', body: 'Regolazione gratuita maniche e lunghezza dalla 30 alla 45.' },
+        { title: 'Atelier Treviso & Oslo', body: 'Spedizione DHL Express e rappresentanza nordica a Oslo.' },
+      ],
+      features: [
         {
-          title: 'Tessuti Doppio Ritorto',
-          body: 'Filati ritorti ad alta densità per camicie business no-stiro e lini freschi per la stagione calda.',
+          eyebrow: 'Competenza',
+          title: 'PERCHÉ CI SPECIALIZZIAMO',
+          paragraphs: [
+            'Ci dedichiamo esclusivamente a ciò che sappiamo fare meglio: camicie, polo e T-shirt in fibre naturali.',
+          ],
+          quote: 'La vera esperienza si misura nella precisione e nell’orgoglio di chi cuce ogni capo.',
         },
         {
-          title: 'Sartoria Lunghezza Inclusa',
-          body: 'Regolazione gratuita della lunghezza di maniche e camicia per ogni taglia dalla 30 alla 45.',
-        },
-        {
-          title: 'Atelier Treviso & Hub Internazionali',
-          body: 'Spedizione diretta dall’Italia con corriere DHL Express e showroom di rappresentanza a Oslo.',
+          eyebrow: 'Cliente al Centro',
+          title: 'DISEGNATA INTORNO A TE',
+          paragraphs: [
+            'Ogni camicia include regolazioni gratuite di lunghezza maniche e busto, più vita, torace, fondo e spalle.',
+          ],
+          quote: 'Non è il cliente che deve adattarsi alla camicia: è la camicia che si adatta a te.',
         },
       ],
-      showroomHeading: 'Sede & Rappresentanza Nordica',
-      showroomAddress: 'Gulbrandsens Agencies AS · Maridalsveien 87, 0461 Oslo, Norvegia · monte@montenapoleone1974.com',
+      commitmentEyebrow: 'La Nostra Promessa',
+      commitmentHeading: 'IL NOSTRO IMPEGNO',
+      commitmentCards: [
+        { eyebrow: 'Su Misura', title: 'Vestirà come ti aspetti?', body: 'Realizzata su ordinazione con le tue misure invece che taglie standard.' },
+        { eyebrow: 'Personalizzazione', title: 'La camicia si adatta a te', body: 'Regolazione gratuita della lunghezza maniche e busto, più dettagli su torace e vita.' },
+        { eyebrow: 'Trasparenza', title: 'Un modo migliore di acquistare', body: 'Nessun dubbio sulla vestibilità e nessuna sorpresa al momento del checkout.' },
+        { eyebrow: 'Valore', title: 'Il prezzo che vedi è quello che paghi', body: 'IVA 22% inclusa, nessuna spesa nascosta e spedizione DHL tracciabile.' },
+        { eyebrow: 'La Nostra Promessa', title: 'Miglioramento Continuo', body: 'La fiducia si costruisce con qualità costante, cura sartoriale e ascolto.' },
+        { eyebrow: 'Ogni Giorno', title: 'Sempre più precisa', body: 'Quando la tua prima camicia rende facile scegliere la seconda, abbiamo raggiunto il nostro obiettivo.' },
+      ],
+      showroomHeading: 'GULBRANDSENS AGENCIES SHOWROOM · OSLO',
+      showroomAddress: 'Maridalsveien 87, 0461 Oslo, Norvegia · monte@montenapoleone1974.com',
       ctaCatalog: 'Esplora la Collezione',
       ctaB2B: 'Soluzioni Aziendali B2B',
     },
@@ -908,7 +1128,7 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
         'Monte Napoleone được thành lập tại Treviso, Ý năm 1974. Chúng tôi kiến tạo những chiếc áo sơ mi tinh xảo từ chất liệu linen và cotton sợi đôi thượng hạng.',
       contactHeading: 'Liên hệ',
       contactNote:
-        'Mọi yêu cầu tư vấn số đo và đơn hàng doanh nghiệp sẽ được phản hồi trong vòng 24 giờ.',
+        'Chúng tôi ưu tiên trao đổi qua email để phản hồi đầy đủ và chính xác nhất trong vòng 24 giờ làm việc.',
       addressHeading: 'Showroom',
       infoHeading: 'Thông tin',
       followHeading: 'Kết nối',
@@ -916,41 +1136,80 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       newsletterPlaceholder: 'Nhập email của bạn',
       send: 'Gửi',
       cookieNotice:
-        'Giá bán bằng VNĐ và tồn kho được đồng bộ trực tiếp theo kho hàng khu vực Việt Nam.',
+        'Chúng tôi sử dụng cookie để cải thiện trải nghiệm mua sắm của bạn trên website Monte Napoleone 1974.',
       infoLinks: [
         'Chính sách Đổi trả',
-        'Phiếu hoàn hàng',
+        'Mẫu Phiếu Hoàn Hàng (PDF)',
         'Đối tác & Đại lý',
         'Tuyển dụng',
         'Câu hỏi thường gặp',
         'Chính sách bảo mật',
       ],
+      infoUrls: [
+        'https://montenapoleone1974.com/retur-og-bytte/',
+        'https://montenapoleone1974.com/wp-content/uploads/2025/03/return-policy-A5.pdf',
+        'https://montenapoleone1974.com/forhandlere-og-partnere/',
+        'https://montenapoleone1974.com/karrierer/',
+        'https://montenapoleone1974.com/faqs/',
+        'https://montenapoleone1974.com/personvernerklaering/',
+      ],
     },
     aboutPage: {
-      eyebrow: 'TREVISO, Ý · THÀNH LẬP NĂM 1974',
-      title: 'Về Monte Napoleone 1974 — Di Sản May Đo Áo Sơ Mi Ý',
-      lead: 'Được thành lập tại Treviso, Ý từ năm 1974, Monte Napoleone kiến tạo những chiếc áo sơ mi nam đẳng cấp từ chất liệu cotton sợi đôi 100/2-ply và linen tự nhiên châu Âu với độ chuẩn xác may đo tinh tế.',
+      eyebrow: 'Về Chúng Tôi · LÝ DO RA ĐỜI',
+      title: 'GIÁ TRỊ CỐT LÕI',
+      lead: 'Một chiếc áo sơ mi hoàn hảo không chỉ hoàn thiện trang phục — mà còn mang lại sự tự tin suốt ngày dài.',
       paragraphs: [
-        'Hơn nửa thế kỷ qua, xưởng may tại miền Bắc nước Ý của chúng tôi luôn giữ vững triết lý kết hợp nghệ thuật cắt may thủ công cùng chất liệu sợi xoắn đôi chống nhăn tự nhiên, giúp người mặc luôn lịch lãm từ phòng họp đến những buổi tiệc tối.',
-        'Mỗi vóc dáng đều có tỷ lệ riêng biệt. Vì vậy, tất cả sản phẩm Monte Napoleone 1974 đều được miễn phí đo chỉnh chiều dài tay áo và chiều dài thân áo trước khi giao hàng, kèm tùy chọn tinh chỉnh vòng eo, vòng ngực, gấu áo và vai.',
-        'Bên cạnh dòng sản phẩm B2C bán lẻ toàn cầu qua kho TP.HCM, Oslo và Treviso, chúng tôi còn cung cấp giải pháp đồng phục doanh nghiệp Monte Connected B2B với dịch vụ thêu logo tinh xảo cho khối khách sạn, hàng không và tập đoàn.',
+        'Dù trong cuộc họp quan trọng hay ngày làm việc thường nhật, chiếc áo chuẩn phom giúp bạn luôn thoải mái và lịch lãm.',
+        'Mua áo sơ mi trực tuyến cần phải đơn giản, minh bạch và không có bất kỳ chi phí ẩn nào.',
+      ],
+      pullQuote: 'Chiếc áo quan trọng nhất không phải chiếc chúng tôi làm ra — mà là chiếc bạn luôn mong được mặc mỗi sáng.',
+      videoCaption: 'Xưởng may Treviso 1974 & Quy trình kiểm soát chất lượng từng đường kim mũi chỉ',
+      storyEyebrow: 'Nền Tảng Di Sản',
+      storyHeading: 'CÂU CHUYỆN THƯƠNG HIỆU',
+      storyBody: [
+        'Thành lập tại Treviso, Ý từ năm 1974 với niềm tin giản dị: Chất lượng đích thực không bao giờ lỗi mốt.',
+      ],
+      traditionsHeading: 'Monte Napoleone kết tinh sức mạnh từ ba nền văn hóa may mặc.',
+      traditions: [
+        { title: 'Di Sản Ý (Treviso)', body: 'Tư duy thẩm mỹ vượt thời gian và tỷ lệ phom dáng cổ điển.' },
+        { title: 'Tư Duy Bắc Âu (Na Uy)', body: 'Sự tối giản, tiện dụng và minh bạch tuyệt đối.' },
+        { title: 'Tay Nghề Thủ Công Việt Nam', body: 'Kỹ nghệ cắt may chuẩn xác và đồng nhất trên từng sản phẩm.' },
       ],
       pillars: [
+        { title: 'Vải Sợi Đôi Two-Ply 100/2', body: 'Mịn màng, chống nhăn tự nhiên và giữ đứng cổ áo.' },
+        { title: 'Miễn Phí Chỉnh Chiều Dài', body: 'Tùy chỉnh tay áo và thân áo theo từng cỡ cổ 30–45.' },
+        { title: 'Kho TP.HCM, Oslo & Treviso', body: 'Đồng bộ tồn kho và chuyển phát nhanh DHL Express.' },
+      ],
+      features: [
         {
-          title: 'Vải Sợi Đôi Two-Ply 100/2',
-          body: 'Cấu trúc sợi xe đôi giúp bề mặt vải mịn màng, thoáng khí và giữ phom cổ áo bền đẹp sau nhiều năm.',
+          eyebrow: 'Chuyên Môn',
+          title: 'TẬP TRUNG VÀO ĐIỀU TỐT NHẤT',
+          paragraphs: [
+            'Chúng tôi chuyên sâu vào áo sơ mi, polo và T-shirt — kiểm soát khép kín từ dệt vải đến đóng gói hoàn thiện.',
+          ],
+          quote: 'Đẳng cấp thực thụ được đo bằng sự tỉ mỉ và niềm tự hào của người thợ may.',
         },
         {
-          title: 'Miễn Phí Chỉnh Chiều Dài Áo',
-          body: 'Tùy chỉnh miễn phí chiều dài tay áo và thân áo theo từng cỡ cổ từ 30 đến 45 chuẩn xác.',
-        },
-        {
-          title: 'Kho Hàng TP.HCM, Oslo & Treviso',
-          body: 'Đồng bộ tồn kho theo thời gian thực cùng dịch vụ chuyển phát nhanh DHL Express chuyên nghiệp.',
+          eyebrow: 'May Đo Theo Bạn',
+          title: 'CHIẾC ÁO PHÙ HỢP VỚI BẠN',
+          paragraphs: [
+            'Miễn phí chỉnh chiều dài tay & thân áo, kèm tùy chọn tinh chỉnh eo, ngực, gấu và vai.',
+          ],
+          quote: 'Bạn không cần phải thay đổi để vừa áo — chiếc áo sẽ được tinh chỉnh để vừa vặn với bạn.',
         },
       ],
-      showroomHeading: 'Showroom & Đại Diện Bắc Âu',
-      showroomAddress: 'Gulbrandsens Agencies AS · Maridalsveien 87, 0461 Oslo, Na Uy · monte@montenapoleone1974.com',
+      commitmentEyebrow: 'Cam Kết',
+      commitmentHeading: 'CAM KẾT THƯƠNG HIỆU',
+      commitmentCards: [
+        { eyebrow: 'Chuẩn Phom', title: 'Áo có vừa vặn như mong đợi?', body: 'May theo từng đơn và thông số riêng thay vì hàng sản xuất đại trà.' },
+        { eyebrow: 'Cá Nhân Hóa', title: 'Chiếc áo thích ứng theo bạn', body: 'Miễn phí tùy chỉnh dài tay và dài áo, kèm tinh chỉnh eo, ngực, gấu áo và vai.' },
+        { eyebrow: 'Minh Bạch', title: 'Trải nghiệm mua sắm tốt hơn', body: 'Không còn phân vân về phom dáng và hoàn toàn minh bạch khi thanh toán.' },
+        { eyebrow: 'Giá Trị', title: 'Giá hiển thị là giá thanh toán', body: 'Không phụ phí bất ngờ và hiển thị rõ ràng thời gian giao hàng DHL.' },
+        { eyebrow: 'Cam Kết', title: 'Không ngừng hoàn thiện', body: 'Niềm tin được xây dựng từ chất lượng vải sợi đôi và dịch vụ tận tâm.' },
+        { eyebrow: 'Mỗi Ngày', title: 'Tốt hơn qua từng sản phẩm', body: 'Khi chiếc áo đầu tiên giúp bạn dễ dàng chọn tiếp chiếc thứ hai, đó là thành công của chúng tôi.' },
+      ],
+      showroomHeading: 'GULBRANDSENS AGENCIES SHOWROOM · OSLO',
+      showroomAddress: 'Maridalsveien 87, 0461 Oslo, Na Uy · monte@montenapoleone1974.com',
       ctaCatalog: 'Khám Phá Bộ Sưu Tập',
       ctaB2B: 'Giải Pháp Doanh Nghiệp B2B',
     },

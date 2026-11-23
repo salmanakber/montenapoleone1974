@@ -10,6 +10,7 @@ interface FooterProps {
   onNavigateAbout: () => void;
   onOpenSizeGuide: () => void;
   onPromoCodeUnlocked?: (code: string) => void;
+  onPromoCodeAlreadyUsed?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -20,6 +21,7 @@ export const Footer: React.FC<FooterProps> = ({
   onNavigateAbout,
   onOpenSizeGuide,
   onPromoCodeUnlocked,
+  onPromoCodeAlreadyUsed,
 }) => {
   const [email, setEmail] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -37,9 +39,14 @@ export const Footer: React.FC<FooterProps> = ({
       });
       const data = await res.json();
       if (res.ok) {
-        setStatusMessage(`Code: ${data.discountCode} (${data.discountPct || 10}% off)`);
-        if (data.discountCode && onPromoCodeUnlocked) {
-          onPromoCodeUnlocked(data.discountCode);
+        if (data.alreadyClaimedOrUsed) {
+          setStatusMessage('First-order offer has already been used for this email.');
+          onPromoCodeAlreadyUsed?.();
+        } else {
+          setStatusMessage(`Code: ${data.discountCode} (${data.discountPct || 10}% off)`);
+          if (data.discountCode && onPromoCodeUnlocked) {
+            onPromoCodeUnlocked(data.discountCode);
+          }
         }
         setEmail('');
       } else {
@@ -93,32 +100,49 @@ export const Footer: React.FC<FooterProps> = ({
               Maridalsveien 87, 0461 Oslo, Norway
               <br />
               <span className="text-neutral-500 mt-2 block">
-                Active Warehouse: {region.warehouse_name}
+                {region.warehouse_name}
               </span>
             </p>
           </div>
 
-          {/* Column 4: Information */}
+          {/* Column 4: Information (Matches montenapoleone1974.com links) */}
           <div>
             <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-neutral-500 mb-4">
               {copy.footer.infoHeading}
             </h2>
             <ul className="space-y-2 text-xs text-[#142B4E]">
-              {copy.footer.infoLinks.map((label, idx) => (
-                <li key={label}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (idx === 0 || idx === 1) onNavigateAccount();
-                      else if (idx === 2) onNavigateB2B();
-                      else onOpenSizeGuide();
-                    }}
-                    className="hover:underline text-left cursor-pointer"
-                  >
-                    {label}
-                  </button>
-                </li>
-              ))}
+              {copy.footer.infoLinks.map((label, idx) => {
+                const href = copy.footer.infoUrls?.[idx];
+                if (href) {
+                  return (
+                    <li key={label}>
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline text-left inline-block"
+                      >
+                        {label}
+                      </a>
+                    </li>
+                  );
+                }
+                return (
+                  <li key={label}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (idx === 0 || idx === 1) onNavigateAccount();
+                        else if (idx === 2) onNavigateB2B();
+                        else onOpenSizeGuide();
+                      }}
+                      className="hover:underline text-left cursor-pointer"
+                    >
+                      {label}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
 

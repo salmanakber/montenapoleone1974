@@ -1,17 +1,25 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { motion, useScroll, useSpring } from 'motion/react';
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Globe,
   Heart,
   Menu,
   Search,
-  ShieldCheck,
   ShoppingBag,
   User,
   X,
 } from 'lucide-react';
-import type { CategoryRecord, MenuItemRecord, RegionCode, RegionConfig } from '../types.ts';
+import type {
+  AuthUser,
+  CategoryRecord,
+  MenuItemRecord,
+  RegionCode,
+  RegionConfig,
+  TopBannerSettings,
+} from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
 
 export type AppView =
@@ -27,10 +35,13 @@ export type AppView =
 interface NavbarProps {
   activeView: AppView;
   isTransparentOverHero: boolean;
+  showScrollProgress?: boolean;
+  authUser?: AuthUser | null;
   region: RegionConfig;
   regions: RegionConfig[];
   categories: CategoryRecord[];
   menuItems?: MenuItemRecord[];
+  topBanner?: TopBannerSettings;
   copy: RegionCopy;
   cartCount: number;
   wishlistCount: number;
@@ -105,10 +116,13 @@ const RegionFlagCircle: React.FC<{ code: RegionCode; size?: 'sm' | 'md' }> = ({
 export const Navbar: React.FC<NavbarProps> = ({
   activeView,
   isTransparentOverHero,
+  showScrollProgress = false,
+  authUser = null,
   region,
   regions,
   categories,
   menuItems = [],
+  topBanner,
   copy,
   cartCount,
   wishlistCount,
@@ -121,14 +135,25 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [regionOpen, setRegionOpen] = useState(false);
   const [b2cOpen, setB2cOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerSubmenu, setDrawerSubmenu] = useState<'main' | 'shirts'>('main');
   const [scrolled, setScrolled] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll();
+  const smoothProgress = useSpring(scrollYProgress, {
+    stiffness: 180,
+    damping: 28,
+    restDelta: 0.001,
+  });
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 36);
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) setDrawerSubmenu('main');
+  }, [drawerOpen]);
 
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
@@ -189,6 +214,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           image: c.image,
         }));
 
+  const resolvedTopBannerText = topBanner
+    ? region.code === 'no'
+      ? topBanner.text_no
+      : region.code === 'it'
+      ? topBanner.text_it
+      : region.code === 'vn'
+      ? topBanner.text_vn
+      : topBanner.text_en
+    : '';
+
+  const topBannerVisibilityClass =
+    topBanner?.visibility === 'desktop_only'
+      ? 'hidden md:flex'
+      : topBanner?.visibility === 'mobile_only'
+      ? 'flex md:hidden'
+      : 'flex';
+
+  const showTopBannerStrip =
+    Boolean(topBanner?.enabled && resolvedTopBannerText?.trim()) && !floatingStickyBar;
+
   return (
     <>
       <header
@@ -202,6 +247,34 @@ export const Navbar: React.FC<NavbarProps> = ({
             : 'top-0 left-0 right-0 bg-gradient-to-b from-black/45 to-transparent text-white'
         }`}
       >
+        {showTopBannerStrip && topBanner && (
+          <div
+            data-testid="top-promo-banner"
+            style={{
+              backgroundColor: topBanner.bgColor || '#142B4E',
+              color: topBanner.textColor || '#FFFFFF',
+            }}
+            className={`${topBannerVisibilityClass} w-full items-center justify-center px-3 py-1.5 text-center text-[10px] sm:text-[11px] font-medium uppercase tracking-[0.14em] border-b border-black/10`}
+          >
+            {topBanner.linkView && topBanner.linkView !== 'none' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (topBanner.linkView === 'catalog') {
+                    onNavigate('catalog', { category: topBanner.linkCategory || 'all' });
+                  } else {
+                    onNavigate(topBanner.linkView as AppView);
+                  }
+                }}
+                className="hover:underline underline-offset-4 cursor-pointer truncate max-w-[1540px]"
+              >
+                {resolvedTopBannerText}
+              </button>
+            ) : (
+              <span className="truncate max-w-[1540px]">{resolvedTopBannerText}</span>
+            )}
+          </div>
+        )}
         <div className="max-w-[1640px] mx-auto px-3 sm:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4 relative">
           {/* Left Zone: Hamburger + Region / Currency Switcher (Matches Screenshot 1) */}
           <div className="flex items-center gap-1.5 sm:gap-5 min-w-0">
@@ -396,7 +469,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <User className="w-3.5 h-3.5 lg:hidden" />
-              <span>{copy.nav.account}</span>
+              <span>{authUser ? authUser.name.split(' ')[0] : copy.nav.account}</span>
             </button>
             <button
               type="button"
@@ -412,22 +485,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {copy.nav.wishlist}
                 {wishlistCount > 0 ? ` (${wishlistCount})` : ''}
               </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setB2cOpen(false);
-                onNavigate('admin');
-              }}
-              aria-label={copy.nav.admin}
-              className={`hidden xl:inline-flex items-center gap-1 whitespace-nowrap shrink-0 px-2.5 py-1 border text-[11px] uppercase tracking-wider transition-colors cursor-pointer ${
-                solidHeader
-                  ? 'border-[#142B4E]/30 text-[#142B4E] hover:bg-[#142B4E] hover:text-white'
-                  : 'border-white/40 text-white hover:bg-white hover:text-[#1A1A1A]'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>{copy.nav.admin}</span>
             </button>
             <button
               type="button"
@@ -540,136 +597,242 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
         )}
+        {showScrollProgress && (
+          <motion.div
+            data-testid="pdp-nav-progress"
+            style={{ scaleX: smoothProgress, transformOrigin: '0% 50%' }}
+            className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-[#142B4E] pointer-events-none z-20"
+          />
+        )}
       </header>
 
-      {/* Slide-out Navigation Drawer (Left Hamburger Menu) */}
+      {/* Slide-out Navigation Drawer (Left Hamburger Menu with Custom Logo & Sliding Shirts Submenu) */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex">
           <div
             className="fixed inset-0 bg-black/45 backdrop-blur-[1px]"
             onClick={() => setDrawerOpen(false)}
           />
-          <aside className="relative w-80 max-w-[85vw] bg-white text-[#1A1A1A] h-full shadow-2xl flex flex-col justify-between overflow-y-auto">
-            <div>
-              <div className="px-6 py-5 border-b border-black/10 flex items-center justify-between">
-                <div>
-                  <div className="font-serif-brand text-lg tracking-[0.16em] uppercase">
-                    MONTE NAPOLEONE
-                  </div>
-                  <div className="text-[11px] text-neutral-500">
+          <aside className="relative w-80 max-w-[85vw] bg-white text-[#1A1A1A] h-full shadow-2xl flex flex-col justify-between overflow-hidden">
+            <div className="flex flex-col flex-1 min-h-0">
+              {/* Custom Brand Logo Header */}
+              <div className="px-5 py-4 border-b border-black/10 flex items-center justify-between gap-3 shrink-0 bg-white">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNavigate('home');
+                    setDrawerOpen(false);
+                  }}
+                  className="text-left cursor-pointer min-w-0"
+                >
+                  <img
+                    src="/assets/aistudio/logo__2__1ee1df15.png"
+                    alt="Monte Napoleone 1974"
+                    className="h-5 w-auto max-w-[190px] object-contain"
+                  />
+                  <div className="text-[10px] text-neutral-500 mt-1 truncate">
                     {region.name} · {region.warehouse_name}
                   </div>
-                </div>
+                </button>
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(false)}
                   aria-label="Close navigation menu"
-                  className="p-2 text-neutral-500 hover:text-black cursor-pointer"
+                  className="p-2 text-neutral-500 hover:text-black cursor-pointer shrink-0"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-6 space-y-6">
-                <div>
-                  <div className="text-[11px] uppercase tracking-widest text-neutral-400 mb-3">
-                    {copy.nav.b2c}
-                  </div>
-                  <ul className="space-y-2.5 text-sm">
-                    <li>
+              {/* Sliding Drawer Body (Main Menu <-> Shirts 4-Image Grid) */}
+              <div className="relative flex-1 overflow-y-auto overflow-x-hidden">
+                <div
+                  className={`flex w-[200%] transition-transform duration-300 ease-out ${
+                    drawerSubmenu === 'shirts' ? '-translate-x-1/2' : 'translate-x-0'
+                  }`}
+                >
+                  {/* Panel 1: Main Navigation Menu */}
+                  <div className="w-1/2 p-5 space-y-5 shrink-0">
+                    {/* Prominent Shirts Entry at Top (slides horizontally to 4-image submenu) */}
+                    <button
+                      type="button"
+                      data-testid="mobile-drawer-shirts-btn"
+                      onClick={() => setDrawerSubmenu('shirts')}
+                      className="w-full px-3.5 py-3 bg-[#F7F7F7] hover:bg-[#EFEFEF] border border-black/10 flex items-center justify-between text-left transition-colors cursor-pointer"
+                    >
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#142B4E]">
+                          {copy.nav.b2c} · Shirts
+                        </div>
+                        <div className="text-[11px] text-neutral-500 mt-0.5">
+                          Linen, Business, T-Shirts & Piqué
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#142B4E] shrink-0" />
+                    </button>
+
+                    <div>
+                      <div className="text-[11px] uppercase tracking-widest text-neutral-400 mb-2.5">
+                        Collections
+                      </div>
+                      <ul className="space-y-2.5 text-sm">
+                        <li>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onNavigate('catalog', { category: 'all' });
+                              setDrawerOpen(false);
+                            }}
+                            className="w-full text-left font-medium hover:text-[#142B4E] cursor-pointer"
+                          >
+                            {copy.nav.allShirts}
+                          </button>
+                        </li>
+                        {categories
+                          .filter((c) => c.active !== false && c.scope !== 'b2b')
+                          .map((c) => (
+                            <li key={c.slug}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (c.slug === 'b2b') {
+                                    onNavigate('b2b');
+                                  } else {
+                                    onNavigate('catalog', { category: c.slug });
+                                  }
+                                  setDrawerOpen(false);
+                                }}
+                                className={`w-full text-left hover:text-[#142B4E] cursor-pointer ${
+                                  c.parent_id ? 'pl-3 text-xs text-neutral-500' : 'text-neutral-700'
+                                }`}
+                              >
+                                {c.parent_id ? `↳ ${getCategoryName(c)}` : getCategoryName(c)}
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+
+                    <div className="pt-4 border-t border-black/10 space-y-2.5 text-sm">
                       <button
                         type="button"
                         onClick={() => {
-                          onNavigate('catalog', { category: 'all' });
+                          onNavigate('b2b');
                           setDrawerOpen(false);
                         }}
                         className="w-full text-left font-medium hover:text-[#142B4E] cursor-pointer"
                       >
-                        {copy.nav.allShirts}
+                        {copy.nav.b2b} — {copy.home.b2bTitle}
                       </button>
-                    </li>
-                    {categories
-                      .filter((c) => c.active !== false && c.scope !== 'b2b')
-                      .map((c) => (
-                        <li key={c.slug}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (c.slug === 'b2b') {
-                                onNavigate('b2b');
-                              } else {
-                                onNavigate('catalog', { category: c.slug });
-                              }
-                              setDrawerOpen(false);
-                            }}
-                            className={`w-full text-left hover:text-[#142B4E] cursor-pointer ${
-                              c.parent_id ? 'pl-3 text-xs text-neutral-500' : 'text-neutral-700'
-                            }`}
-                          >
-                            {c.parent_id ? `↳ ${getCategoryName(c)}` : getCategoryName(c)}
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onNavigate('about');
+                          setDrawerOpen(false);
+                        }}
+                        className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
+                      >
+                        {copy.nav.aboutUs}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onNavigate('account');
+                          setDrawerOpen(false);
+                        }}
+                        className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
+                      >
+                        {copy.nav.account} & Order Tracking
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenWishlist();
+                          setDrawerOpen(false);
+                        }}
+                        className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
+                      >
+                        {copy.nav.wishlist} ({wishlistCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenSearch();
+                          setDrawerOpen(false);
+                        }}
+                        className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
+                      >
+                        {copy.nav.search}
+                      </button>
+                    </div>
+                  </div>
 
-                <div className="pt-5 border-t border-black/10 space-y-2.5 text-sm">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onNavigate('b2b');
-                      setDrawerOpen(false);
-                    }}
-                    className="w-full text-left font-medium hover:text-[#142B4E] cursor-pointer"
-                  >
-                    {copy.nav.b2b} — {copy.home.b2bTitle}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onNavigate('about');
-                      setDrawerOpen(false);
-                    }}
-                    className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
-                  >
-                    {copy.nav.aboutUs}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onNavigate('account');
-                      setDrawerOpen(false);
-                    }}
-                    className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
-                  >
-                    {copy.nav.account} & Order Tracking
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenSearch();
-                      setDrawerOpen(false);
-                    }}
-                    className="w-full text-left text-neutral-700 hover:text-[#142B4E] cursor-pointer"
-                  >
-                    {copy.nav.search}
-                  </button>
+                  {/* Panel 2: Sliding Shirts 4-Image Category Submenu */}
+                  <div className="w-1/2 p-5 space-y-4 shrink-0" data-testid="mobile-drawer-shirts-panel">
+                    <div className="flex items-center justify-between border-b border-black/10 pb-3">
+                      <button
+                        type="button"
+                        onClick={() => setDrawerSubmenu('main')}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-[#142B4E] hover:underline cursor-pointer"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Back to Menu</span>
+                      </button>
+                      <span className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 font-semibold">
+                        {copy.nav.b2c}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {resolvedMegaCards.slice(0, 4).map((card) => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => {
+                            setDrawerOpen(false);
+                            if (card.targetType === 'view') {
+                              onNavigate(card.targetValue as AppView);
+                            } else {
+                              onNavigate('catalog', { category: card.targetValue });
+                            }
+                          }}
+                          className="group text-left cursor-pointer flex flex-col"
+                        >
+                          <div className="aspect-[4/3] w-full bg-[#EFEFEF] overflow-hidden border border-black/5">
+                            <img
+                              src={card.image}
+                              alt={card.label}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                            />
+                          </div>
+                          <span className="mt-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[#1A1A1A] group-hover:text-[#142B4E] leading-tight">
+                            {card.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onNavigate('catalog', { category: 'all' });
+                        setDrawerOpen(false);
+                      }}
+                      className="w-full py-2.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-xs uppercase tracking-[0.12em] font-medium transition-colors cursor-pointer"
+                    >
+                      {copy.nav.allShirts}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-6 border-t border-black/10 bg-[#F7F7F7]">
-              <button
-                type="button"
-                onClick={() => {
-                  onNavigate('admin');
-                  setDrawerOpen(false);
-                }}
-                className="w-full py-2.5 px-4 bg-[#142B4E] text-white text-xs uppercase tracking-wider font-medium flex items-center justify-center gap-2 hover:bg-[#0f213d] transition-colors cursor-pointer"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>{copy.nav.admin} (Owner / Staff)</span>
-              </button>
+            <div className="px-5 py-3.5 border-t border-black/10 bg-[#F7F7F7] shrink-0 text-[11px] text-neutral-500 flex items-center justify-between">
+              <span>{region.name}</span>
+              <span className="font-mono-tabular">
+                {region.currency_symbol} {region.currency_code}
+              </span>
             </div>
           </aside>
         </div>

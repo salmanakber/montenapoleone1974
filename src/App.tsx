@@ -8,6 +8,7 @@ import type {
   BulkDiscountSettings,
   CartItem,
   CategoryRecord,
+  CustomerAuthPublicConfig,
   HeroSlideRecord,
   MenuItemRecord,
   Product,
@@ -15,14 +16,22 @@ import type {
   RegionCode,
   RegionConfig,
   TailoringSizeSpec,
+  TopBannerSettings,
 } from './types.ts';
 import {
   calculateTailoringSurcharge,
   DEFAULT_BULK_DISCOUNT_SETTINGS,
+  DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_TAILORING_SURCHARGE,
+  DEFAULT_TOP_BANNER_SETTINGS,
   resolveVariantPriceAndStock,
 } from './utils/commerce.ts';
+import {
+  buildSeoMetadata,
+  buildStorefrontPath,
+  parseStorefrontUrl,
+} from './utils/seo.ts';
 import { Navbar, type AppView } from './components/Navbar.tsx';
 import { HeroAndHome } from './components/HeroAndHome.tsx';
 import { CatalogView } from './components/CatalogView.tsx';
@@ -36,6 +45,7 @@ import { Footer } from './components/Footer.tsx';
 import { InfoModal, SearchModal } from './components/Modals.tsx';
 import { FirstOrderPopup } from './components/FirstOrderPopup.tsx';
 import { AiConciergeWidget } from './components/AiConciergeWidget.tsx';
+import { GmailLoginCornerPopup } from './components/GmailLoginCornerPopup.tsx';
 
 const DEFAULT_REGION: RegionConfig = {
   code: 'en',
@@ -68,7 +78,9 @@ const DEFAULT_AI_CONFIG: AiPublicConfig = {
   greeting_vn: 'Hỏi tôi về chất liệu vải, phom dáng hoặc size áo — tôi có thể thêm ngay vào giỏ hàng giúp bạn.',
 };
 
-function getInitialRegion(): RegionCode {
+const PROMO_CLAIMED_STORAGE_KEY = 'mn_first_order_promo_claimed_v1';
+
+function getSavedRegionFallback(): RegionCode {
   try {
     const saved = window.localStorage.getItem('mn_region');
     if (saved === 'en' || saved === 'no' || saved === 'it' || saved === 'vn') return saved;
@@ -78,16 +90,40 @@ function getInitialRegion(): RegionCode {
   return 'en';
 }
 
+function getInitialPromoClaimed(): boolean {
+  try {
+    return window.localStorage.getItem(PROMO_CLAIMED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
-  const [regionCode, setRegionCode] = useState<RegionCode>(getInitialRegion);
+  const initialRoute = useMemo(() => {
+    try {
+      return parseStorefrontUrl(window.location.pathname);
+    } catch {
+      return { view: 'home' as AppView };
+    }
+  }, []);
+
+  const [regionCode, setRegionCode] = useState<RegionCode>(
+    () => initialRoute.region || getSavedRegionFallback()
+  );
   const [regions, setRegions] = useState<RegionConfig[]>([DEFAULT_REGION]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItemRecord[]>([]);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRecord[]>([]);
+  const [topBanner, setTopBanner] = useState<TopBannerSettings>(DEFAULT_TOP_BANNER_SETTINGS);
   const [promoRules, setPromoRules] = useState<PromotionPopupSettings>(DEFAULT_PROMO_POPUP_SETTINGS);
   const [bulkDiscount, setBulkDiscount] = useState<BulkDiscountSettings>(DEFAULT_BULK_DISCOUNT_SETTINGS);
   const [aiConfig, setAiConfig] = useState<AiPublicConfig>(DEFAULT_AI_CONFIG);
+  const [customerAuthConfig, setCustomerAuthConfig] = useState<CustomerAuthPublicConfig>({
+    ...DEFAULT_CUSTOMER_AUTH_SETTINGS,
+    googleConfigured: false,
+  });
   const [activePromoCode, setActivePromoCode] = useState('');
+  const [promoClaimedOrUsed, setPromoClaimedOrUsed] = useState<boolean>(getInitialPromoClaimed);
   const [products, setProducts] = useState<Product[]>([]);
   const [tailoringSpecs, setTailoringSpecs] = useState<TailoringSizeSpec[]>([]);
   const [tailoringSurcharges, setTailoringSurcharges] = useState<Record<RegionCode, number>>(
@@ -95,10 +131,14 @@ export default function App() {
   );
   const [loading, setLoading] = useState(true);
 
-  const [activeView, setActiveView] = useState<AppView>('home');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-  const [b2bProductSlug, setB2bProductSlug] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<AppView>(initialRoute.view);
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialRoute.category || 'all');
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(
+    initialRoute.view === 'product' ? initialRoute.slug || null : null
+  );
+  const [b2bProductSlug, setB2bProductSlug] = useState<string | null>(
+    initialRoute.view === 'b2b' ? initialRoute.slug || null : null
+  );
   const [searchQuery, setSearchQuery] = useState('');
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -124,9 +164,11 @@ export default function App() {
       if (Array.isArray(data.categories)) setCategories(data.categories);
       if (Array.isArray(data.menuItems)) setMenuItems(data.menuItems);
       if (Array.isArray(data.heroSlides)) setHeroSlides(data.heroSlides);
+      if (data.topBanner) setTopBanner(data.topBanner);
       if (data.promoRules) setPromoRules(data.promoRules);
       if (data.bulkDiscount) setBulkDiscount(data.bulkDiscount);
       if (data.aiConfig) setAiConfig(data.aiConfig);
+      if (data.customerAuthConfig) setCustomerAuthConfig(data.customerAuthConfig);
       const surcharges: Record<RegionCode, number> =
         data.tailoringSurcharges || DEFAULT_TAILORING_SURCHARGE;
       setTailoringSurcharges(surcharges);
@@ -195,6 +237,85 @@ export default function App() {
     }).catch(() => {});
   }, [regionCode, activeView]);
 
+  const markPromoClaimedOrUsed = useCallback(() => {
+    setPromoClaimedOrUsed(true);
+    try {
+      window.localStorage.setItem(PROMO_CLAIMED_STORAGE_KEY, '1');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const origin = event.origin || '';
+      const trustedOrigin =
+        origin === window.location.origin ||
+        origin.endsWith('.run.app') ||
+        origin.includes('localhost');
+      if (!trustedOrigin) return;
+      const payload = event.data as
+        | {
+            type?: string;
+            token?: string;
+            user?: AuthUser;
+            discountCode?: string | null;
+          }
+        | undefined;
+      if (payload?.type === 'MN_GOOGLE_AUTH_SUCCESS' && payload.token && payload.user) {
+        setAuthToken(payload.token);
+        setAuthUser(payload.user);
+        if (payload.discountCode) {
+          setActivePromoCode(payload.discountCode);
+          markPromoClaimedOrUsed();
+        }
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [markPromoClaimedOrUsed]);
+
+  const pushBrowserUrl = useCallback(
+    (
+      nextRegion: RegionCode,
+      nextView: AppView,
+      nextCategory?: string,
+      nextSlug?: string | null
+    ) => {
+      try {
+        const nextPath = buildStorefrontPath({
+          regionCode: nextRegion,
+          view: nextView,
+          category: nextCategory,
+          slug: nextSlug,
+        });
+        if (window.location.pathname !== nextPath) {
+          window.history.pushState(
+            { regionCode: nextRegion, view: nextView, category: nextCategory, slug: nextSlug },
+            '',
+            nextPath
+          );
+        }
+      } catch {
+        // ignore
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const onPopState = () => {
+      const parsed = parseStorefrontUrl(window.location.pathname);
+      if (parsed.region) setRegionCode(parsed.region);
+      setActiveView(parsed.view);
+      setSelectedCategory(parsed.category || 'all');
+      setSelectedSlug(parsed.view === 'product' ? parsed.slug || null : null);
+      setB2bProductSlug(parsed.view === 'b2b' ? parsed.slug || null : null);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   const handleSelectRegion = (next: RegionCode) => {
     setRegionCode(next);
     try {
@@ -202,6 +323,12 @@ export default function App() {
     } catch {
       // ignore
     }
+    pushBrowserUrl(
+      next,
+      activeView,
+      selectedCategory,
+      activeView === 'b2b' ? b2bProductSlug : selectedSlug
+    );
   };
 
   const activeRegion = useMemo(
@@ -215,10 +342,85 @@ export default function App() {
     [products, selectedSlug]
   );
 
+  useEffect(() => {
+    try {
+      const origin = window.location.origin;
+      const catRecord =
+        selectedCategory && selectedCategory !== 'all'
+          ? categories.find((c) => c.slug === selectedCategory) || null
+          : null;
+      const seo = buildSeoMetadata({
+        view: activeView,
+        region: activeRegion,
+        category: selectedCategory,
+        categoryRecord: catRecord,
+        product: activeView === 'product' ? activeProduct : null,
+        origin,
+      });
+
+      document.documentElement.lang =
+        regionCode === 'no' ? 'nb' : regionCode === 'it' ? 'it' : regionCode === 'vn' ? 'vi' : 'en';
+      document.title = seo.title;
+
+      const setMetaTag = (attr: 'name' | 'property', key: string, value: string) => {
+        let el = document.head.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
+        if (!el) {
+          el = document.createElement('meta');
+          el.setAttribute(attr, key);
+          document.head.appendChild(el);
+        }
+        el.content = value;
+      };
+
+      setMetaTag('name', 'description', seo.description);
+      setMetaTag('name', 'robots', seo.robots);
+      setMetaTag('property', 'og:title', seo.title);
+      setMetaTag('property', 'og:description', seo.description);
+      setMetaTag('property', 'og:type', seo.ogType);
+      setMetaTag('property', 'og:url', seo.canonicalUrl);
+      setMetaTag('property', 'og:image', seo.ogImage);
+      setMetaTag('name', 'twitter:title', seo.title);
+      setMetaTag('name', 'twitter:description', seo.description);
+
+      let canonicalEl = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+      if (!canonicalEl) {
+        canonicalEl = document.createElement('link');
+        canonicalEl.rel = 'canonical';
+        document.head.appendChild(canonicalEl);
+      }
+      canonicalEl.href = seo.canonicalUrl;
+
+      document.head.querySelectorAll('link[data-mn-hreflang="1"]').forEach((node) => node.remove());
+      seo.hreflangs.forEach((alt) => {
+        const linkEl = document.createElement('link');
+        linkEl.rel = 'alternate';
+        linkEl.hreflang = alt.hreflang;
+        linkEl.href = alt.href;
+        linkEl.setAttribute('data-mn-hreflang', '1');
+        document.head.appendChild(linkEl);
+      });
+
+      let jsonLdEl = document.getElementById('mn-structured-data') as HTMLScriptElement | null;
+      if (!jsonLdEl) {
+        jsonLdEl = document.createElement('script');
+        jsonLdEl.id = 'mn-structured-data';
+        jsonLdEl.type = 'application/ld+json';
+        document.head.appendChild(jsonLdEl);
+      }
+      jsonLdEl.textContent = JSON.stringify(seo.jsonLd);
+    } catch {
+      // ignore DOM head sync errors in non-browser contexts
+    }
+  }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct]);
+
   const navigate = (view: AppView, opts?: { category?: string; slug?: string }) => {
+    const nextCat = opts?.category !== undefined ? opts.category : selectedCategory;
+    const nextSlug =
+      opts?.slug !== undefined ? opts.slug : view === 'product' ? selectedSlug : view === 'b2b' ? b2bProductSlug : null;
     if (opts?.category !== undefined) setSelectedCategory(opts.category);
     if (opts?.slug !== undefined) setSelectedSlug(opts.slug);
     setActiveView(view);
+    pushBrowserUrl(regionCode, view, nextCat, nextSlug);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -312,6 +514,13 @@ export default function App() {
     }
     if (action.type === 'apply_coupon' && action.couponCode) {
       setActivePromoCode(action.couponCode.toUpperCase());
+      if (cart.length > 0) {
+        navigate('checkout');
+      }
+      return;
+    }
+    if (action.type === 'open_checkout') {
+      navigate('checkout');
       return;
     }
     if (action.type === 'open_about') {
@@ -339,7 +548,19 @@ export default function App() {
   };
 
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+  const cartSubtotal = cart.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
   const wishlistProducts = products.filter((p) => wishlistIds.includes(p.id));
+  const hasTopBannerText = Boolean(
+    topBanner.enabled &&
+      (topBanner[`text_${regionCode}` as keyof TopBannerSettings] || topBanner.text_en)
+  );
+  const topBannerSpacerClass = !hasTopBannerText
+    ? ''
+    : topBanner.visibility === 'desktop_only'
+    ? 'hidden md:block h-7'
+    : topBanner.visibility === 'mobile_only'
+    ? 'md:hidden h-7'
+    : 'h-7';
 
   return (
     <div className="min-h-screen flex flex-col bg-white text-[#1A1A1A]">
@@ -347,10 +568,13 @@ export default function App() {
         <Navbar
           activeView={activeView}
           isTransparentOverHero={activeView === 'home'}
+          showScrollProgress={activeView === 'product'}
+          authUser={authUser}
           region={activeRegion}
           regions={regions}
           categories={categories}
           menuItems={menuItems}
+          topBanner={topBanner}
           copy={copy}
           cartCount={cartCount}
           wishlistCount={wishlistIds.length}
@@ -363,6 +587,9 @@ export default function App() {
       )}
 
       <div className="flex-1">
+        {activeView !== 'home' && activeView !== 'admin' && topBannerSpacerClass && (
+          <div className={topBannerSpacerClass} aria-hidden="true" />
+        )}
         {loading && products.length === 0 ? (
           <div className="pt-32 pb-24 text-center text-xs uppercase tracking-widest text-neutral-400">
             Monte Napoleone 1974...
@@ -450,12 +677,27 @@ export default function App() {
             onClearCart={() => setCart([])}
             onBackToShop={() => navigate('catalog', { category: 'all' })}
             onRefreshStorefront={() => fetchStorefront(regionCode)}
+            onOrderCompleted={(usedCode) => {
+              if (usedCode) {
+                markPromoClaimedOrUsed();
+              }
+            }}
           />
         ) : activeView === 'account' ? (
           <AccountView
             region={activeRegion}
             copy={copy}
-            onOpenAdmin={() => navigate('admin')}
+            authToken={authToken}
+            authUser={authUser}
+            customerAuthConfig={customerAuthConfig}
+            onAuthChange={(token, user) => {
+              setAuthToken(token);
+              setAuthUser(user);
+            }}
+            onPromoUnlocked={(code) => {
+              setActivePromoCode(code);
+              markPromoClaimedOrUsed();
+            }}
           />
         ) : (
           <AdminDashboard
@@ -479,7 +721,11 @@ export default function App() {
           onNavigateAccount={() => navigate('account')}
           onNavigateAbout={() => navigate('about')}
           onOpenSizeGuide={() => setInfoModal('size_guide')}
-          onPromoCodeUnlocked={(code) => setActivePromoCode(code)}
+          onPromoCodeUnlocked={(code) => {
+            setActivePromoCode(code);
+            markPromoClaimedOrUsed();
+          }}
+          onPromoCodeAlreadyUsed={markPromoClaimedOrUsed}
         />
       )}
 
@@ -513,7 +759,7 @@ export default function App() {
         onSelectProduct={(slug) => navigate('product', { slug })}
       />
 
-      <InfoModal mode={infoModal} onClose={() => setInfoModal(null)} />
+      <InfoModal mode={infoModal} region={activeRegion} onClose={() => setInfoModal(null)} />
 
       {activeView !== 'admin' && (
         <>
@@ -521,15 +767,35 @@ export default function App() {
             regionCode={regionCode}
             copy={copy}
             promoRules={promoRules}
+            isProductPage={activeView === 'product'}
+            offerAlreadyUsed={promoClaimedOrUsed}
             onCodeUnlocked={(code) => setActivePromoCode(code)}
+            onOfferClaimed={markPromoClaimedOrUsed}
           />
+
+          {activeView !== 'product' && activeView !== 'checkout' && activeView !== 'account' && (
+            <GmailLoginCornerPopup
+              regionCode={regionCode}
+              customerAuthConfig={customerAuthConfig}
+              authUser={authUser}
+              onOpenAccount={() => navigate('account')}
+            />
+          )}
 
           <AiConciergeWidget
             region={activeRegion}
             copy={copy}
             aiConfig={aiConfig}
             products={products}
-            hasFloatingPromoLeft={promoRules.popupEnabled && promoRules.showFloatingButton}
+            hasFloatingPromoLeft={
+              promoRules.popupEnabled && promoRules.showFloatingButton && !promoClaimedOrUsed
+            }
+            isProductPage={activeView === 'product'}
+            cartCount={cartCount}
+            cartSubtotal={cartSubtotal}
+            firstOrderEligible={!promoClaimedOrUsed}
+            activePromoCode={activePromoCode}
+            currentProductSlug={activeView === 'product' ? activeProduct?.slug || selectedSlug : null}
             onExecuteAction={handleExecuteAiAction}
             onOpenProduct={(slug) => navigate('product', { slug })}
             onQuickAddToBag={handleQuickAddToBag}

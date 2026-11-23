@@ -29,6 +29,7 @@ interface CheckoutViewProps {
   onClearCart: () => void;
   onBackToShop: () => void;
   onRefreshStorefront: () => void;
+  onOrderCompleted?: (usedDiscountCode?: string) => void;
 }
 
 export const CheckoutView: React.FC<CheckoutViewProps> = ({
@@ -41,6 +42,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   onClearCart,
   onBackToShop,
   onRefreshStorefront,
+  onOrderCompleted,
 }) => {
   const availableMethods = getAvailablePaymentMethods(region);
 
@@ -246,6 +248,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         redirectActionRequired: Boolean(data.payment?.redirectActionRequired),
         providerMode: data.payment?.providerMode || 'sandbox',
       });
+      onOrderCompleted?.(appliedDiscount || undefined);
       onClearCart();
       onRefreshStorefront();
     } catch {

@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { CategoryRecord, Product, RegionConfig } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
+import { productMatchesCategories } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
 
 interface CatalogViewProps {
@@ -34,6 +35,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onNavigateB2B,
 }) => {
   const [visibleLimit, setVisibleLimit] = useState(6);
+  const carouselRef = useRef<HTMLDivElement>(null);
+
+  const scrollCarousel = (dir: -1 | 1) => {
+    carouselRef.current?.scrollBy({ left: dir * 240, behavior: 'smooth' });
+  };
 
   const getCategoryName = (cat: CategoryRecord): string => {
     if (region.code === 'no') return cat.name_no;
@@ -84,7 +90,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     return products.filter((p) => {
       if (selectedCategory === 'outlet') {
         if (!p.is_outlet) return false;
-      } else if (matchingCategorySlugs && !matchingCategorySlugs.has(p.category_slug)) {
+      } else if (!productMatchesCategories(p, matchingCategorySlugs)) {
         return false;
       }
       if (!q) return true;
@@ -101,52 +107,76 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
   return (
     <main className="pt-20 pb-20 max-w-[1720px] mx-auto px-1.5 sm:px-3 min-h-[75vh]">
-      {/* Floating Segmented Category Filter Bar (Matches montenapoleone1974.com PLP) */}
-      <div className="flex flex-col items-center gap-2 mb-3">
-        <nav
-          aria-label="Product categories"
-          className="inline-flex flex-wrap items-center justify-center bg-white border border-black/10 shadow-sm rounded-xl p-1 gap-1 max-w-full"
+      {/* Horizontal Snap-Scroll Category Carousel */}
+      <div className="flex flex-col items-center gap-2.5 mb-3">
+        <div
+          data-testid="b2c-category-carousel"
+          className="w-full max-w-4xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1"
         >
           <button
             type="button"
-            onClick={() => {
-              onSelectCategory('all');
-              setVisibleLimit(9);
-            }}
-            className={`px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-              selectedCategory === 'all'
-                ? 'bg-[#142B4E] text-white font-medium'
-                : 'text-neutral-700 hover:bg-neutral-100'
-            }`}
+            onClick={() => scrollCarousel(-1)}
+            aria-label="Scroll categories left"
+            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
           >
-            {copy.catalog.allCategories}
+            <ChevronLeft className="w-4 h-4" />
           </button>
-          {topCategories.map((cat) => {
-            const active =
-              selectedCategory === cat.slug || activeParentCategory?.id === cat.id;
-            return (
-              <button
-                key={cat.slug}
-                type="button"
-                onClick={() => {
-                  if (cat.slug === 'b2b') {
-                    onNavigateB2B();
-                  } else {
-                    onSelectCategory(cat.slug);
-                    setVisibleLimit(9);
-                  }
-                }}
-                className={`px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  active
-                    ? 'bg-[#142B4E] text-white font-medium'
-                    : 'text-neutral-700 hover:bg-neutral-100'
-                }`}
-              >
-                {getCategoryName(cat)}
-              </button>
-            );
-          })}
-        </nav>
+
+          <nav
+            ref={carouselRef}
+            aria-label="Product categories"
+            className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onSelectCategory('all');
+                setVisibleLimit(9);
+              }}
+              className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                selectedCategory === 'all'
+                  ? 'bg-[#142B4E] text-white font-medium'
+                  : 'text-neutral-700 hover:bg-neutral-100'
+              }`}
+            >
+              {copy.catalog.allCategories}
+            </button>
+            {topCategories.map((cat) => {
+              const active =
+                selectedCategory === cat.slug || activeParentCategory?.id === cat.id;
+              return (
+                <button
+                  key={cat.slug}
+                  type="button"
+                  onClick={() => {
+                    if (cat.slug === 'b2b') {
+                      onNavigateB2B();
+                    } else {
+                      onSelectCategory(cat.slug);
+                      setVisibleLimit(9);
+                    }
+                  }}
+                  className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    active
+                      ? 'bg-[#142B4E] text-white font-medium'
+                      : 'text-neutral-700 hover:bg-neutral-100'
+                  }`}
+                >
+                  {getCategoryName(cat)}
+                </button>
+              );
+            })}
+          </nav>
+
+          <button
+            type="button"
+            onClick={() => scrollCarousel(1)}
+            aria-label="Scroll categories right"
+            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
 
         {childCategories.length > 0 && activeParentCategory && (
           <nav

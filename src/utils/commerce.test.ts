@@ -26,7 +26,18 @@ import {
   normalizeBillingAddress,
   parseWooCommerceCsv,
   parseWordPressCategoriesXml,
+  productMatchesCategories,
+  isTopBannerVisibleOnViewport,
+  DEFAULT_TOP_BANNER_SETTINGS,
 } from './commerce.ts';
+import {
+  buildRobotsTxt,
+  buildSeoMetadata,
+  buildSitemapXml,
+  buildStorefrontPath,
+  parseStorefrontUrl,
+} from './seo.ts';
+import { evaluateStorefrontAgentTurn } from './agentLogic.ts';
 import { buildOrderEmailTemplate } from './emailTemplates.ts';
 import type { OrderRecord } from '../types.ts';
 
@@ -439,6 +450,235 @@ test('builds localized Resend order confirmation and DHL tracking emails across 
   });
   assert.match(confirmVn.subject, /Xác nhận đơn hàng/);
 });
+
+test('matches products assigned to multiple parent and child categories', () => {
+  const multiProd = {
+    category_slug: 'linen',
+    category_slugs: ['linen', 'business', 'italian-linen'],
+  };
+  assert.equal(productMatchesCategories(multiProd, new Set(['linen'])), true);
+  assert.equal(productMatchesCategories(multiProd, new Set(['business'])), true);
+  assert.equal(productMatchesCategories(multiProd, new Set(['italian-linen'])), true);
+  assert.equal(productMatchesCategories(multiProd, new Set(['flannel'])), false);
+  assert.equal(productMatchesCategories(multiProd, null), true);
+});
+
+test('enforces top banner device visibility settings (both, desktop_only, mobile_only)', () => {
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: false, visibility: 'both' }, 1440), false);
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: true, visibility: 'both' }, 390), true);
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: true, visibility: 'desktop_only' }, 1440), true);
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: true, visibility: 'desktop_only' }, 390), false);
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: true, visibility: 'mobile_only' }, 390), true);
+  assert.equal(isTopBannerVisibleOnViewport({ enabled: true, visibility: 'mobile_only' }, 1440), false);
+  assert.equal(DEFAULT_TOP_BANNER_SETTINGS.enabled, true);
+});
+
+test('parses and builds clean localized SEO URLs, Schema.org metadata, robots.txt, and sitemap.xml', () => {
+  assert.deepEqual(parseStorefrontUrl('/'), { view: 'home' });
+  assert.deepEqual(parseStorefrontUrl('/no'), { region: 'no', view: 'home' });
+  assert.deepEqual(parseStorefrontUrl('/no/shop/linen'), {
+    region: 'no',
+    view: 'catalog',
+    category: 'linen',
+  });
+  assert.deepEqual(parseStorefrontUrl('/it/product/beige-linen-shirt-l3'), {
+    region: 'it',
+    view: 'product',
+    slug: 'beige-linen-shirt-l3',
+  });
+  assert.deepEqual(parseStorefrontUrl('/b2b/navy-oxford-shirt'), {
+    region: undefined,
+    view: 'b2b',
+    slug: 'navy-oxford-shirt',
+  });
+  assert.deepEqual(parseStorefrontUrl('/en/about-us'), {
+    region: 'en',
+    view: 'about',
+  });
+
+  assert.equal(buildStorefrontPath({ regionCode: 'en', view: 'home' }), '/');
+  assert.equal(buildStorefrontPath({ regionCode: 'no', view: 'catalog', category: 'linen' }), '/no/shop/linen');
+  assert.equal(
+    buildStorefrontPath({ regionCode: 'it', view: 'product', slug: 'beige-linen-shirt-l3' }),
+    '/it/product/beige-linen-shirt-l3'
+  );
+
+  const seoProd = buildSeoMetadata({
+    view: 'product',
+    region: { code: 'no', name: 'Norway', currency_code: 'NOK', warehouse_name: 'Oslo Warehouse' },
+    product: {
+      sku: 'MN-L3',
+      slug: 'beige-linen-shirt-l3',
+      title: 'BEIGE LINEN SHIRT #L3',
+      description: 'Breathable 100% Tuscan linen summer shirt.',
+      fabric_spec: '100% Tuscan Linen',
+      price: 1699,
+      primary_image: '/src/assets/images/shirt_beige_linen_1795248293982.jpg',
+      stock_qty: 18,
+      preorder_allowed: true,
+    },
+    origin: 'https://montenapoleone1974.com',
+  });
+
+  assert.ok(seoProd.title.length >= 20 && seoProd.title.length <= 60);
+  assert.ok(seoProd.description.length >= 90 && seoProd.description.length <= 160);
+  assert.equal(seoProd.canonicalUrl, 'https://montenapoleone1974.com/no/product/beige-linen-shirt-l3');
+  assert.equal(seoProd.ogType, 'product');
+  assert.equal(seoProd.hreflangs.length, 5);
+  assert.equal((seoProd.jsonLd[1] as { '@type': string })['@type'], 'Product');
+
+  const robots = buildRobotsTxt('https://montenapoleone1974.com');
+  assert.match(robots, /Sitemap: https:\/\/montenapoleone1974\.com\/sitemap\.xml/);
+
+  const sitemap = buildSitemapXml({
+    origin: 'https://montenapoleone1974.com',
+    regions: ['en', 'no'],
+    categories: [{ slug: 'linen' }],
+    products: [{ slug: 'beige-linen-shirt-l3' }],
+  });
+  assert.match(sitemap, /https:\/\/montenapoleone1974\.com\/no\/product\/beige-linen-shirt-l3/);
+  assert.match(sitemap, /hreflang="nb-NO"/);
+});
+
+test('AI shopping agent recommends products, handles "yes" confirmation to add to bag, offers 10% discount, and routes to checkout', () => {
+  const sampleProducts = [
+    {
+      id: 1,
+      sku: 'MN-L3',
+      slug: 'beige-linen-shirt-l3',
+      title: 'Beige Linen Shirt',
+      category_slug: 'linen',
+      category_slugs: ['linen'],
+      fabric_spec: '100% Tuscan Linen',
+      price: 185,
+      primary_image: '/img1.jpg',
+      stock_qty: 12,
+      preorder_allowed: true,
+      sizes: ['39 / M', '40 / M', '41 / L'],
+    },
+  ];
+
+  // Turn 1: User asks for a linen shirt
+  const turn1 = evaluateStorefrontAgentTurn({
+    message: 'Show me a beige linen shirt in size 40 / M',
+    regionCode: 'en',
+    products: sampleProducts,
+    cartQty: 0,
+    cartSubtotal: 0,
+    firstOrderEligible: true,
+    promoRules: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkRules: DEFAULT_BULK_DISCOUNT_SETTINGS,
+  });
+  assert.equal(turn1.agentAction?.type, 'open_product');
+  assert.equal(turn1.agentAction?.productSlug, 'beige-linen-shirt-l3');
+  assert.equal(turn1.pendingOffer?.kind, 'product');
+  assert.match(turn1.reply, /Do you like/i);
+
+  // Turn 2: User replies "yes" -> adds to bag & offers MONTE10
+  const turn2 = evaluateStorefrontAgentTurn({
+    message: 'Yes please!',
+    regionCode: 'en',
+    products: sampleProducts,
+    cartQty: 0,
+    cartSubtotal: 0,
+    firstOrderEligible: true,
+    promoRules: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkRules: DEFAULT_BULK_DISCOUNT_SETTINGS,
+    pendingOffer: turn1.pendingOffer,
+  });
+  assert.equal(turn2.agentAction?.type, 'add_to_cart');
+  assert.equal(turn2.agentAction?.productSlug, 'beige-linen-shirt-l3');
+  assert.equal(turn2.agentAction?.size, '40 / M');
+  assert.equal(turn2.pendingOffer?.kind, 'discount');
+  assert.equal(turn2.pendingOffer?.couponCode, 'MONTE10');
+
+  // Turn 3: User replies "yes" -> applies MONTE10
+  const turn3 = evaluateStorefrontAgentTurn({
+    message: 'yes',
+    regionCode: 'en',
+    products: sampleProducts,
+    cartQty: 1,
+    cartSubtotal: 185,
+    firstOrderEligible: true,
+    promoRules: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkRules: DEFAULT_BULK_DISCOUNT_SETTINGS,
+    pendingOffer: turn2.pendingOffer,
+  });
+  assert.equal(turn3.agentAction?.type, 'apply_coupon');
+  assert.equal(turn3.agentAction?.couponCode, 'MONTE10');
+  assert.equal(turn3.pendingOffer?.kind, 'checkout');
+
+  // Turn 4: User confirms checkout -> opens checkout
+  const turn4 = evaluateStorefrontAgentTurn({
+    message: 'yes',
+    regionCode: 'en',
+    products: sampleProducts,
+    cartQty: 1,
+    cartSubtotal: 185,
+    firstOrderEligible: true,
+    activePromoCode: 'MONTE10',
+    promoRules: DEFAULT_PROMO_POPUP_SETTINGS,
+    bulkRules: DEFAULT_BULK_DISCOUNT_SETTINGS,
+    pendingOffer: turn3.pendingOffer,
+  });
+  assert.equal(turn4.agentAction?.type, 'open_checkout');
+});
+
+test('parseStorefrontUrl handles hidden /admin and /staff-portal routes and DEFAULT_CUSTOMER_AUTH_SETTINGS has safe defaults', async () => {
+  const { DEFAULT_CUSTOMER_AUTH_SETTINGS } = await import('./commerce.ts');
+  const { TRANSLATIONS } = await import('../i18n/translations.ts');
+
+  assert.equal(parseStorefrontUrl('/admin').view, 'admin');
+  assert.equal(parseStorefrontUrl('/staff-portal').view, 'admin');
+  assert.equal(parseStorefrontUrl('/no/about-us').view, 'about');
+
+  assert.equal(DEFAULT_CUSTOMER_AUTH_SETTINGS.googleLoginEnabled, true);
+  assert.equal(DEFAULT_CUSTOMER_AUTH_SETTINGS.showCornerPopup, true);
+  assert.equal(DEFAULT_CUSTOMER_AUTH_SETTINGS.autoSubscribeMailchimp, true);
+  assert.ok(DEFAULT_CUSTOMER_AUTH_SETTINGS.cornerPopupDelaySeconds >= 0);
+
+  for (const code of ['en', 'no', 'it', 'vn'] as const) {
+    const locale = TRANSLATIONS[code];
+    assert.equal(locale.footer.infoUrls.length, 6, `footer.infoUrls length for ${code}`);
+    assert.equal(locale.aboutPage.commitmentCards.length, 6, `aboutPage.commitmentCards length for ${code}`);
+    assert.equal(locale.aboutPage.traditions.length, 3, `aboutPage.traditions length for ${code}`);
+    assert.ok(locale.aboutPage.lead.length > 20);
+  }
+});
+
+test('SIZE_GUIDE_CHARTS and RETURN_FORM_PDFS match exact tailoring measurements and 4 regional PDFs', async () => {
+  const { SIZE_GUIDE_CHARTS, RETURN_FORM_PDFS, getReturnFormPdfForRegion } = await import(
+    './sizeGuide.ts'
+  );
+
+  assert.equal(SIZE_GUIDE_CHARTS.length, 3);
+  const [contemporary, modernFit, slimfit] = SIZE_GUIDE_CHARTS;
+
+  assert.equal(contemporary.title, 'Contemporary');
+  assert.deepEqual(contemporary.sizes, ['S / 38', 'M / 40', 'L / 42', 'XL / 44', '2XL / 46', '3XL / 48']);
+  assert.equal(contemporary.rows.length, 7);
+  assert.deepEqual(contemporary.rows[1].values, [106, 113, 122, 130, 134, 146]);
+  assert.deepEqual(contemporary.rows[6].values, [76.5, 77.5, 79, 81, 82.5, 85]);
+
+  assert.equal(modernFit.title, 'Modern Fit');
+  assert.equal(modernFit.sizes.length, 8);
+  assert.equal(modernFit.rows.length, 7);
+  assert.deepEqual(modernFit.rows[1].values, [110, 114, 116, 120, 124, 127, 132, 135]);
+
+  assert.equal(slimfit.title, 'Slimfit');
+  assert.equal(slimfit.sizes.length, 9);
+  assert.equal(slimfit.rows.length, 7);
+  assert.deepEqual(slimfit.rows[1].values, [93, 96, 102, 105, 109, 113, 118, 123, 126]);
+
+  assert.equal(RETURN_FORM_PDFS.en.url, '/assets/aistudio/Return_English_8c2b95ab.pdf');
+  assert.equal(RETURN_FORM_PDFS.no.url, '/assets/aistudio/Return_Norwegian_e44561c2.pdf');
+  assert.equal(RETURN_FORM_PDFS.vn.url, '/assets/aistudio/Return_Tieng_Viet_6ea36a22.pdf');
+  assert.equal(RETURN_FORM_PDFS.it.url, '/assets/aistudio/Return_Italian_Modulo_Recesso.pdf');
+  assert.equal(getReturnFormPdfForRegion('no').shortLabel, 'Norsk');
+  assert.equal(getReturnFormPdfForRegion('it').shortLabel, 'Italiano');
+});
+
+
 
 
 

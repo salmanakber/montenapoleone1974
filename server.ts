@@ -2,10 +2,18 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import multer from 'multer';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
+import { WebSocketServer } from 'ws';
+import {
+  GoogleGenAI,
+  Modality,
+  Type,
+  type FunctionDeclaration,
+  type LiveServerMessage,
+} from '@google/genai';
 import { DB_PATH, db, initializeDatabase, UPLOADS_DIR } from './server/db.ts';
 import {
   createSession,
@@ -14,15 +22,18 @@ import {
   hashPassword,
   logAudit,
   mapUserRow,
+  requireAuth,
   requirePermission,
   requireStaffOrOwner,
   verifyPassword,
   type AuthedRequest,
 } from './server/auth.ts';
 import {
+  buildGoogleAuthorizeUrl,
   buildWixAuthorizeUrl,
   createDhlWaybillNumber,
   dispatchLocalizedOrderEmail,
+  exchangeGoogleOAuthCode,
   exchangeWixOAuthCode,
   fetchVippsExpressShippingProfile,
   getCredentialsMaskedStatus,
@@ -43,6 +54,8 @@ import type {
   BespokeTailoring,
   BulkDiscountSettings,
   CsvImportRow,
+  CustomerAuthPublicConfig,
+  CustomerAuthSettings,
   HeroSlideRecord,
   PaymentMethod,
   PromotionPopupSettings,
@@ -50,6 +63,7 @@ import type {
   RegionConfig,
   ShippingMethod,
   StaffPermissions,
+  TopBannerSettings,
   WooProductImportRow,
 } from './src/types.ts';
 import {
@@ -58,9 +72,11 @@ import {
   computeBulkPriceAdjustment,
   convertBasePriceAcrossRegions,
   DEFAULT_BULK_DISCOUNT_SETTINGS,
+  DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_STAFF_PERMISSIONS,
   DEFAULT_TAILORING_SURCHARGE,
+  DEFAULT_TOP_BANNER_SETTINGS,
   estimateB2BUnitRate,
   generateBankReference,
   getAvailablePaymentMethods,
@@ -73,6 +89,16 @@ import {
   slugifyCategoryName,
   toCsv,
 } from './src/utils/commerce.ts';
+import {
+  buildRobotsTxt,
+  buildSeoMetadata,
+  buildSitemapXml,
+  parseStorefrontUrl,
+} from './src/utils/seo.ts';
+import {
+  evaluateStorefrontAgentTurn,
+  type AgentCatalogProduct,
+} from './src/utils/agentLogic.ts';
 
 dotenv.config();
 initializeDatabase();
@@ -214,6 +240,55 @@ function getPublicAiConfig(): AiPublicConfig {
   };
 }
 
+function getTopBannerSettings(): TopBannerSettings {
+  return getSiteSettingJson<TopBannerSettings>('top_banner', DEFAULT_TOP_BANNER_SETTINGS);
+}
+
+function getCustomerAuthSettings(): CustomerAuthSettings {
+  return getSiteSettingJson<CustomerAuthSettings>('customer_auth', DEFAULT_CUSTOMER_AUTH_SETTINGS);
+}
+
+function getPublicCustomerAuthConfig(req: express.Request): CustomerAuthPublicConfig {
+  const s = getCustomerAuthSettings();
+  const googleConfigured = getGatewayConfigurationStatus().google.configured;
+  const origin = resolveRequestOrigin(req);
+  return {
+    googleLoginEnabled: Boolean(s.googleLoginEnabled),
+    showCornerPopup: Boolean(s.showCornerPopup),
+    autoSubscribeMailchimp: Boolean(s.autoSubscribeMailchimp),
+    cornerPopupDelaySeconds: Math.max(0, Math.min(30, Number(s.cornerPopupDelaySeconds ?? 3))),
+    googleConfigured,
+    googleCallbackUrl: `${origin}/api/auth/google/callback`,
+  };
+}
+
+function parseCategorySlugs(primary: unknown, jsonRaw: unknown): string[] {
+  const list: string[] = [];
+  if (Array.isArray(jsonRaw)) {
+    for (const item of jsonRaw) {
+      const s = String(item || '').trim();
+      if (s && !list.includes(s)) list.push(s);
+    }
+  } else if (typeof jsonRaw === 'string' && jsonRaw.trim()) {
+    try {
+      const parsed = JSON.parse(jsonRaw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          const s = String(item || '').trim();
+          if (s && !list.includes(s)) list.push(s);
+        }
+      }
+    } catch {
+      // ignore invalid json
+    }
+  }
+  const primarySlug = String(primary || '').trim();
+  if (primarySlug && !list.includes(primarySlug)) {
+    list.unshift(primarySlug);
+  }
+  return list.length > 0 ? list : ['business'];
+}
+
 function maskSecret(val?: string): string {
   const clean = (val || '').trim();
   if (!clean) return '';
@@ -257,8 +332,12 @@ function isCustomerFirstOrder(email: string): boolean {
   return row.c === 0;
 }
 
-// Ephemeral CSRF state store for Wix OAuth onboarding flow
+// Ephemeral CSRF state stores for OAuth flows
 const wixOauthStates = new Map<string, { userId: number; expiresAt: number }>();
+const googleOauthStates = new Map<
+  string,
+  { regionCode: RegionCode; subscribeNewsletter: boolean; redirectUri: string; expiresAt: number }
+>();
 
 function hydrateCategoryRow(c: Record<string, unknown>) {
   return {
@@ -377,33 +456,37 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     .prepare('SELECT * FROM tailoring_size_specs ORDER BY fit ASC, size_label ASC')
     .all();
 
-  const products = productRows.map((p) => ({
-    id: Number(p.id),
-    sku: String(p.sku),
-    slug: String(p.slug),
-    category_slug: String(p.category_slug),
-    fabric_spec: String(p.fabric_spec),
-    is_featured: Boolean(p.is_featured),
-    is_b2b_eligible: Boolean(p.is_b2b_eligible),
-    is_outlet: Boolean(p.is_outlet),
-    preorder_allowed: Boolean(p.preorder_allowed),
-    primary_image: String(p.primary_image),
-    secondary_image: String(p.secondary_image),
-    gallery: JSON.parse(String(p.gallery_json)) as string[],
-    collars: JSON.parse(String(p.collars_json)) as string[],
-    cuffs: JSON.parse(String(p.cuffs_json)) as string[],
-    sizes: JSON.parse(String(p.sizes_json)) as string[],
-    active: Boolean(p.active),
-    title: String(p.title),
-    subtitle: String(p.subtitle),
-    description: String(p.description),
-    price: Number(p.price),
-    compare_at_price: p.compare_at_price !== null ? Number(p.compare_at_price) : null,
-    stock_qty: Number(p.stock_qty),
-    warehouse_location: String(p.warehouse_location),
-    delivery_note: String(p.delivery_note),
-    variants: variantsByProd.get(Number(p.id)) || [],
-  }));
+  const products = productRows.map((p) => {
+    const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
+    return {
+      id: Number(p.id),
+      sku: String(p.sku),
+      slug: String(p.slug),
+      category_slug: categorySlugs[0] || String(p.category_slug),
+      category_slugs: categorySlugs,
+      fabric_spec: String(p.fabric_spec),
+      is_featured: Boolean(p.is_featured),
+      is_b2b_eligible: Boolean(p.is_b2b_eligible),
+      is_outlet: Boolean(p.is_outlet),
+      preorder_allowed: Boolean(p.preorder_allowed),
+      primary_image: String(p.primary_image),
+      secondary_image: String(p.secondary_image),
+      gallery: JSON.parse(String(p.gallery_json)) as string[],
+      collars: JSON.parse(String(p.collars_json)) as string[],
+      cuffs: JSON.parse(String(p.cuffs_json)) as string[],
+      sizes: JSON.parse(String(p.sizes_json)) as string[],
+      active: Boolean(p.active),
+      title: String(p.title),
+      subtitle: String(p.subtitle),
+      description: String(p.description),
+      price: Number(p.price),
+      compare_at_price: p.compare_at_price !== null ? Number(p.compare_at_price) : null,
+      stock_qty: Number(p.stock_qty),
+      warehouse_location: String(p.warehouse_location),
+      delivery_note: String(p.delivery_note),
+      variants: variantsByProd.get(Number(p.id)) || [],
+    };
+  });
 
   const heroSlides = (
     db.prepare('SELECT * FROM hero_slides WHERE active = 1 ORDER BY sort_order ASC, id ASC').all() as Array<
@@ -417,9 +500,11 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     categories,
     menuItems,
     heroSlides,
+    topBanner: getTopBannerSettings(),
     promoRules: getPromoRules(),
     bulkDiscount: getBulkDiscountSettings(),
     aiConfig: getPublicAiConfig(),
+    customerAuthConfig: getPublicCustomerAuthConfig(req),
     products,
     tailoringSpecs,
     tailoringSurcharges: DEFAULT_TAILORING_SURCHARGE,
@@ -898,6 +983,7 @@ app.post('/api/newsletter', async (req, res) => {
     discountPct: promoRules.discountPct,
     firstOrderOnly: promoRules.firstOrderOnly,
     firstOrderEligible,
+    alreadyClaimedOrUsed: promoRules.firstOrderOnly && !firstOrderEligible,
     mailchimpStatus: mcResult.status,
   });
 });
@@ -917,6 +1003,13 @@ app.post('/api/ai/chat', async (req, res) => {
   const regionCode = parseRegion(body.regionCode);
   const message = String(body.message || '').trim();
   const history = Array.isArray(body.history) ? body.history.slice(-6) : [];
+  const cartQty = Math.max(0, Math.floor(Number(body.cartQty || 0)));
+  const cartSubtotal = Math.max(0, Number(body.cartSubtotal || 0));
+  const firstOrderEligible = body.firstOrderEligible !== undefined ? Boolean(body.firstOrderEligible) : true;
+  const activePromoCode = body.activePromoCode ? String(body.activePromoCode).trim() : '';
+  const pendingOffer = body.pendingOffer && typeof body.pendingOffer === 'object' ? body.pendingOffer : null;
+  const currentProductSlug = body.currentProductSlug ? String(body.currentProductSlug).trim() : null;
+
   if (!message) {
     res.status(400).json({ error: 'Please provide a message or shopping request.' });
     return;
@@ -925,7 +1018,7 @@ app.post('/api/ai/chat', async (req, res) => {
   const region = getRegionByCode(regionCode);
   const products = db
     .prepare(
-      `SELECT p.id, p.sku, p.slug, p.category_slug, p.fabric_spec, p.preorder_allowed, p.primary_image, p.sizes_json,
+      `SELECT p.id, p.sku, p.slug, p.category_slug, p.category_slugs_json, p.fabric_spec, p.preorder_allowed, p.primary_image, p.sizes_json,
               pl.title, pl.subtitle, pl.price, pl.stock_qty
        FROM products p
        JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
@@ -937,18 +1030,83 @@ app.post('/api/ai/chat', async (req, res) => {
   const promoRules = getPromoRules();
   const bulkRules = getBulkDiscountSettings();
 
-  const catalogDigest = products.map((p) => ({
-    slug: String(p.slug),
-    sku: String(p.sku),
-    title: String(p.title),
-    category: String(p.category_slug),
-    fabric: String(p.fabric_spec),
-    price: Number(p.price),
+  const agentProducts: AgentCatalogProduct[] = products.map((p) => {
+    const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
+    return {
+      id: Number(p.id),
+      slug: String(p.slug),
+      sku: String(p.sku),
+      title: String(p.title),
+      category_slug: categorySlugs[0] || String(p.category_slug),
+      category_slugs: categorySlugs,
+      fabric_spec: String(p.fabric_spec),
+      price: Number(p.price),
+      primary_image: String(p.primary_image),
+      stock_qty: Number(p.stock_qty),
+      preorder_allowed: Boolean(p.preorder_allowed),
+      sizes: JSON.parse(String(p.sizes_json || '[]')) as string[],
+    };
+  });
+
+  const catalogDigest = agentProducts.map((p) => ({
+    slug: p.slug,
+    sku: p.sku,
+    title: p.title,
+    categories: p.category_slugs || [p.category_slug],
+    fabric: p.fabric_spec,
+    price: p.price,
     currency: region?.currency_code || 'USD',
-    stock: Number(p.stock_qty),
-    preorder: Boolean(p.preorder_allowed),
-    sizes: JSON.parse(String(p.sizes_json || '[]')),
+    stock: p.stock_qty,
+    preorder: p.preorder_allowed,
+    sizes: p.sizes,
   }));
+
+  const openaiKey = (aiSettings.openaiApiKey || getResolvedSecret('OPENAI_API_KEY') || '').trim();
+  const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
+  const hasProviderKey = aiSettings.activeProvider === 'openai' ? Boolean(openaiKey) : Boolean(geminiKey);
+
+  const mapRecommendedProducts = (slugs: string[]) => {
+    const slugSet = new Set(slugs.map((s) => String(s).trim()));
+    return agentProducts
+      .filter((p) => slugSet.has(p.slug))
+      .slice(0, 3)
+      .map((p) => ({
+        id: p.id,
+        slug: p.slug,
+        sku: p.sku,
+        title: p.title,
+        price: p.price,
+        primary_image: p.primary_image,
+        stock_qty: p.stock_qty,
+        preorder_allowed: p.preorder_allowed,
+        sizes: p.sizes,
+      }));
+  };
+
+  if (!hasProviderKey) {
+    const decision = evaluateStorefrontAgentTurn({
+      message,
+      regionCode,
+      products: agentProducts,
+      cartQty,
+      cartSubtotal,
+      firstOrderEligible,
+      activePromoCode,
+      promoRules,
+      bulkRules,
+      pendingOffer,
+      currentProductSlug,
+    });
+    res.json({
+      provider: 'storefront_router',
+      reply: decision.reply,
+      recommendedProducts: mapRecommendedProducts(decision.recommendedSlugs),
+      agentAction: decision.agentAction,
+      pendingOffer: decision.pendingOffer,
+      suggestedReplies: decision.suggestedReplies,
+    });
+    return;
+  }
 
   const languageName =
     regionCode === 'no' ? 'Norwegian' : regionCode === 'it' ? 'Italian' : regionCode === 'vn' ? 'Vietnamese' : 'English';
@@ -956,6 +1114,9 @@ app.post('/api/ai/chat', async (req, res) => {
   const systemInstruction = `You are the warm, knowledgeable Italian shirt tailor & personal shopping agent for MONTE NAPOLEONE 1974 (founded in Treviso, Italy in 1974, Nordic showroom at Gulbrandsens Agencies AS, Maridalsveien 87, 0461 Oslo, Norway).
 Respond naturally like a human atelier tailor in ${languageName}.
 Active storefront region: ${region?.name || 'International'} (${region?.currency_code || 'USD'}, ${region?.warehouse_name || 'Treviso Hub'}).
+Live shopper bag state: ${cartQty} item(s), subtotal ${cartSubtotal} ${region?.currency_code || 'USD'}, active promo: ${activePromoCode || 'none'}, first-order eligible: ${firstOrderEligible ? 'yes' : 'no'}.
+Pending proposal from previous turn: ${pendingOffer ? JSON.stringify(pendingOffer) : 'none'}.
+Currently viewed product slug: ${currentProductSlug || 'none'}.
 Free shirt length & sleeve tailoring on every shirt; waist/chest/hem/shoulder alterations cost a small optional fee.
 First-order promo code: ${promoRules.popupEnabled ? `${promoRules.discountCode} (${promoRules.discountPct}% off${promoRules.firstOrderOnly ? ', first order only' : ''})` : 'currently disabled'}.
 Bulk discounts: ${bulkRules.enabled ? bulkRules.tiers.map((t) => `${t.minQty}+ shirts = ${t.discountPct}% off`).join(', ') : 'currently disabled'}.
@@ -963,10 +1124,20 @@ B2B corporate uniforms minimum: 20 pieces per color.
 Available live regional catalog:
 ${JSON.stringify(catalogDigest)}
 
+Interactive Shopping Agent Rules:
+1. When recommending a product, end with a friendly prompt like "Do you like this? Say 'yes' and I'll add it to your bag" and set pendingOffer={kind:"product", productSlug, size, fit}.
+2. When pendingOffer is active and the user confirms ("yes", "ja", "sì", "có", "add it", etc.):
+   - If pendingOffer.kind === "product": emit agentAction={type:"add_to_cart", productSlug, size, fit}, and offer applicable first-order discount (${promoRules.discountCode}) or bulk savings, asking to apply & proceed to checkout (set pendingOffer={kind:"discount", couponCode} or {kind:"checkout"}).
+   - If pendingOffer.kind === "discount": emit agentAction={type:"apply_coupon", couponCode} and set pendingOffer={kind:"checkout"} or tell them they're ready for checkout.
+   - If pendingOffer.kind === "checkout": emit agentAction={type:"open_checkout"}.
+3. When the user wants to browse a section/page, use agentAction types: "open_category", "open_product", "open_b2b", "open_about", "open_checkout", "switch_region", "apply_coupon", or "add_to_cart".
+
 Return ONLY valid JSON with:
 - "reply": friendly, concise conversational answer (no markdown headings)
 - "recommendedSlugs": array of up to 3 matching product "slug" values from the catalog above (only real slugs!)
-- "agentAction": optional object when the user asks you to take a shopping action, with "type" in ["add_to_cart", "open_product", "switch_region", "apply_coupon", "open_category", "open_about", "open_b2b"], plus optional fields "productSlug", "size" (from catalog sizes e.g. "40 / M"), "fit" ("Slim Fit" | "Regular Fit" | "Contemporary Fit"), "categorySlug", "regionCode" ("en"|"no"|"it"|"vn"), or "couponCode".`;
+- "agentAction": optional object with "type" in ["add_to_cart", "open_product", "switch_region", "apply_coupon", "open_category", "open_about", "open_b2b", "open_checkout"], plus optional "productSlug", "size", "fit", "categorySlug", "regionCode", "couponCode".
+- "pendingOffer": optional object { "kind": "product" | "discount" | "checkout", "productSlug"?: string, "size"?: string, "fit"?: string, "couponCode"?: string }
+- "suggestedReplies": array of 1 to 3 short quick-reply button labels for the shopper.`;
 
   const conversationLines = history
     .map((m: Record<string, unknown>) => `${m.role === 'user' ? 'Shopper' : 'Tailor'}: ${String(m.content || '')}`)
@@ -978,17 +1149,11 @@ Return ONLY valid JSON with:
       reply?: string;
       recommendedSlugs?: string[];
       agentAction?: AiAgentAction | null;
+      pendingOffer?: Record<string, unknown> | null;
+      suggestedReplies?: string[];
     } = {};
 
     if (aiSettings.activeProvider === 'openai') {
-      const openaiKey = (aiSettings.openaiApiKey || getResolvedSecret('OPENAI_API_KEY') || '').trim();
-      if (!openaiKey) {
-        res.status(400).json({
-          error: 'OpenAI API key is not configured. Set OPENAI_API_KEY in API Vault or Admin -> AI Concierge & Agent.',
-        });
-        return;
-      }
-
       const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -1019,84 +1184,289 @@ Return ONLY valid JSON with:
       const rawText = openaiData.choices?.[0]?.message?.content || '{}';
       parsed = JSON.parse(rawText);
     } else {
-      const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
-      if (!geminiKey) {
-        res.status(400).json({
-          error: 'Gemini API key is not configured. Set GEMINI_API_KEY in API Vault / Secrets or configure it in Admin -> AI Concierge & Agent.',
-        });
-        return;
-      }
-
       const ai = new GoogleGenAI({
         apiKey: geminiKey,
+        apiVersion: 'v1beta',
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
       });
 
-      const modelName = aiSettings.geminiModel || 'gemini-4-hydrogen';
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: fullUserPrompt,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              reply: { type: Type.STRING },
-              recommendedSlugs: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              agentAction: {
-                type: Type.OBJECT,
-                nullable: true,
-                properties: {
-                  type: { type: Type.STRING },
-                  productSlug: { type: Type.STRING, nullable: true },
-                  size: { type: Type.STRING, nullable: true },
-                  fit: { type: Type.STRING, nullable: true },
-                  categorySlug: { type: Type.STRING, nullable: true },
-                  regionCode: { type: Type.STRING, nullable: true },
-                  couponCode: { type: Type.STRING, nullable: true },
+      const primaryModel = aiSettings.geminiModel || 'gemini-4-hydrogen';
+      const invokeGemini = (modelName: string) =>
+        ai.models.generateContent({
+          model: modelName,
+          contents: fullUserPrompt,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                reply: { type: Type.STRING },
+                recommendedSlugs: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                agentAction: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  properties: {
+                    type: { type: Type.STRING },
+                    productSlug: { type: Type.STRING, nullable: true },
+                    size: { type: Type.STRING, nullable: true },
+                    fit: { type: Type.STRING, nullable: true },
+                    categorySlug: { type: Type.STRING, nullable: true },
+                    regionCode: { type: Type.STRING, nullable: true },
+                    couponCode: { type: Type.STRING, nullable: true },
+                  },
+                },
+                pendingOffer: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  properties: {
+                    kind: { type: Type.STRING },
+                    productSlug: { type: Type.STRING, nullable: true },
+                    size: { type: Type.STRING, nullable: true },
+                    fit: { type: Type.STRING, nullable: true },
+                    couponCode: { type: Type.STRING, nullable: true },
+                  },
+                },
+                suggestedReplies: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
                 },
               },
+              required: ['reply', 'recommendedSlugs'],
             },
-            required: ['reply', 'recommendedSlugs'],
           },
-        },
-      });
+        });
+
+      let response;
+      try {
+        response = await invokeGemini(primaryModel);
+      } catch (primaryErr) {
+        const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+        const isTransient = msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand');
+        if (isTransient && primaryModel !== 'gemini-3.1-flash-lite') {
+          response = await invokeGemini('gemini-3.1-flash-lite');
+        } else {
+          throw primaryErr;
+        }
+      }
 
       const rawText = response.text || '{}';
       parsed = JSON.parse(rawText);
     }
 
-    const slugSet = new Set(
-      (Array.isArray(parsed.recommendedSlugs) ? parsed.recommendedSlugs : []).map((s) => String(s).trim())
+    const recommendedProducts = mapRecommendedProducts(
+      Array.isArray(parsed.recommendedSlugs) ? parsed.recommendedSlugs : []
     );
-    const recommendedProducts = products
-      .filter((p) => slugSet.has(String(p.slug)))
-      .slice(0, 3)
-      .map((p) => ({
-        id: Number(p.id),
-        slug: String(p.slug),
-        sku: String(p.sku),
-        title: String(p.title),
-        price: Number(p.price),
-        primary_image: String(p.primary_image),
-        stock_qty: Number(p.stock_qty),
-        preorder_allowed: Boolean(p.preorder_allowed),
-        sizes: JSON.parse(String(p.sizes_json || '[]')) as string[],
-      }));
+
+    const fallbackSlug =
+      String(
+        parsed.agentAction?.productSlug ||
+          pendingOffer?.productSlug ||
+          parsed.pendingOffer?.productSlug ||
+          recommendedProducts[0]?.slug ||
+          currentProductSlug ||
+          ''
+      ).trim() || undefined;
+
+    let normalizedAction: AiAgentAction | null = parsed.agentAction ? { ...parsed.agentAction } : null;
+    if (normalizedAction) {
+      if (normalizedAction.type === 'add_to_cart') {
+        if (!normalizedAction.productSlug && fallbackSlug) {
+          normalizedAction.productSlug = fallbackSlug;
+        }
+        if (!normalizedAction.size && (pendingOffer?.size || parsed.pendingOffer?.size)) {
+          normalizedAction.size = String(pendingOffer?.size || parsed.pendingOffer?.size);
+        }
+        if (!normalizedAction.fit && (pendingOffer?.fit || parsed.pendingOffer?.fit)) {
+          const rawFit = String(pendingOffer?.fit || parsed.pendingOffer?.fit);
+          if (rawFit === 'Regular Fit' || rawFit === 'Slim Fit' || rawFit === 'Contemporary Fit') {
+            normalizedAction.fit = rawFit;
+          }
+        }
+      } else if (normalizedAction.type === 'open_product') {
+        if (!normalizedAction.productSlug && fallbackSlug) {
+          normalizedAction.productSlug = fallbackSlug;
+        }
+      } else if (normalizedAction.type === 'apply_coupon') {
+        if (!normalizedAction.couponCode) {
+          normalizedAction.couponCode = String(
+            pendingOffer?.couponCode || parsed.pendingOffer?.couponCode || promoRules.discountCode || 'MONTE10'
+          )
+            .trim()
+            .toUpperCase();
+        }
+      }
+    }
+
+    const normalizedPendingOffer = parsed.pendingOffer ? { ...parsed.pendingOffer } : null;
+    if (normalizedPendingOffer?.kind === 'product' && !normalizedPendingOffer.productSlug && fallbackSlug) {
+      normalizedPendingOffer.productSlug = fallbackSlug;
+    }
+    if (normalizedPendingOffer?.kind === 'discount' && !normalizedPendingOffer.couponCode) {
+      normalizedPendingOffer.couponCode = (promoRules.discountCode || 'MONTE10').trim().toUpperCase();
+    }
 
     res.json({
       provider: aiSettings.activeProvider,
       reply: String(parsed.reply || ''),
       recommendedProducts,
-      agentAction: parsed.agentAction || null,
+      agentAction: normalizedAction,
+      pendingOffer: normalizedPendingOffer,
+      suggestedReplies: Array.isArray(parsed.suggestedReplies) ? parsed.suggestedReplies.slice(0, 3) : [],
     });
   } catch (err) {
     res.status(502).json({
       error: err instanceof Error ? err.message : 'AI provider request failed.',
+    });
+  }
+});
+
+// Human Voice Text-to-Speech via Gemini TTS (returns complete audio/wav)
+app.post('/api/ai/tts', async (req, res) => {
+  const aiSettings = getAiSettingsInternal();
+  if (!aiSettings.enabled) {
+    res.status(403).json({ error: 'AI concierge is disabled.' });
+    return;
+  }
+
+  const body = req.body || {};
+  const text = String(body.text || '').trim().slice(0, 1400);
+  const regionCode = parseRegion(body.regionCode);
+  if (!text) {
+    res.status(400).json({ error: 'Text is required for voice synthesis.' });
+    return;
+  }
+
+  const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
+  if (!geminiKey) {
+    res.json({
+      audioBase64: null,
+      mimeType: null,
+      fallbackBrowserSpeech: true,
+    });
+    return;
+  }
+
+  const voiceStyle =
+    regionCode === 'no'
+      ? 'Warm, calm luxury Norwegian-speaking menswear tailor in Oslo speaking naturally and reassuringly'
+      : regionCode === 'it'
+      ? 'Warm, refined Italian master shirtmaker in Treviso speaking naturally with understated elegance'
+      : regionCode === 'vn'
+      ? 'Warm, courteous Vietnamese bespoke tailor speaking clearly, politely, and naturally'
+      : 'Warm, articulate Italian master shirt tailor speaking conversational English naturally like an in-atelier stylist';
+
+  try {
+    const ai = new GoogleGenAI({
+      apiKey: geminiKey,
+      apiVersion: 'v1beta',
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash-lite-tts',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text,
+              speechMetadata: {
+                style: voiceStyle,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Charon' },
+          },
+        },
+      },
+    });
+
+    const audioBase64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!audioBase64) {
+      res.status(502).json({ error: 'Voice synthesis returned empty audio.' });
+      return;
+    }
+
+    res.json({
+      audioBase64,
+      mimeType: 'audio/wav',
+      fallbackBrowserSpeech: false,
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Gemini voice synthesis failed.',
+    });
+  }
+});
+
+// Speech-to-Text Transcription via Gemini Audio Transcription
+app.post('/api/ai/transcribe', async (req, res) => {
+  const aiSettings = getAiSettingsInternal();
+  if (!aiSettings.enabled) {
+    res.status(403).json({ error: 'AI concierge is disabled.' });
+    return;
+  }
+
+  const body = req.body || {};
+  const audioBase64 = String(body.audioBase64 || '').trim();
+  const mimeType = String(body.mimeType || 'audio/webm').trim();
+  const regionCode = parseRegion(body.regionCode);
+
+  if (!audioBase64) {
+    res.status(400).json({ error: 'Audio recording payload is required.' });
+    return;
+  }
+
+  const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
+  if (!geminiKey) {
+    res.status(503).json({
+      error: 'Gemini API key is not configured for server audio transcription.',
+      noGeminiKey: true,
+    });
+    return;
+  }
+
+  const languageHint =
+    regionCode === 'no' ? 'Norwegian' : regionCode === 'it' ? 'Italian' : regionCode === 'vn' ? 'Vietnamese' : 'English';
+
+  try {
+    const ai = new GoogleGenAI({
+      apiKey: geminiKey,
+      apiVersion: 'v1beta',
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-transcribe',
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType,
+              data: audioBase64,
+            },
+          },
+          {
+            text: `Transcribe the spoken shopper message accurately (primary storefront language hint: ${languageHint}). Return ONLY the plain spoken transcript without quotes or commentary.`,
+          },
+        ],
+      },
+    });
+
+    res.json({
+      transcript: String(response.text || '').trim(),
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Speech transcription failed.',
     });
   }
 });
@@ -1199,10 +1569,12 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token, user: mapUserRow(row) });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
+  const regionCode = parseRegion(req.body?.regionCode);
+  const subscribeRequested = req.body?.subscribeNewsletter !== false;
 
   if (!name || !email || !email.includes('@') || password.length < 6) {
     res.status(400).json({ error: 'Provide name, valid email, and password (min 6 chars).' });
@@ -1226,7 +1598,206 @@ app.post('/api/auth/register', (req, res) => {
   const userId = Number(info.lastInsertRowid);
   const token = createSession(userId);
   const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Parameters<typeof mapUserRow>[0];
-  res.status(201).json({ token, user: mapUserRow(userRow) });
+
+  let mailchimpStatus: string | null = null;
+  let discountCode: string | null = null;
+  const authSettings = getCustomerAuthSettings();
+  if (authSettings.autoSubscribeMailchimp && subscribeRequested) {
+    const promoRules = getPromoRules();
+    const activeCode = (promoRules.discountCode || 'MONTE10').trim().toUpperCase();
+    db.prepare(
+      `INSERT INTO newsletter_subscribers (email, region_code, discount_code, status, mailchimp_status)
+       VALUES (?, ?, ?, 'subscribed', 'pending_sync')
+       ON CONFLICT(email) DO UPDATE SET region_code = excluded.region_code, status = 'subscribed'`
+    ).run(email, regionCode, activeCode);
+    const mcResult = await syncSubscriberToMailchimp({ email, regionCode });
+    db.prepare(
+      `UPDATE newsletter_subscribers
+       SET mailchimp_status = ?, mailchimp_member_id = ?, synced_at = CASE WHEN ? = 'synced' THEN datetime('now') ELSE synced_at END
+       WHERE email = ?`
+    ).run(mcResult.status, mcResult.memberId, mcResult.status, email);
+    mailchimpStatus = mcResult.status;
+    discountCode = activeCode;
+  }
+
+  res.status(201).json({
+    token,
+    user: mapUserRow(userRow),
+    mailchimpStatus,
+    discountCode,
+  });
+});
+
+app.get('/api/auth/google/url', (req, res) => {
+  const settings = getCustomerAuthSettings();
+  const origin = resolveRequestOrigin(req);
+  const redirectUri = `${origin}/api/auth/google/callback`;
+  if (!settings.googleLoginEnabled) {
+    res.status(403).json({ error: 'Customer Gmail login is currently disabled in Store Settings.', callbackUrl: redirectUri });
+    return;
+  }
+  const regionCode = parseRegion(req.query.region);
+  const subscribeNewsletter = req.query.subscribe !== '0';
+  const state = crypto.randomBytes(20).toString('hex');
+  googleOauthStates.set(state, {
+    regionCode,
+    subscribeNewsletter,
+    redirectUri,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  });
+  const built = buildGoogleAuthorizeUrl(redirectUri, state);
+  if (!built.url) {
+    googleOauthStates.delete(state);
+    res.status(400).json({ error: built.error || 'Google OAuth keys missing.', callbackUrl: redirectUri });
+    return;
+  }
+  res.json({ url: built.url, callbackUrl: redirectUri });
+});
+
+app.get(['/api/auth/google/callback', '/api/auth/google/callback/'], async (req, res) => {
+  const renderPopupError = (message: string) => {
+    const safePayload = JSON.stringify({ type: 'MN_GOOGLE_AUTH_ERROR', error: message }).replace(/</g, '\\u003c');
+    res
+      .status(400)
+      .setHeader('Content-Type', 'text/html; charset=utf-8')
+      .send(
+        `<!doctype html><html><body style="font-family:Inter,Arial,sans-serif;padding:36px;background:#F7F7F7;color:#1A1A1A;">
+          <div style="max-width:440px;margin:0 auto;background:#fff;border:1px solid #e5e5e5;padding:24px;">
+            <h1 style="font-size:15px;margin:0 0 8px;text-transform:uppercase;color:#142B4E;">Gmail Sign-In</h1>
+            <p style="font-size:13px;line-height:1.6;">${escapeHtmlAttr(message)}</p>
+          </div>
+          <script>
+            try { if (window.opener) window.opener.postMessage(${safePayload}, '*'); } catch (e) {}
+          </script>
+        </body></html>`
+      );
+  };
+
+  const oauthError = String(req.query.error || '').trim();
+  if (oauthError) {
+    renderPopupError(`Google authentication cancelled (${oauthError}).`);
+    return;
+  }
+
+  const code = String(req.query.code || '').trim();
+  const state = String(req.query.state || '').trim();
+  const stateEntry = googleOauthStates.get(state);
+  if (!state || !stateEntry || stateEntry.expiresAt < Date.now()) {
+    renderPopupError('OAuth session expired or invalid CSRF state. Please try signing in again.');
+    return;
+  }
+  googleOauthStates.delete(state);
+  if (!code) {
+    renderPopupError('Missing Google authorization code.');
+    return;
+  }
+
+  const profile = await exchangeGoogleOAuthCode(code, stateEntry.redirectUri);
+  if (!profile.ok || !profile.email) {
+    renderPopupError(profile.error || 'Could not authenticate Gmail account.');
+    return;
+  }
+
+  let userRow = db.prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(profile.email) as
+    | (Parameters<typeof mapUserRow>[0] & { active: number })
+    | undefined;
+
+  if (!userRow) {
+    const randomHash = hashPassword(crypto.randomBytes(24).toString('hex'));
+    const ins = db
+      .prepare(
+        `INSERT INTO users (email, name, password_hash, role, permissions_json, assigned_regions_json, active)
+         VALUES (?, ?, ?, 'customer', '{}', '["en","no","it","vn"]', 1)`
+      )
+      .run(profile.email, profile.name || profile.email, randomHash);
+    userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(ins.lastInsertRowid) as
+      | (Parameters<typeof mapUserRow>[0] & { active: number })
+      | undefined;
+  } else if (!userRow.active) {
+    renderPopupError('This account is suspended.');
+    return;
+  }
+
+  if (!userRow) {
+    renderPopupError('Failed to create customer session.');
+    return;
+  }
+
+  const token = createSession(userRow.id);
+  const authUser = mapUserRow(userRow);
+
+  let mailchimpStatus: string | null = null;
+  let discountCode: string | null = null;
+  const authSettings = getCustomerAuthSettings();
+  if (authSettings.autoSubscribeMailchimp && stateEntry.subscribeNewsletter) {
+    const promoRules = getPromoRules();
+    const activeCode = (promoRules.discountCode || 'MONTE10').trim().toUpperCase();
+    db.prepare(
+      `INSERT INTO newsletter_subscribers (email, region_code, discount_code, status, mailchimp_status)
+       VALUES (?, ?, ?, 'subscribed', 'pending_sync')
+       ON CONFLICT(email) DO UPDATE SET region_code = excluded.region_code, status = 'subscribed'`
+    ).run(profile.email, stateEntry.regionCode, activeCode);
+    const mcResult = await syncSubscriberToMailchimp({
+      email: profile.email,
+      regionCode: stateEntry.regionCode,
+    });
+    db.prepare(
+      `UPDATE newsletter_subscribers
+       SET mailchimp_status = ?, mailchimp_member_id = ?, synced_at = CASE WHEN ? = 'synced' THEN datetime('now') ELSE synced_at END
+       WHERE email = ?`
+    ).run(mcResult.status, mcResult.memberId, mcResult.status, profile.email);
+    mailchimpStatus = mcResult.status;
+    discountCode = activeCode;
+  }
+
+  const safePayload = JSON.stringify({
+    type: 'MN_GOOGLE_AUTH_SUCCESS',
+    token,
+    user: authUser,
+    mailchimpStatus,
+    discountCode,
+  }).replace(/</g, '\\u003c');
+
+  res
+    .status(200)
+    .setHeader('Content-Type', 'text/html; charset=utf-8')
+    .send(
+      `<!doctype html><html><body style="font-family:Inter,Arial,sans-serif;padding:40px;background:#F7F7F7;color:#1A1A1A;text-align:center;">
+        <div style="max-width:420px;margin:0 auto;background:#fff;border:1px solid #e5e5e5;padding:28px;">
+          <h1 style="font-size:15px;margin:0 0 8px;text-transform:uppercase;color:#142B4E;">Monte Napoleone 1974</h1>
+          <p style="font-size:13px;line-height:1.6;">Signed in as ${escapeHtmlAttr(authUser.email)}. Closing window...</p>
+        </div>
+        <script>
+          (function() {
+            var payload = ${safePayload};
+            if (window.opener) {
+              window.opener.postMessage(payload, '*');
+              window.close();
+            } else {
+              window.location.href = '/en/account';
+            }
+          })();
+        </script>
+      </body></html>`
+    );
+});
+
+app.get('/api/account/orders', requireAuth, (req: AuthedRequest, res) => {
+  const email = String(req.authUser?.email || '').trim().toLowerCase();
+  if (!email) {
+    res.json({ orders: [] });
+    return;
+  }
+  const rows = db
+    .prepare('SELECT * FROM orders WHERE LOWER(customer_email) = ? ORDER BY id DESC LIMIT 30')
+    .all(email) as Array<Record<string, unknown>>;
+  res.json({
+    orders: rows.map((r) => ({
+      ...r,
+      is_b2b: Boolean(r.is_b2b),
+      items: JSON.parse(String(r.items_json || '[]')),
+    })),
+  });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -1336,19 +1907,24 @@ app.get('/api/admin/products', requireStaffOrOwner, (_req, res) => {
   }
 
   res.json({
-    products: products.map((p) => ({
-      ...p,
-      is_featured: Boolean(p.is_featured),
-      is_b2b_eligible: Boolean(p.is_b2b_eligible),
-      is_outlet: Boolean(p.is_outlet),
-      preorder_allowed: Boolean(p.preorder_allowed),
-      active: Boolean(p.active),
-      gallery: JSON.parse(String(p.gallery_json)),
-      collars: JSON.parse(String(p.collars_json)),
-      cuffs: JSON.parse(String(p.cuffs_json)),
-      sizes: JSON.parse(String(p.sizes_json)),
-      localizations: byProduct.get(Number(p.id)) || {},
-    })),
+    products: products.map((p) => {
+      const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
+      return {
+        ...p,
+        category_slug: categorySlugs[0] || String(p.category_slug),
+        category_slugs: categorySlugs,
+        is_featured: Boolean(p.is_featured),
+        is_b2b_eligible: Boolean(p.is_b2b_eligible),
+        is_outlet: Boolean(p.is_outlet),
+        preorder_allowed: Boolean(p.preorder_allowed),
+        active: Boolean(p.active),
+        gallery: JSON.parse(String(p.gallery_json)),
+        collars: JSON.parse(String(p.collars_json)),
+        cuffs: JSON.parse(String(p.cuffs_json)),
+        sizes: JSON.parse(String(p.sizes_json)),
+        localizations: byProduct.get(Number(p.id)) || {},
+      };
+    }),
   });
 });
 
@@ -1356,7 +1932,8 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
   const b = req.body || {};
   const sku = String(b.sku || '').trim();
   const slug = String(b.slug || sku.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
-  const categorySlug = String(b.category_slug || 'business');
+  const categorySlugs = parseCategorySlugs(b.category_slug, b.category_slugs);
+  const categorySlug = categorySlugs[0] || 'business';
   const fabricSpec = String(b.fabric_spec || '100% Italian Cotton');
   const primaryImage = String(b.primary_image || '/src/assets/images/shirt_white_signature_1795248293653.jpg');
   const secondaryImage = String(b.secondary_image || primaryImage);
@@ -1371,14 +1948,15 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
       const info = db
         .prepare(
           `INSERT INTO products (
-            sku, slug, category_slug, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
+            sku, slug, category_slug, category_slugs_json, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
             preorder_allowed, primary_image, secondary_image, gallery_json, collars_json, cuffs_json, sizes_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           sku,
           slug,
           categorySlug,
+          JSON.stringify(categorySlugs),
           fabricSpec,
           b.is_featured ? 1 : 0,
           b.is_b2b_eligible ? 1 : 0,
@@ -1421,7 +1999,7 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
 
     const id = tx();
     if (req.authUser) {
-      logAudit(req.authUser, 'PRODUCT_CREATED', sku, `Created product #${id}`);
+      logAudit(req.authUser, 'PRODUCT_CREATED', sku, `Created product #${id} (${categorySlugs.join(', ')})`);
     }
     res.status(201).json({ id });
   } catch (err) {
@@ -1446,23 +2024,29 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
 
   const tx = db.transaction(() => {
     if (user.role === 'owner' || user.permissions.manage_products) {
+      const nextCatSlugs =
+        Array.isArray(b.category_slugs) && b.category_slugs.length > 0
+          ? parseCategorySlugs(b.category_slug || b.category_slugs[0], b.category_slugs)
+          : parseCategorySlugs(b.category_slug || existing.category_slug, existing.category_slugs_json);
+      const nextPrimaryCat = nextCatSlugs[0] || String(existing.category_slug);
+
       db.prepare(
-        `UPDATE products SET category_slug = ?, fabric_spec = ?, is_featured = ?, is_b2b_eligible = ?,
+        `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, is_featured = ?, is_b2b_eligible = ?,
          is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?
          WHERE id = ?`
       ).run(
-        String(b.category_slug || existing.category_slug),
+        nextPrimaryCat,
+        JSON.stringify(nextCatSlugs),
         String(b.fabric_spec || existing.fabric_spec),
-        b.is_featured ? 1 : 0,
-        b.is_b2b_eligible ? 1 : 0,
-        b.is_outlet ? 1 : 0,
-        b.preorder_allowed ? 1 : 0,
+        b.is_featured !== undefined ? (b.is_featured ? 1 : 0) : Number(existing.is_featured),
+        b.is_b2b_eligible !== undefined ? (b.is_b2b_eligible ? 1 : 0) : Number(existing.is_b2b_eligible),
+        b.is_outlet !== undefined ? (b.is_outlet ? 1 : 0) : Number(existing.is_outlet),
+        b.preorder_allowed !== undefined ? (b.preorder_allowed ? 1 : 0) : Number(existing.preorder_allowed),
         String(b.primary_image || existing.primary_image),
         String(b.secondary_image || existing.secondary_image),
-        JSON.stringify([
-          String(b.primary_image || existing.primary_image),
-          String(b.secondary_image || existing.secondary_image),
-        ]),
+        Array.isArray(b.gallery) && b.gallery.length > 0
+          ? JSON.stringify(b.gallery)
+          : String(existing.gallery_json),
         productId
       );
     }
@@ -2438,13 +3022,20 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
 
   const tx = db.transaction(() => {
     for (const row of rows) {
-      const firstPath = Array.isArray(row.categoryPaths) && row.categoryPaths[0] ? String(row.categoryPaths[0]) : '';
-      const categoryChain = firstPath
-        .split('>')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const leafCategorySlug =
-        categoryChain.length > 0 ? ensureCategoryChain(categoryChain) : 'business';
+      const rawPaths = Array.isArray(row.categoryPaths) ? row.categoryPaths.filter(Boolean) : [];
+      const collectedCatSlugs: string[] = [];
+      for (const pathStr of rawPaths) {
+        const chain = String(pathStr)
+          .split('>')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (chain.length > 0) {
+          const leaf = ensureCategoryChain(chain);
+          if (leaf && !collectedCatSlugs.includes(leaf)) collectedCatSlugs.push(leaf);
+        }
+      }
+      const leafCategorySlug = collectedCatSlugs[0] || 'business';
+      const allCategorySlugs = collectedCatSlugs.length > 0 ? collectedCatSlugs : [leafCategorySlug];
       const sourceRc = parseRegion(row.sourceRegion || baseRegion);
       const basePrice = row.salePrice && row.salePrice > 0 ? row.salePrice : row.regularPrice;
       const compareAt = row.salePrice && row.salePrice > 0 && row.regularPrice > row.salePrice ? row.regularPrice : null;
@@ -2463,10 +3054,11 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
 
       if (existing) {
         db.prepare(
-          `UPDATE products SET category_slug = ?, fabric_spec = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?, active = 1
+          `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?, active = 1
            WHERE id = ?`
         ).run(
           leafCategorySlug,
+          JSON.stringify(allCategorySlugs),
           row.fabricSpec || row.shortDescription || '100% Italian Two-Ply Cotton',
           primaryImg,
           secondaryImg,
@@ -2505,14 +3097,15 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
         const info = db
           .prepare(
             `INSERT INTO products (
-              sku, slug, category_slug, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
+              sku, slug, category_slug, category_slugs_json, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
               preorder_allowed, primary_image, secondary_image, gallery_json, collars_json, cuffs_json, sizes_json
-            ) VALUES (?, ?, ?, ?, 0, 1, ?, 1, ?, ?, ?, ?, ?, ?)`
+            ) VALUES (?, ?, ?, ?, ?, 0, 1, ?, 1, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             row.sku,
             safeSlug,
             leafCategorySlug,
+            JSON.stringify(allCategorySlugs),
             row.fabricSpec || row.shortDescription || '100% Italian Two-Ply Cotton',
             compareAt ? 1 : 0,
             primaryImg,
@@ -3275,8 +3868,10 @@ app.get('/api/admin/site-settings', requireStaffOrOwner, (req: AuthedRequest, re
   }
   const ai = getAiSettingsInternal();
   res.json({
+    topBanner: getTopBannerSettings(),
     promoRules: getPromoRules(),
     bulkDiscount: getBulkDiscountSettings(),
+    customerAuth: getCustomerAuthSettings(),
     aiSettings: {
       enabled: Boolean(ai.enabled),
       displayMode: ai.displayMode === 'chatbot' ? 'chatbot' : 'agent',
@@ -3414,6 +4009,64 @@ app.patch('/api/admin/site-settings/:key', requirePermission('manage_settings'),
         openaiKeyMasked: maskSecret(updated.openaiApiKey),
       },
     });
+    return;
+  }
+
+  if (key === 'top_banner') {
+    const cur = getTopBannerSettings();
+    const nextVis =
+      body.visibility === 'desktop_only' || body.visibility === 'mobile_only' || body.visibility === 'both'
+        ? body.visibility
+        : cur.visibility;
+    const updated: TopBannerSettings = {
+      enabled: body.enabled !== undefined ? Boolean(body.enabled) : cur.enabled,
+      visibility: nextVis,
+      text_en: String(body.text_en ?? cur.text_en).trim(),
+      text_no: String(body.text_no ?? cur.text_no).trim(),
+      text_it: String(body.text_it ?? cur.text_it).trim(),
+      text_vn: String(body.text_vn ?? cur.text_vn).trim(),
+      linkView:
+        body.linkView === 'catalog' || body.linkView === 'b2b' || body.linkView === 'about' || body.linkView === 'none'
+          ? body.linkView
+          : cur.linkView,
+      linkCategory: String(body.linkCategory ?? cur.linkCategory ?? 'all').trim() || 'all',
+      bgColor: String(body.bgColor ?? cur.bgColor ?? '#142B4E').trim(),
+      textColor: String(body.textColor ?? cur.textColor ?? '#FFFFFF').trim(),
+    };
+    db.prepare(
+      `INSERT INTO site_settings (key, value_json, updated_at) VALUES ('top_banner', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = datetime('now')`
+    ).run(JSON.stringify(updated));
+    logAudit(req.authUser!, 'TOP_BANNER_UPDATED', updated.visibility, `enabled=${updated.enabled}`);
+    res.json({ ok: true, topBanner: updated });
+    return;
+  }
+
+  if (key === 'customer_auth') {
+    const cur = getCustomerAuthSettings();
+    const updated: CustomerAuthSettings = {
+      googleLoginEnabled:
+        body.googleLoginEnabled !== undefined ? Boolean(body.googleLoginEnabled) : cur.googleLoginEnabled,
+      showCornerPopup:
+        body.showCornerPopup !== undefined ? Boolean(body.showCornerPopup) : cur.showCornerPopup,
+      autoSubscribeMailchimp:
+        body.autoSubscribeMailchimp !== undefined ? Boolean(body.autoSubscribeMailchimp) : cur.autoSubscribeMailchimp,
+      cornerPopupDelaySeconds: Math.max(
+        0,
+        Math.min(30, Number(body.cornerPopupDelaySeconds ?? cur.cornerPopupDelaySeconds))
+      ),
+    };
+    db.prepare(
+      `INSERT INTO site_settings (key, value_json, updated_at) VALUES ('customer_auth', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = datetime('now')`
+    ).run(JSON.stringify(updated));
+    logAudit(
+      req.authUser!,
+      'CUSTOMER_AUTH_UPDATED',
+      'google_oauth',
+      `enabled=${updated.googleLoginEnabled}, cornerPopup=${updated.showCornerPopup}, autoMailchimp=${updated.autoSubscribeMailchimp}`
+    );
+    res.json({ ok: true, customerAuth: updated });
     return;
   }
 
@@ -3796,7 +4449,7 @@ app.post('/api/admin/integrations/:provider/verify', requirePermission('manage_s
     return;
   }
   const rawProvider = String(req.params.provider || '').toLowerCase();
-  const validProviders = ['paypal', 'stripe', 'wix', 'vipps', 'resend'] as const;
+  const validProviders = ['google', 'paypal', 'stripe', 'wix', 'vipps', 'resend'] as const;
   const provider = validProviders.find((p) => p === rawProvider);
   if (!provider) {
     res.status(400).json({ error: `Unsupported integration provider: ${rawProvider}` });
@@ -4009,6 +4662,176 @@ app.get('/api/admin/database/download', requirePermission('manage_settings'), as
 });
 
 // ---------------------------------------------------------------------------
+// SEO: ROBOTS.TXT, DYNAMIC SITEMAP.XML & SERVER-SIDE META INJECTION
+// ---------------------------------------------------------------------------
+
+function resolveRequestOrigin(req: express.Request): string {
+  const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured && configured !== 'MY_APP_URL') return configured;
+  const host = req.get('host') || 'localhost:3000';
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${host}`;
+}
+
+function escapeHtmlAttr(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function injectSeoIntoHtml(html: string, req: express.Request): string {
+  const parsed = parseStorefrontUrl(req.path || '/');
+  const rc: RegionCode = parsed.region || parseRegion(req.query.region);
+  const region = getRegionByCode(rc) || {
+    code: rc,
+    name: 'International',
+    currency_code: 'USD',
+    warehouse_name: 'Treviso Global Hub',
+  };
+
+  let productRecord: {
+    sku: string;
+    slug: string;
+    title: string;
+    description: string;
+    fabric_spec: string;
+    price: number;
+    primary_image: string;
+    stock_qty: number;
+    preorder_allowed: boolean;
+  } | null = null;
+
+  if (parsed.view === 'product' && parsed.slug) {
+    const pRow = db
+      .prepare(
+        `SELECT p.sku, p.slug, p.fabric_spec, p.primary_image, p.preorder_allowed,
+                pl.title, pl.description, pl.price, pl.stock_qty
+         FROM products p
+         JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
+         WHERE p.slug = ? AND p.active = 1
+         LIMIT 1`
+      )
+      .get(rc, parsed.slug) as Record<string, unknown> | undefined;
+    if (pRow) {
+      productRecord = {
+        sku: String(pRow.sku),
+        slug: String(pRow.slug),
+        title: String(pRow.title),
+        description: String(pRow.description),
+        fabric_spec: String(pRow.fabric_spec),
+        price: Number(pRow.price),
+        primary_image: String(pRow.primary_image),
+        stock_qty: Number(pRow.stock_qty),
+        preorder_allowed: Boolean(pRow.preorder_allowed),
+      };
+    }
+  }
+
+  let categoryRecord: {
+    slug: string;
+    name_en: string;
+    name_no: string;
+    name_it: string;
+    name_vn: string;
+  } | null = null;
+  if (parsed.view === 'catalog' && parsed.category && parsed.category !== 'all') {
+    const cRow = db
+      .prepare('SELECT slug, name_en, name_no, name_it, name_vn FROM categories WHERE slug = ? LIMIT 1')
+      .get(parsed.category) as Record<string, unknown> | undefined;
+    if (cRow) {
+      categoryRecord = {
+        slug: String(cRow.slug),
+        name_en: String(cRow.name_en),
+        name_no: String(cRow.name_no),
+        name_it: String(cRow.name_it),
+        name_vn: String(cRow.name_vn),
+      };
+    }
+  }
+
+  const origin = resolveRequestOrigin(req);
+  const seo = buildSeoMetadata({
+    view: parsed.view,
+    region,
+    category: parsed.category,
+    categoryRecord,
+    product: productRecord,
+    origin,
+  });
+
+  const htmlLang = rc === 'no' ? 'nb' : rc === 'vn' ? 'vi' : rc;
+  const hreflangTags = seo.hreflangs
+    .map((h) => `<link rel="alternate" hreflang="${escapeHtmlAttr(h.hreflang)}" href="${escapeHtmlAttr(h.href)}" />`)
+    .join('\n    ');
+
+  let out = html;
+  out = out.replace(/<html lang="[^"]*">/, `<html lang="${htmlLang}">`);
+  out = out.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtmlAttr(seo.title)}</title>`);
+  out = out.replace(
+    /<meta name="description" content="[^"]*"\s*\/?>/,
+    `<meta name="description" content="${escapeHtmlAttr(seo.description)}" />`
+  );
+  out = out.replace(
+    /<meta name="robots" content="[^"]*"\s*\/?>/,
+    `<meta name="robots" content="${escapeHtmlAttr(seo.robots)}" />`
+  );
+  out = out.replace(
+    /<link rel="canonical" href="[^"]*"\s*\/?>/,
+    `<link rel="canonical" href="${escapeHtmlAttr(seo.canonicalUrl)}" />`
+  );
+  out = out.replace(
+    /<meta property="og:title" content="[^"]*"\s*\/?>/,
+    `<meta property="og:title" content="${escapeHtmlAttr(seo.title)}" />`
+  );
+  out = out.replace(
+    /<meta property="og:description" content="[^"]*"\s*\/?>/,
+    `<meta property="og:description" content="${escapeHtmlAttr(seo.description)}" />`
+  );
+  out = out.replace(
+    /<meta property="og:type" content="[^"]*"\s*\/?>/,
+    `<meta property="og:type" content="${escapeHtmlAttr(seo.ogType)}" />\n    <meta property="og:url" content="${escapeHtmlAttr(seo.canonicalUrl)}" />\n    <meta property="og:image" content="${escapeHtmlAttr(seo.ogImage)}" />${hreflangTags ? `\n    ${hreflangTags}` : ''}`
+  );
+  out = out.replace(
+    /<meta name="twitter:title" content="[^"]*"\s*\/?>/,
+    `<meta name="twitter:title" content="${escapeHtmlAttr(seo.title)}" />`
+  );
+  out = out.replace(
+    /<meta name="twitter:description" content="[^"]*"\s*\/?>/,
+    `<meta name="twitter:description" content="${escapeHtmlAttr(seo.description)}" />`
+  );
+  out = out.replace(
+    /<script id="mn-structured-data" type="application\/ld\+json">[\s\S]*?<\/script>/,
+    `<script id="mn-structured-data" type="application/ld+json">${JSON.stringify(seo.jsonLd).replace(/</g, '\\u003c')}</script>`
+  );
+  return out;
+}
+
+app.get('/robots.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(buildRobotsTxt(resolveRequestOrigin(req)));
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const categories = db
+    .prepare('SELECT slug FROM categories WHERE active = 1 ORDER BY sort_order ASC, id ASC')
+    .all() as Array<{ slug: string }>;
+  const products = db
+    .prepare('SELECT slug FROM products WHERE active = 1 ORDER BY id ASC')
+    .all() as Array<{ slug: string }>;
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.send(
+    buildSitemapXml({
+      origin: resolveRequestOrigin(req),
+      regions: ['en', 'no', 'it', 'vn'],
+      categories,
+      products,
+    })
+  );
+});
+
+// ---------------------------------------------------------------------------
 // VITE MIDDLEWARE & STATIC PRODUCTION SERVING
 // ---------------------------------------------------------------------------
 
@@ -4016,19 +4839,249 @@ async function startServer() {
   const PORT = 3000;
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    app.use(express.static(distDir, { index: false }));
+    app.get('*', (req, res) => {
+      const indexPath = path.join(distDir, 'index.html');
+      const rawHtml = fs.readFileSync(indexPath, 'utf-8');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(injectSeoIntoHtml(rawHtml, req));
     });
   } else {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
+    app.use(async (req, res, next) => {
+      if (
+        req.method !== 'GET' ||
+        req.path.startsWith('/api') ||
+        req.path.startsWith('/uploads') ||
+        req.path.startsWith('/assets') ||
+        req.path.startsWith('/src/') ||
+        req.path.startsWith('/@') ||
+        req.path.startsWith('/node_modules/') ||
+        path.extname(req.path)
+      ) {
+        next();
+        return;
+      }
+      const accept = String(req.headers.accept || '');
+      if (accept && !accept.includes('text/html') && !accept.includes('*/*')) {
+        next();
+        return;
+      }
+      try {
+        const rawTemplate = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+        const transformed = await vite.transformIndexHtml(req.originalUrl, rawTemplate);
+        const enriched = injectSeoIntoHtml(transformed, req);
+        res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').send(enriched);
+      } catch (err) {
+        next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = http.createServer(app);
+  const liveWss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    try {
+      const reqUrl = new URL(req.url || '/', 'http://localhost');
+      if (reqUrl.pathname === '/api/ai/live') {
+        liveWss.handleUpgrade(req, socket, head, (ws) => {
+          liveWss.emit('connection', ws, req);
+        });
+      }
+    } catch {
+      // ignore non-live upgrades
+    }
+  });
+
+  liveWss.on('connection', async (clientWs, req) => {
+    const reqUrl = new URL(req.url || '/', 'http://localhost');
+    const regionCode = parseRegion(reqUrl.searchParams.get('region'));
+    const aiSettings = getAiSettingsInternal();
+    const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
+
+    if (!aiSettings.enabled) {
+      clientWs.send(JSON.stringify({ error: 'AI Concierge is disabled by administration.' }));
+      clientWs.close(1008);
+      return;
+    }
+    if (!geminiKey) {
+      clientWs.send(
+        JSON.stringify({
+          error: 'No GEMINI_API_KEY configured for Gemini Live Voice streaming.',
+          code: 'NO_GEMINI_KEY',
+        })
+      );
+      clientWs.close(1008);
+      return;
+    }
+
+    const region = getRegionByCode(regionCode);
+    const languageName =
+      regionCode === 'no' ? 'Norwegian' : regionCode === 'it' ? 'Italian' : regionCode === 'vn' ? 'Vietnamese' : 'English';
+    const liveProducts = db
+      .prepare(
+        `SELECT p.slug, p.sku, pl.title, pl.price, pl.stock_qty, p.fabric_spec
+         FROM products p
+         JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
+         WHERE p.active = 1
+         ORDER BY p.is_featured DESC, p.id ASC
+         LIMIT 24`
+      )
+      .all(regionCode) as Array<Record<string, unknown>>;
+
+    const liveCatalogLine = liveProducts
+      .map((p) => `${p.title} (slug:${p.slug}, ${p.price} ${region?.currency_code || 'USD'}, ${p.fabric_spec})`)
+      .join('; ');
+
+    const storefrontActionTool: FunctionDeclaration = {
+      name: 'executeStorefrontAction',
+      description:
+        'Navigates or performs a storefront shopping action for the customer during the voice conversation.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          type: {
+            type: Type.STRING,
+            description:
+              'One of: open_product, add_to_cart, apply_coupon, open_checkout, open_category, open_b2b, open_about, switch_region',
+          },
+          productSlug: { type: Type.STRING },
+          size: { type: Type.STRING },
+          fit: { type: Type.STRING },
+          categorySlug: { type: Type.STRING },
+          regionCode: { type: Type.STRING },
+          couponCode: { type: Type.STRING },
+        },
+        required: ['type'],
+      },
+    };
+
+    let session: Awaited<ReturnType<GoogleGenAI['live']['connect']>> | null = null;
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        apiVersion: 'v1beta',
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      session = await ai.live.connect({
+        model: 'gemini-3.8-live',
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } },
+          },
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          tools: [{ functionDeclarations: [storefrontActionTool] }],
+          systemInstruction: `You are the warm, human master tailor speaking live with a boutique client at MONTE NAPOLEONE 1974 (Treviso, Italy & Oslo showroom).
+Speak naturally, warmly, and concisely in ${languageName}, like a real bespoke shirt tailor on a friendly voice call.
+Active region: ${region?.name || 'International'} (${region?.currency_code || 'USD'}).
+Every shirt includes free bespoke sleeve & shirt length adjustments (+/- 4 cm).
+Catalog highlights: ${liveCatalogLine}.
+When the customer confirms they want to view a shirt, add a shirt to their bag, apply MONTE10 for 10% off first order, or open checkout, call executeStorefrontAction immediately while speaking naturally.`,
+        },
+        callbacks: {
+          onmessage: (message: LiveServerMessage) => {
+            if (clientWs.readyState !== 1) return;
+            const content = message.serverContent;
+            if (content?.inputTranscription?.text) {
+              clientWs.send(JSON.stringify({ inputTranscript: content.inputTranscription.text }));
+            }
+            if (content?.outputTranscription?.text) {
+              clientWs.send(JSON.stringify({ outputTranscript: content.outputTranscription.text }));
+            }
+            for (const part of content?.modelTurn?.parts ?? []) {
+              if (part.inlineData?.data) {
+                clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
+              }
+            }
+            if (content?.interrupted) {
+              clientWs.send(JSON.stringify({ interrupted: true }));
+            }
+            if (content?.turnComplete) {
+              clientWs.send(JSON.stringify({ turnComplete: true }));
+            }
+            for (const call of message.toolCall?.functionCalls ?? []) {
+              if (call.name === 'executeStorefrontAction' && call.args) {
+                clientWs.send(JSON.stringify({ agentAction: call.args }));
+                session?.sendToolResponse({
+                  functionResponses: [
+                    {
+                      id: call.id,
+                      name: call.name,
+                      response: { ok: true },
+                    },
+                  ],
+                });
+              }
+            }
+          },
+          onerror: (err: unknown) => {
+            if (clientWs.readyState === 1) {
+              clientWs.send(
+                JSON.stringify({
+                  error: err instanceof Error ? err.message : 'Live voice stream interrupted.',
+                })
+              );
+            }
+          },
+          onclose: () => {
+            if (clientWs.readyState === 1) {
+              clientWs.close();
+            }
+          },
+        },
+      });
+
+      if (clientWs.readyState === 1) {
+        clientWs.send(JSON.stringify({ ready: true }));
+      }
+    } catch (err) {
+      if (clientWs.readyState === 1) {
+        clientWs.send(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : 'Failed to start Gemini Live voice session.',
+          })
+        );
+        clientWs.close(1011);
+      }
+      return;
+    }
+
+    clientWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as { audio?: string; text?: string };
+        if (msg.audio && session) {
+          session.sendRealtimeInput({
+            audio: { data: msg.audio, mimeType: 'audio/pcm;rate=16000' },
+          });
+        } else if (msg.text && session) {
+          session.sendRealtimeInput({ text: msg.text });
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    });
+
+    clientWs.on('close', () => {
+      try {
+        session?.close();
+      } catch {
+        // ignore
+      }
+      session = null;
+    });
+  });
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Monte Napoleone 1974 server listening on http://localhost:${PORT}`);
   });
 }

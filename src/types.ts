@@ -182,6 +182,7 @@ export interface Product {
   sku: string;
   slug: string;
   category_slug: string;
+  category_slugs?: string[];
   fabric_spec: string;
   is_featured: boolean;
   is_b2b_eligible: boolean;
@@ -462,6 +463,21 @@ export interface PromotionPopupSettings {
   button_vn: string;
 }
 
+export type TopBannerVisibility = 'both' | 'desktop_only' | 'mobile_only';
+
+export interface TopBannerSettings {
+  enabled: boolean;
+  visibility: TopBannerVisibility;
+  text_en: string;
+  text_no: string;
+  text_it: string;
+  text_vn: string;
+  linkView: 'none' | 'catalog' | 'b2b' | 'about';
+  linkCategory?: string;
+  bgColor: string;
+  textColor: string;
+}
+
 export interface AiPublicConfig {
   enabled: boolean;
   displayMode: 'agent' | 'chatbot';
@@ -497,7 +513,15 @@ export interface AiRecommendedProduct {
 }
 
 export interface AiAgentAction {
-  type: 'add_to_cart' | 'open_product' | 'switch_region' | 'apply_coupon' | 'open_category' | 'open_about' | 'open_b2b';
+  type:
+    | 'add_to_cart'
+    | 'open_product'
+    | 'switch_region'
+    | 'apply_coupon'
+    | 'open_category'
+    | 'open_about'
+    | 'open_b2b'
+    | 'open_checkout';
   productSlug?: string;
   size?: string;
   fit?: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit';
@@ -506,11 +530,21 @@ export interface AiAgentAction {
   couponCode?: string;
 }
 
+export interface AiPendingOffer {
+  kind: 'product' | 'discount' | 'checkout';
+  productSlug?: string;
+  size?: string;
+  fit?: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit';
+  couponCode?: string;
+}
+
 export interface AiChatMessage {
   role: 'user' | 'assistant';
   content: string;
   recommendedProducts?: AiRecommendedProduct[];
   agentAction?: AiAgentAction | null;
+  pendingOffer?: AiPendingOffer | null;
+  suggestedReplies?: string[];
 }
 
 export interface EmailLogRecord {
@@ -547,13 +581,15 @@ export type ApiCredentialKey =
   | 'DHL_API_SECRET'
   | 'DHL_ACCOUNT_NUMBER'
   | 'GEOIP_API_KEY'
+  | 'GOOGLE_CLIENT_ID'
+  | 'GOOGLE_CLIENT_SECRET'
   | 'GEMINI_API_KEY'
   | 'OPENAI_API_KEY';
 
 export interface ApiCredentialItem {
   key: ApiCredentialKey;
   label: string;
-  group: 'email' | 'payments' | 'commerce' | 'logistics' | 'analytics' | 'ai';
+  group: 'auth' | 'email' | 'payments' | 'commerce' | 'logistics' | 'analytics' | 'ai';
   secret: boolean;
   placeholder: string;
   hasEnv: boolean;
@@ -564,11 +600,23 @@ export interface ApiCredentialItem {
 }
 
 export interface GatewayVerificationResult {
-  provider: 'paypal' | 'stripe' | 'wix' | 'vipps' | 'resend';
+  provider: 'google' | 'paypal' | 'stripe' | 'wix' | 'vipps' | 'resend';
   ok: boolean;
   mode: 'live' | 'sandbox' | 'not_configured' | 'error';
   message: string;
   accountInfo?: string;
+}
+
+export interface CustomerAuthSettings {
+  googleLoginEnabled: boolean;
+  showCornerPopup: boolean;
+  autoSubscribeMailchimp: boolean;
+  cornerPopupDelaySeconds: number;
+}
+
+export interface CustomerAuthPublicConfig extends CustomerAuthSettings {
+  googleConfigured: boolean;
+  googleCallbackUrl?: string;
 }
 
 export interface ParsedCategoryImport {
@@ -592,6 +640,7 @@ export interface WooProductImportRow {
   published: boolean;
   sourceRegion: RegionCode;
 }
+
 
 
 
