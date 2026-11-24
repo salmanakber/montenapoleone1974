@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import type {
   AdminReportData,
+  AdminTab,
   AiAdminSettings,
   AuthUser,
   B2BInquiry,
@@ -59,6 +60,7 @@ import type {
   TailoringOptionRecord,
   TailoringSizeSpec,
   TopBannerSettings,
+  WooProductImportRow,
 } from '../types.ts';
 import {
   DEFAULT_BULK_DISCOUNT_SETTINGS,
@@ -96,33 +98,12 @@ import { ApiVaultAndOnboardingPanel, EmailsResendPanel } from './AdminEmailsAndV
 interface AdminDashboardProps {
   authToken: string | null;
   authUser: AuthUser | null;
+  initialTab?: AdminTab;
+  onTabChange?: (tab: AdminTab) => void;
   onAuthChange: (token: string | null, user: AuthUser | null) => void;
   onRefreshStorefront: () => void;
   onBackToStorefront?: () => void;
 }
-
-type AdminTab =
-  | 'overview'
-  | 'products'
-  | 'categories'
-  | 'variants'
-  | 'stock'
-  | 'tailoring'
-  | 'collar_cuff'
-  | 'menu'
-  | 'hero'
-  | 'promotions'
-  | 'ai'
-  | 'orders'
-  | 'emails'
-  | 'reports'
-  | 'media'
-  | 'b2b'
-  | 'newsletter'
-  | 'staff'
-  | 'settings'
-  | 'credentials'
-  | 'database';
 
 const PERMISSION_LABELS: Array<{ key: StaffPermissionKey; label: string }> = [
   { key: 'manage_products', label: 'Edit Products & Translations' },
@@ -136,6 +117,8 @@ const PERMISSION_LABELS: Array<{ key: StaffPermissionKey; label: string }> = [
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   authToken,
   authUser,
+  initialTab = 'overview',
+  onTabChange,
   onAuthChange,
   onRefreshStorefront,
   onBackToStorefront,
@@ -153,7 +136,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [authBusy, setAuthBusy] = useState(false);
 
   // Dashboard Data
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
+  const [reportsLastUpdatedAt, setReportsLastUpdatedAt] = useState<string | null>(null);
   const [chartMetric, setChartMetric] = useState<'revenue' | 'orders'>('revenue');
   const [hoveredChartIdx, setHoveredChartIdx] = useState<number | null>(null);
   const [overview, setOverview] = useState<{
@@ -212,9 +196,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     greeting_vn: 'Hỏi tôi về chất liệu vải, phom dáng hoặc size áo — tôi có thể thêm ngay vào giỏ hàng giúp bạn.',
   });
 
-  // Orders filter & inspection modal
+  // Orders filter, pagination, bulk status & inspection modal
   const [orderRegionFilter, setOrderRegionFilter] = useState<'all' | RegionCode>('all');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('all');
+  const [orderChannelFilter, setOrderChannelFilter] = useState<'all' | 'b2c' | 'b2b'>('all');
+  const [orderSort, setOrderSort] = useState<'newest' | 'oldest' | 'total_desc' | 'total_asc'>('newest');
+  const [orderPage, setOrderPage] = useState(1);
+  const [orderPageSize, setOrderPageSize] = useState<10 | 25 | 50>(10);
   const [orderSearch, setOrderSearch] = useState('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [bulkOrderStatus, setBulkOrderStatus] = useState<string>('');
+  const [bulkPaymentStatus, setBulkPaymentStatus] = useState<string>('');
+  const [orderBulkMsg, setOrderBulkMsg] = useState<string | null>(null);
+  const [orderBulkBusy, setOrderBulkBusy] = useState(false);
   const [inspectingOrder, setInspectingOrder] = useState<OrderRecord | null>(null);
 
   // CSV Import & Bulk Editor state
@@ -223,6 +218,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [csvText, setCsvText] = useState(
     'sku,region_code,price,stock_qty\nMN-L3,en,185,18\nMN-B1,no,1599,42'
   );
+  const [wooSourceRegion, setWooSourceRegion] = useState<RegionCode>('en');
+  const [wooAutoTranslate, setWooAutoTranslate] = useState(true);
+  const [wooPreview, setWooPreview] = useState<{ rows: WooProductImportRow[]; errors: string[] } | null>(null);
   const [csvPreview, setCsvPreview] = useState<{ rows: CsvImportRow[]; errors: string[] } | null>(null);
   const [csvResultMsg, setCsvResultMsg] = useState<string | null>(null);
 
@@ -295,7 +293,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const parsed = d?.report || (d?.byRegion ? d : null);
-          if (parsed) setReportData(parsed);
+          if (parsed) {
+            setReportData(parsed);
+            setReportsLastUpdatedAt(new Date().toLocaleTimeString());
+          }
         }),
     ];
 
@@ -381,14 +382,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [authToken, authUser]);
 
   useEffect(() => {
-    setActiveTab('overview');
-  }, [authUser?.id]);
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   useEffect(() => {
     if (authToken && authUser) {
       loadAdminData();
     }
   }, [authToken, authUser, loadAdminData]);
+
+  useEffect(() => {
+    setOrderPage(1);
+  }, [orderRegionFilter, orderStatusFilter, paymentStatusFilter, orderChannelFilter, orderSearch, orderSort, orderPageSize]);
+
+  useEffect(() => {
+    if (!authToken || !authUser) return;
+    if (activeTab !== 'reports' && activeTab !== 'overview') return;
+    const timer = window.setInterval(() => {
+      const headers = { Authorization: `Bearer ${authToken}` };
+      fetch('/api/admin/reports', { headers })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const parsed = d?.report || (d?.byRegion ? d : null);
+          if (parsed) {
+            setReportData(parsed);
+            setReportsLastUpdatedAt(new Date().toLocaleTimeString());
+          }
+        })
+        .catch(() => {});
+      fetch('/api/admin/overview', { headers })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setOverview(d))
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [authToken, authUser, activeTab]);
 
   const handleClaimOwner = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -480,7 +510,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setCsvResultMsg(null);
 
     if (isWooCommerceCsvHeader(csvText)) {
-      const wooParsed = parseWooCommerceCsv(csvText);
+      const wooParsed = parseWooCommerceCsv(csvText, wooSourceRegion);
+      setWooPreview(wooParsed);
       if (wooParsed.rows.length === 0) {
         setCsvResultMsg(wooParsed.errors[0] || 'No valid WooCommerce product rows detected.');
         return;
@@ -491,12 +522,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ rows: wooParsed.rows }),
+        body: JSON.stringify({
+          rows: wooParsed.rows,
+          baseRegion: wooSourceRegion,
+          translateLanguages: wooAutoTranslate,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         setCsvResultMsg(
-          `WooCommerce Import complete: ${data.importedCount} product(s) (${data.createdCount} created, ${data.updatedCount} updated, ${data.categoriesCreated} categories synced).`
+          `WooCommerce Import complete: ${data.importedCount} product(s) (${data.createdCount} created, ${data.updatedCount} updated, ${data.categoriesCreated} categories, ${data.variantsSynced ?? 0} size variants synced${data.translatedWithAi ? ' · AI EN/NO/IT/VN localized' : ' · EN/NO/IT/VN localized'}).`
         );
         loadAdminData();
         onRefreshStorefront();
@@ -652,6 +687,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       body: JSON.stringify({ payment_status: 'paid', order_status: 'processing' }),
     });
     if (res.ok) loadAdminData();
+  };
+
+  const handleQuickOrderUpdate = async (
+    orderId: number,
+    patch: { order_status?: string; payment_status?: string }
+  ) => {
+    if (!authToken) return;
+    const res = await fetch(`/api/admin/orders/${orderId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      await loadAdminData();
+      onRefreshStorefront();
+    }
+  };
+
+  const handleApplyBulkOrders = async () => {
+    if (!authToken || selectedOrderIds.length === 0) return;
+    if (!bulkOrderStatus && !bulkPaymentStatus) {
+      setOrderBulkMsg('Select an Order Status or Payment Status to apply.');
+      return;
+    }
+    setOrderBulkBusy(true);
+    setOrderBulkMsg(null);
+    try {
+      const res = await fetch('/api/admin/orders/bulk', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          orderIds: selectedOrderIds,
+          order_status: bulkOrderStatus || undefined,
+          payment_status: bulkPaymentStatus || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setOrderBulkMsg(`Updated ${data.updatedCount} selected order(s).`);
+        setSelectedOrderIds([]);
+        setBulkOrderStatus('');
+        setBulkPaymentStatus('');
+        await loadAdminData();
+        onRefreshStorefront();
+      } else {
+        setOrderBulkMsg(data.error || 'Bulk order update failed.');
+      }
+    } finally {
+      setOrderBulkBusy(false);
+    }
   };
 
   const handleSaveProductEdit = async () => {
@@ -1141,7 +1232,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    onTabChange?.(tab.id);
+                  }}
                   className={`w-full px-3 py-2 text-xs flex items-center gap-2.5 text-left transition-colors cursor-pointer ${
                     safeActiveTab === tab.id
                       ? 'bg-[#142B4E] text-white font-medium'
@@ -1492,7 +1586,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-2">
-                        <span>Bulk CSV / WooCommerce Product Export Import</span>
+                        <span>Bulk CSV / WooCommerce Product & Variations Importer</span>
                         {isWooCommerceCsvHeader(csvText) && (
                           <span className="px-2 py-0.5 bg-[#0284C7] text-white text-[10px]">
                             WooCommerce CSV Detected
@@ -1500,24 +1594,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         )}
                       </div>
                       <div className="text-[11px] text-neutral-500 mt-0.5">
-                        Supports Monte Napoleone regional CSV (<code className="font-mono-tabular">sku,region_code,title,price,stock_qty</code>) or standard WooCommerce Product Export CSV (<code className="font-mono-tabular">SKU,Name,Regular price,Categories,Images,Stock</code>).
+                        Supports WooCommerce Product Exports (simple, variable, & variation rows with Sizes, Fits, Parent &gt; Child categories, and attributes) and rewrites single-language copy across EN, NO, IT, VN.
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => {
-                          setCsvText(
-                            'ID,Type,SKU,Name,Published,Short description,Description,In stock?,Stock,Regular price,Sale price,Categories,Images\n' +
-                              '901,simple,MN-WOO-901,"Como Royal Twill Shirt",1,"Fine Italian 2-ply twill","Woven in Como with mother-of-pearl buttons",1,24,189,165,"Business > Twill Non-Iron","/src/assets/images/shirt_white_signature_1795248293653.jpg"\n' +
-                              '902,simple,MN-WOO-902,"Portofino Resort Linen",1,"Lightweight coastal linen","Breathable summer weave",1,18,169,,"Casual & Linen > Summer Linen","/src/assets/images/shirt_beige_linen_1795248293982.jpg"'
-                          );
+                          const sample =
+                            'ID,Type,SKU,Name,Published,Short description,Description,In stock?,Stock,Regular price,Sale price,Categories,Images,Parent,Attribute 1 name,Attribute 1 value(s),Attribute 2 name,Attribute 2 value(s)\n' +
+                            '901,variable,MN-WOO-901,"Como Royal Twill Shirt",1,"Fine Italian 2-ply twill","Woven in Como with mother-of-pearl buttons",1,,189,165,"Business > Twill Non-Iron","/src/assets/images/shirt_white_signature_1795248293653.jpg",,Size,"38 / S, 40 / M, 42 / L",Fit,"Slim Fit, Regular Fit"\n' +
+                            '902,variation,MN-WOO-901-38,"Como Royal Twill - 38",1,,,1,14,189,165,,,MN-WOO-901,Size,"38 / S",Fit,"Slim Fit"\n' +
+                            '903,variation,MN-WOO-901-40,"Como Royal Twill - 40",1,,,1,22,189,165,,,MN-WOO-901,Size,"40 / M",Fit,"Regular Fit"\n' +
+                            '904,simple,MN-WOO-904,"Portofino Resort Linen",1,"Lightweight coastal linen","Breathable summer weave",1,18,169,,"Casual & Linen > Summer Linen","/src/assets/images/shirt_beige_linen_1795248293982.jpg",,Size,"39 / M, 40 / M, 41 / L",,';
+                          setCsvText(sample);
                           setCsvPreview(null);
+                          setWooPreview(parseWooCommerceCsv(sample, wooSourceRegion));
                           setCsvResultMsg(null);
                         }}
                         className="px-3 py-1.5 bg-white border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E]/5 cursor-pointer"
                       >
-                        Load WooCommerce Sample
+                        Load Variable + Size Sample
                       </button>
                       <label className="px-3 py-1.5 bg-white border border-neutral-300 cursor-pointer hover:bg-neutral-50">
                         <span>Upload .csv file</span>
@@ -1530,16 +1627,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             if (!f) return;
                             f.text().then((txt) => {
                               setCsvText(txt);
-                              if (!isWooCommerceCsvHeader(txt)) {
-                                setCsvPreview(parseProductImportCsv(txt));
-                              } else {
+                              if (isWooCommerceCsvHeader(txt)) {
                                 setCsvPreview(null);
+                                setWooPreview(parseWooCommerceCsv(txt, wooSourceRegion));
+                              } else {
+                                setWooPreview(null);
+                                setCsvPreview(parseProductImportCsv(txt));
                               }
                             });
                           }}
                         />
                       </label>
                     </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4 bg-white border border-neutral-200 px-3 py-2">
+                    <label className="flex items-center gap-2 text-[11px] text-neutral-700">
+                      <span className="font-medium uppercase tracking-wider">CSV Source Currency/Language:</span>
+                      <select
+                        value={wooSourceRegion}
+                        onChange={(e) => setWooSourceRegion(e.target.value as RegionCode)}
+                        className="border border-neutral-300 px-2 py-1 bg-white outline-none"
+                      >
+                        <option value="en">English (USD)</option>
+                        <option value="no">Norwegian (NOK)</option>
+                        <option value="it">Italian (EUR)</option>
+                        <option value="vn">Vietnamese (VND)</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-[11px] text-neutral-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wooAutoTranslate}
+                        onChange={(e) => setWooAutoTranslate(e.target.checked)}
+                      />
+                      <span>Auto-rewrite titles & descriptions into EN / NO / IT / VN</span>
+                    </label>
                   </div>
 
                   <textarea
@@ -1556,12 +1679,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         type="button"
                         onClick={() => {
                           if (isWooCommerceCsvHeader(csvText)) {
-                            const woo = parseWooCommerceCsv(csvText);
+                            const woo = parseWooCommerceCsv(csvText, wooSourceRegion);
                             setCsvPreview(null);
+                            setWooPreview(woo);
                             setCsvResultMsg(
-                              `WooCommerce CSV validated: ${woo.rows.length} product(s) ready across EN/NO/IT/VN.`
+                              `WooCommerce CSV validated: ${woo.rows.length} product(s), ${woo.categories.length} category node(s) ready across EN/NO/IT/VN.`
                             );
                           } else {
+                            setWooPreview(null);
                             setCsvPreview(parseProductImportCsv(csvText));
                           }
                         }}
@@ -1579,6 +1704,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                     {csvResultMsg && <span className="text-[#4F8A47] font-medium">{csvResultMsg}</span>}
                   </div>
+
+                  {wooPreview && wooPreview.rows.length > 0 && (
+                    <div className="border border-neutral-200 bg-white overflow-x-auto">
+                      <table className="w-full text-[11px] text-left">
+                        <thead className="bg-[#F1F5F9] text-neutral-600 uppercase">
+                          <tr>
+                            <th className="p-2">SKU</th>
+                            <th className="p-2">Type</th>
+                            <th className="p-2">Title</th>
+                            <th className="p-2">Categories</th>
+                            <th className="p-2">Sizes</th>
+                            <th className="p-2">Variations</th>
+                            <th className="p-2">Price ({wooSourceRegion.toUpperCase()})</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100">
+                          {wooPreview.rows.slice(0, 12).map((wr) => (
+                            <tr key={wr.sku}>
+                              <td className="p-2 font-mono-tabular font-semibold">{wr.sku}</td>
+                              <td className="p-2 uppercase">{wr.productType || 'simple'}</td>
+                              <td className="p-2">{wr.title}</td>
+                              <td className="p-2 text-neutral-600">{wr.categoryPaths.join(' | ')}</td>
+                              <td className="p-2">{(wr.sizes || []).join(', ')}</td>
+                              <td className="p-2">{wr.variations?.length || 0}</td>
+                              <td className="p-2 font-mono-tabular">{wr.salePrice || wr.regularPrice}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
 
                   {csvPreview && (
                     <div className="text-[11px] space-y-1 pt-1">
@@ -1827,147 +1983,445 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           {/* REPORTS & FINANCIAL ANALYTICS */}
           {safeActiveTab === 'reports' && (
-            <ReportsPanel report={reportData} onRefresh={loadAdminData} />
+            <ReportsPanel
+              report={reportData}
+              onRefresh={loadAdminData}
+              lastUpdatedAt={reportsLastUpdatedAt}
+            />
           )}
 
-          {/* ORDERS & DHL DISPATCH + SEARCH/FILTER/EXPORT */}
-          {safeActiveTab === 'orders' && hasPermission(authUser, 'manage_orders') && (
-            <div className="space-y-5">
-              <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-center justify-between gap-3">
-                <h1 className="text-base font-semibold uppercase tracking-wide">
-                  Orders, Local Bank Transfers & DHL Express Dispatch
-                </h1>
-                <button
-                  type="button"
-                  onClick={() => handleExportCsv('orders')}
-                  className="px-3.5 py-2 border border-neutral-300 bg-white hover:bg-neutral-50 text-xs uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export Orders CSV</span>
-                </button>
-              </div>
+          {/* ORDERS & DHL DISPATCH + NAVIGATION, ADVANCED FILTERS & BULK STATUS */}
+          {safeActiveTab === 'orders' && hasPermission(authUser, 'manage_orders') && (() => {
+            const q = orderSearch.trim().toLowerCase();
+            const filteredOrders = orders
+              .filter((ord) => {
+                if (orderRegionFilter !== 'all' && ord.region_code !== orderRegionFilter) return false;
+                if (orderStatusFilter !== 'all' && ord.order_status !== orderStatusFilter) return false;
+                if (paymentStatusFilter !== 'all' && ord.payment_status !== paymentStatusFilter) return false;
+                if (orderChannelFilter === 'b2b' && !ord.is_b2b) return false;
+                if (orderChannelFilter === 'b2c' && ord.is_b2b) return false;
+                if (!q) return true;
+                return (
+                  ord.order_number.toLowerCase().includes(q) ||
+                  ord.customer_email.toLowerCase().includes(q) ||
+                  ord.customer_name.toLowerCase().includes(q) ||
+                  (ord.company_name || '').toLowerCase().includes(q) ||
+                  (ord.dhl_tracking_number || '').toLowerCase().includes(q)
+                );
+              })
+              .sort((a, b) => {
+                if (orderSort === 'oldest') return a.id - b.id;
+                if (orderSort === 'total_desc') return b.total - a.total;
+                if (orderSort === 'total_asc') return a.total - b.total;
+                return b.id - a.id;
+              });
 
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex flex-wrap gap-1.5">
-                  {(['all', 'en', 'no', 'it', 'vn'] as const).map((rc) => (
-                    <button
-                      key={rc}
-                      type="button"
-                      onClick={() => setOrderRegionFilter(rc)}
-                      className={`px-3 py-1.5 border uppercase cursor-pointer ${
-                        orderRegionFilter === rc
-                          ? 'bg-[#142B4E] text-white border-[#142B4E]'
-                          : 'bg-white border-neutral-300 text-neutral-700'
-                      }`}
-                    >
-                      {rc}
-                    </button>
-                  ))}
+            const totalOrdersMatched = filteredOrders.length;
+            const totalPages = Math.max(1, Math.ceil(totalOrdersMatched / orderPageSize));
+            const currentPage = Math.min(orderPage, totalPages);
+            const startIdx = (currentPage - 1) * orderPageSize;
+            const pagedOrders = filteredOrders.slice(startIdx, startIdx + orderPageSize);
+            const allPageSelected =
+              pagedOrders.length > 0 && pagedOrders.every((o) => selectedOrderIds.includes(o.id));
+
+            return (
+              <div className="space-y-5">
+                <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h1 className="text-base font-semibold uppercase tracking-wide">
+                      Orders Portal, Bank Transfers & DHL Express Dispatch
+                    </h1>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      {totalOrdersMatched} order(s) matching filters · {orders.length} total
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleExportCsv('orders')}
+                    className="px-3.5 py-2 border border-neutral-300 bg-white hover:bg-neutral-50 text-xs uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export Orders CSV</span>
+                  </button>
                 </div>
-                <input
-                  type="search"
-                  value={orderSearch}
-                  onChange={(e) => setOrderSearch(e.target.value)}
-                  placeholder="Filter by order # or email..."
-                  aria-label="Filter orders"
-                  className="px-3 py-1.5 border border-neutral-300 bg-white w-full sm:w-64 outline-none focus:border-[#142B4E]"
-                />
-              </div>
 
-              <div className="space-y-3">
-                {orders
-                  .filter((ord) => {
-                    if (orderRegionFilter !== 'all' && ord.region_code !== orderRegionFilter) return false;
-                    const q = orderSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    return (
-                      ord.order_number.toLowerCase().includes(q) ||
-                      ord.customer_email.toLowerCase().includes(q) ||
-                      ord.customer_name.toLowerCase().includes(q)
-                    );
-                  })
-                  .map((ord) => (
-                  <div key={ord.id} className="border border-neutral-200 bg-white p-5 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
-                      <div>
-                        <span className="font-mono-tabular font-semibold text-sm">{ord.order_number}</span>
-                        <span className="mx-2 text-neutral-300">·</span>
-                        <span className="text-xs font-medium">{ord.customer_name}</span>
-                        <span className="mx-2 text-neutral-300">·</span>
-                        <span className="text-xs text-neutral-500">
-                          {ord.shipping_city}, {ord.shipping_country}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono-tabular">
-                        <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 uppercase">
-                          {ord.payment_method} ({ord.payment_status})
-                        </span>
-                        <span className="px-2 py-0.5 bg-[#142B4E]/10 text-[#142B4E] uppercase">
-                          {ord.order_status}
-                        </span>
-                        <span className="font-semibold text-sm ml-2">
-                          {formatRegionalPrice(ord.total, ord.region_code)}
-                        </span>
-                      </div>
+                {/* Advanced Filter & Navigation Toolbar */}
+                <div
+                  data-testid="admin-orders-filters"
+                  className="bg-white border border-neutral-200 p-4 space-y-3 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {(['all', 'en', 'no', 'it', 'vn'] as const).map((rc) => (
+                        <button
+                          key={rc}
+                          type="button"
+                          onClick={() => setOrderRegionFilter(rc)}
+                          className={`px-3 py-1.5 border uppercase cursor-pointer ${
+                            orderRegionFilter === rc
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white border-neutral-300 text-neutral-700'
+                          }`}
+                        >
+                          {rc}
+                        </button>
+                      ))}
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                      <div className="text-neutral-600">
-                        <span className="font-mono-tabular">Ref: {ord.payment_reference}</span>
-                        {ord.dhl_tracking_number && (
-                          <span className="ml-4 inline-flex items-center gap-1 font-mono-tabular text-[#1A1A1A] bg-[#FFCC00]/40 px-2 py-0.5">
-                            <Truck className="w-3.5 h-3.5" />
-                            {ord.dhl_tracking_number}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(['all', 'b2c', 'b2b'] as const).map((ch) => (
                         <button
+                          key={ch}
                           type="button"
-                          onClick={() => setInspectingOrder(ord)}
-                          className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                          onClick={() => setOrderChannelFilter(ch)}
+                          className={`px-2.5 py-1.5 border uppercase text-[11px] cursor-pointer ${
+                            orderChannelFilter === ch
+                              ? 'bg-[#C5A059] text-white border-[#C5A059] font-semibold'
+                              : 'bg-white border-neutral-300 text-neutral-700'
+                          }`}
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Inspect / Tailor Ticket</span>
+                          {ch === 'all' ? 'All Channels' : ch.toUpperCase()}
                         </button>
-                        {ord.payment_status !== 'paid' && (
-                          <button
-                            type="button"
-                            onClick={() => handleMarkOrderPaid(ord.id)}
-                            className="px-3 py-1.5 border border-[#4F8A47] text-[#4F8A47] hover:bg-[#4F8A47] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
-                          >
-                            Confirm Payment Received
-                          </button>
-                        )}
-                        {!ord.dhl_tracking_number && (
-                          <button
-                            type="button"
-                            onClick={() => handleDispatchDhl(ord.id)}
-                            className="px-3 py-1.5 bg-[#FFCC00] hover:bg-[#f0c000] text-[#D40511] font-bold text-[11px] uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Package className="w-3.5 h-3.5" />
-                            <span>Create DHL Waybill</span>
-                          </button>
-                        )}
-                      </div>
+                      ))}
                     </div>
                   </div>
-                ))}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                    <input
+                      type="search"
+                      value={orderSearch}
+                      onChange={(e) => setOrderSearch(e.target.value)}
+                      placeholder="Order #, email, company, DHL..."
+                      aria-label="Filter orders"
+                      className="px-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
+                    />
+
+                    <select
+                      value={orderStatusFilter}
+                      onChange={(e) => setOrderStatusFilter(e.target.value)}
+                      aria-label="Filter by order status"
+                      className="px-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
+                    >
+                      <option value="all">Order Status: All</option>
+                      <option value="pending">Pending</option>
+                      <option value="processing">Processing</option>
+                      <option value="tailoring">Tailoring</option>
+                      <option value="shipped">Shipped</option>
+                      <option value="delivered">Delivered</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+
+                    <select
+                      value={paymentStatusFilter}
+                      onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                      aria-label="Filter by payment status"
+                      className="px-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
+                    >
+                      <option value="all">Payment: All</option>
+                      <option value="pending">Pending</option>
+                      <option value="awaiting_transfer">Awaiting Transfer</option>
+                      <option value="paid">Paid</option>
+                      <option value="refunded">Refunded</option>
+                    </select>
+
+                    <select
+                      value={orderSort}
+                      onChange={(e) => setOrderSort(e.target.value as 'newest' | 'oldest' | 'total_desc' | 'total_asc')}
+                      aria-label="Sort orders"
+                      className="px-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
+                    >
+                      <option value="newest">Sort: Newest First</option>
+                      <option value="oldest">Sort: Oldest First</option>
+                      <option value="total_desc">Sort: Highest Total</option>
+                      <option value="total_asc">Sort: Lowest Total</option>
+                    </select>
+
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={orderPageSize}
+                        onChange={(e) => setOrderPageSize(Number(e.target.value) as 10 | 25 | 50)}
+                        aria-label="Orders per page"
+                        className="px-2.5 py-1.5 border border-neutral-300 bg-white outline-none flex-1"
+                      >
+                        <option value={10}>10 / page</option>
+                        <option value={25}>25 / page</option>
+                        <option value={50}>50 / page</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOrderRegionFilter('all');
+                          setOrderStatusFilter('all');
+                          setPaymentStatusFilter('all');
+                          setOrderChannelFilter('all');
+                          setOrderSearch('');
+                          setOrderSort('newest');
+                        }}
+                        className="px-2.5 py-1.5 border border-neutral-300 bg-neutral-50 hover:bg-neutral-100 text-[11px] cursor-pointer"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bulk Selection & Batch Status Bar */}
+                <div
+                  data-testid="admin-orders-bulk-bar"
+                  className="bg-[#FAFAFA] border border-[#142B4E]/20 p-3 flex flex-wrap items-center justify-between gap-3 text-xs"
+                >
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-[#142B4E]">
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedOrderIds((prev) =>
+                            Array.from(new Set([...prev, ...pagedOrders.map((o) => o.id)]))
+                          );
+                        } else {
+                          const pageIds = new Set(pagedOrders.map((o) => o.id));
+                          setSelectedOrderIds((prev) => prev.filter((id) => !pageIds.has(id)));
+                        }
+                      }}
+                    />
+                    <span>
+                      Select Page ({selectedOrderIds.length} selected)
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={bulkOrderStatus}
+                      onChange={(e) => setBulkOrderStatus(e.target.value)}
+                      aria-label="Bulk set order status"
+                      className="px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    >
+                      <option value="">Set Order Status...</option>
+                      <option value="pending">pending</option>
+                      <option value="processing">processing</option>
+                      <option value="tailoring">tailoring</option>
+                      <option value="shipped">shipped</option>
+                      <option value="delivered">delivered</option>
+                      <option value="cancelled">cancelled (restock)</option>
+                    </select>
+
+                    <select
+                      value={bulkPaymentStatus}
+                      onChange={(e) => setBulkPaymentStatus(e.target.value)}
+                      aria-label="Bulk set payment status"
+                      className="px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    >
+                      <option value="">Set Payment Status...</option>
+                      <option value="pending">pending</option>
+                      <option value="awaiting_transfer">awaiting_transfer</option>
+                      <option value="paid">paid</option>
+                      <option value="refunded">refunded</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled={selectedOrderIds.length === 0 || orderBulkBusy}
+                      onClick={handleApplyBulkOrders}
+                      data-testid="admin-orders-bulk-apply"
+                      className="px-3.5 py-1.5 bg-[#142B4E] text-white uppercase tracking-wider text-[11px] font-medium disabled:opacity-40 cursor-pointer"
+                    >
+                      {orderBulkBusy ? 'Applying...' : 'Apply Bulk Update'}
+                    </button>
+                  </div>
+                </div>
+
+                {orderBulkMsg && (
+                  <div className="px-3 py-2 bg-[#4F8A47]/10 border border-[#4F8A47]/30 text-[#4F8A47] text-xs font-medium">
+                    {orderBulkMsg}
+                  </div>
+                )}
+
+                {pagedOrders.length === 0 ? (
+                  <div className="border border-neutral-200 bg-white p-8 text-center text-xs text-neutral-500">
+                    No orders match your current filters.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {pagedOrders.map((ord) => {
+                      const isChecked = selectedOrderIds.includes(ord.id);
+                      return (
+                        <div key={ord.id} className="border border-neutral-200 bg-white p-5 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                aria-label={`Select order ${ord.order_number}`}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedOrderIds((prev) =>
+                                      prev.includes(ord.id) ? prev : [...prev, ord.id]
+                                    );
+                                  } else {
+                                    setSelectedOrderIds((prev) => prev.filter((id) => id !== ord.id));
+                                  }
+                                }}
+                              />
+                              <span className="font-mono-tabular font-semibold text-sm">{ord.order_number}</span>
+                              {ord.is_b2b && (
+                                <span className="px-1.5 py-0.5 bg-[#C5A059] text-white text-[10px] font-semibold uppercase">
+                                  B2B
+                                </span>
+                              )}
+                              <span className="text-neutral-300">·</span>
+                              <span className="text-xs font-medium">{ord.customer_name}</span>
+                              <span className="text-neutral-300">·</span>
+                              <span className="text-xs text-neutral-500">
+                                {ord.shipping_city}, {ord.shipping_country}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono-tabular">
+                              <select
+                                value={ord.payment_status}
+                                aria-label={`Payment status for ${ord.order_number}`}
+                                onChange={(e) =>
+                                  handleQuickOrderUpdate(ord.id, { payment_status: e.target.value })
+                                }
+                                className="px-2 py-1 bg-neutral-100 border border-neutral-300 uppercase outline-none cursor-pointer"
+                              >
+                                <option value="pending">pay: pending</option>
+                                <option value="awaiting_transfer">pay: awaiting_transfer</option>
+                                <option value="paid">pay: paid</option>
+                                <option value="refunded">pay: refunded</option>
+                              </select>
+
+                              <select
+                                value={ord.order_status}
+                                aria-label={`Order status for ${ord.order_number}`}
+                                onChange={(e) =>
+                                  handleQuickOrderUpdate(ord.id, { order_status: e.target.value })
+                                }
+                                className="px-2 py-1 bg-[#142B4E]/10 text-[#142B4E] border border-[#142B4E]/30 uppercase font-semibold outline-none cursor-pointer"
+                              >
+                                <option value="pending">pending</option>
+                                <option value="processing">processing</option>
+                                <option value="tailoring">tailoring</option>
+                                <option value="shipped">shipped</option>
+                                <option value="delivered">delivered</option>
+                                <option value="cancelled">cancelled</option>
+                              </select>
+
+                              <span className="font-semibold text-sm ml-2">
+                                {formatRegionalPrice(ord.total, ord.region_code)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                            <div className="text-neutral-600">
+                              <span className="font-mono-tabular">
+                                {ord.payment_method.toUpperCase()} · Ref: {ord.payment_reference}
+                              </span>
+                              {ord.dhl_tracking_number && (
+                                <span className="ml-4 inline-flex items-center gap-1 font-mono-tabular text-[#1A1A1A] bg-[#FFCC00]/40 px-2 py-0.5">
+                                  <Truck className="w-3.5 h-3.5" />
+                                  {ord.dhl_tracking_number}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setInspectingOrder(ord)}
+                                className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Inspect / Tailor Ticket</span>
+                              </button>
+                              {ord.payment_status !== 'paid' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkOrderPaid(ord.id)}
+                                  className="px-3 py-1.5 border border-[#4F8A47] text-[#4F8A47] hover:bg-[#4F8A47] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
+                                >
+                                  Confirm Payment Received
+                                </button>
+                              )}
+                              {!ord.dhl_tracking_number && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDispatchDhl(ord.id)}
+                                  className="px-3 py-1.5 bg-[#FFCC00] hover:bg-[#f0c000] text-[#D40511] font-bold text-[11px] uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Package className="w-3.5 h-3.5" />
+                                  <span>Create DHL Waybill</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Orders Pagination Controls */}
+                <div
+                  data-testid="admin-orders-pagination"
+                  className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-3 text-xs text-neutral-600"
+                >
+                  <div>
+                    Showing {totalOrdersMatched === 0 ? 0 : startIdx + 1}–
+                    {Math.min(startIdx + orderPageSize, totalOrdersMatched)} of {totalOrdersMatched} orders
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={currentPage <= 1}
+                      onClick={() => setOrderPage((p) => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 border border-neutral-300 bg-white disabled:opacity-40 cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))
+                      .map((pageNum) => (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setOrderPage(pageNum)}
+                          className={`px-2.5 py-1 border cursor-pointer ${
+                            pageNum === currentPage
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white border-neutral-300'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      ))}
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setOrderPage((p) => Math.min(totalPages, p + 1))}
+                      className="px-2.5 py-1 border border-neutral-300 bg-white disabled:opacity-40 cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+
+                {inspectingOrder && authToken && (
+                  <OrderDetailModal
+                    order={inspectingOrder}
+                    authToken={authToken}
+                    onClose={() => setInspectingOrder(null)}
+                    onUpdated={() => {
+                      loadAdminData();
+                      onRefreshStorefront();
+                    }}
+                  />
+                )}
               </div>
-              {inspectingOrder && authToken && (
-                <OrderDetailModal
-                  order={inspectingOrder}
-                  authToken={authToken}
-                  onClose={() => setInspectingOrder(null)}
-                  onUpdated={() => {
-                    loadAdminData();
-                    onRefreshStorefront();
-                  }}
-                />
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {/* WORDPRESS-STYLE MEDIA LIBRARY */}
           {safeActiveTab === 'media' && authToken && hasPermission(authUser, 'manage_media') && (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TRANSLATIONS } from './i18n/translations.ts';
 import type {
+  AdminTab,
   AiAgentAction,
   AiPublicConfig,
   AuthUser,
@@ -135,6 +136,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   const [activeView, setActiveView] = useState<AppView>(initialRoute.view);
+  const [adminTab, setAdminTab] = useState<AdminTab>(initialRoute.adminTab || 'overview');
   const [selectedCategory, setSelectedCategory] = useState<string>(initialRoute.category || 'all');
   const [selectedSlug, setSelectedSlug] = useState<string | null>(
     initialRoute.view === 'product' ? initialRoute.slug || null : null
@@ -237,16 +239,21 @@ export default function App() {
     } catch {
       sid = `v-${Date.now()}`;
     }
-    fetch('/api/analytics/visit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: sid,
-        regionCode,
-        path: activeView,
-      }),
-    }).catch(() => {});
-  }, [regionCode, activeView]);
+    const sendHeartbeat = () => {
+      fetch('/api/analytics/visit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          regionCode,
+          path: window.location.pathname || activeView,
+        }),
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 15000);
+    return () => window.clearInterval(timer);
+  }, [regionCode, activeView, selectedCategory, selectedSlug]);
 
   const markPromoClaimedOrUsed = useCallback(() => {
     setPromoClaimedOrUsed(true);
@@ -291,7 +298,8 @@ export default function App() {
       nextRegion: RegionCode,
       nextView: AppView,
       nextCategory?: string,
-      nextSlug?: string | null
+      nextSlug?: string | null,
+      nextAdminTab?: AdminTab
     ) => {
       try {
         const nextPath = buildStorefrontPath({
@@ -299,10 +307,17 @@ export default function App() {
           view: nextView,
           category: nextCategory,
           slug: nextSlug,
+          adminTab: nextAdminTab,
         });
         if (window.location.pathname !== nextPath) {
           window.history.pushState(
-            { regionCode: nextRegion, view: nextView, category: nextCategory, slug: nextSlug },
+            {
+              regionCode: nextRegion,
+              view: nextView,
+              category: nextCategory,
+              slug: nextSlug,
+              adminTab: nextAdminTab,
+            },
             '',
             nextPath
           );
@@ -319,6 +334,7 @@ export default function App() {
       const parsed = parseStorefrontUrl(window.location.pathname);
       if (parsed.region) setRegionCode(parsed.region);
       setActiveView(parsed.view);
+      if (parsed.adminTab) setAdminTab(parsed.adminTab);
       setSelectedCategory(parsed.category || 'all');
       setSelectedSlug(parsed.view === 'product' ? parsed.slug || null : null);
       setB2bProductSlug(parsed.view === 'b2b' ? parsed.slug || null : null);
@@ -338,7 +354,8 @@ export default function App() {
       next,
       activeView,
       selectedCategory,
-      activeView === 'b2b' ? b2bProductSlug : selectedSlug
+      activeView === 'b2b' ? b2bProductSlug : selectedSlug,
+      activeView === 'admin' ? adminTab : undefined
     );
   };
 
@@ -437,20 +454,22 @@ export default function App() {
 
   const navigate = (
     view: AppView,
-    opts?: { category?: string; slug?: string; reviewToken?: string | null }
+    opts?: { category?: string; slug?: string; reviewToken?: string | null; adminTab?: AdminTab }
   ) => {
     const nextCat = opts?.category !== undefined ? opts.category : selectedCategory;
     const nextSlug =
       opts?.slug !== undefined ? opts.slug : view === 'product' ? selectedSlug : view === 'b2b' ? b2bProductSlug : null;
+    const nextAdminTab = opts?.adminTab !== undefined ? opts.adminTab : adminTab;
     if (opts?.category !== undefined) setSelectedCategory(opts.category);
     if (opts?.slug !== undefined) setSelectedSlug(opts.slug);
+    if (opts?.adminTab !== undefined) setAdminTab(opts.adminTab);
     if (opts?.reviewToken !== undefined) {
       setReviewToken(opts.reviewToken);
     } else if (view !== 'product') {
       setReviewToken(null);
     }
     setActiveView(view);
-    pushBrowserUrl(regionCode, view, nextCat, nextSlug);
+    pushBrowserUrl(regionCode, view, nextCat, nextSlug, view === 'admin' ? nextAdminTab : undefined);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -743,6 +762,11 @@ export default function App() {
           <AdminDashboard
             authToken={authToken}
             authUser={authUser}
+            initialTab={adminTab}
+            onTabChange={(tab) => {
+              setAdminTab(tab);
+              pushBrowserUrl(regionCode, 'admin', selectedCategory, null, tab);
+            }}
             onAuthChange={(token, user) => {
               setAuthToken(token);
               setAuthUser(user);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Award, CheckCircle2, Compass, Globe2, MapPin, Play, Scissors, Sparkles } from 'lucide-react';
 import type { RegionConfig } from '../types.ts';
@@ -25,6 +25,15 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
   onNavigateB2B,
 }) => {
   const about = copy.aboutPage;
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.muted = true;
+    el.defaultMuted = true;
+    el.play().catch(() => {});
+  }, []);
 
   return (
     <main className="pt-20 pb-24 bg-white text-[#1A1A1A]">
@@ -108,17 +117,24 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-            <div className="lg:col-span-7 bg-black/40 border border-white/15 overflow-hidden">
+            <div className="lg:col-span-7 relative bg-[#0B192E] border border-white/15 rounded-md overflow-hidden shadow-2xl aspect-[16/10] lg:aspect-auto lg:min-h-[440px]">
               <video
+                ref={videoRef}
                 data-testid="about-atelier-video"
-                controls
+                autoPlay
+                muted
+                loop
                 playsInline
-                preload="metadata"
+                preload="auto"
                 poster={ATELIER_MEDIA.atelierImg1}
-                className="w-full h-full max-h-[460px] object-cover"
+                className="w-full h-full object-cover pointer-events-none select-none"
               >
                 <source src={ATELIER_MEDIA.atelierVideo} type="video/mp4" />
               </video>
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#0B192E]/75 via-[#0B192E]/20 to-transparent flex items-end justify-between px-4 pb-3 text-[11px] uppercase tracking-[0.16em] text-white/90">
+                <span>Treviso Atelier Film · Ambient Silent Reel</span>
+                <span className="font-mono-tabular text-white/75">Est. 1974</span>
+              </div>
             </div>
             <div className="lg:col-span-5 grid grid-cols-2 lg:grid-cols-1 gap-4">
               <div className="relative overflow-hidden border border-white/15 aspect-[16/9] lg:aspect-auto lg:h-[220px]">

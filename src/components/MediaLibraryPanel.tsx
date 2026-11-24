@@ -390,6 +390,50 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
           )}
         </aside>
       </div>
+
+      {pickerMode && onSelectMedia && (
+        <div
+          data-testid="media-picker-sticky-bar"
+          className="sticky bottom-0 z-20 -mx-6 -mb-6 px-6 py-3.5 bg-white/95 backdrop-blur-md border-t border-neutral-200 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] flex flex-wrap items-center justify-between gap-3"
+        >
+          {activeAsset ? (
+            <>
+              <div className="flex items-center gap-3 min-w-0">
+                <img
+                  src={activeAsset.url}
+                  alt={activeAsset.alt_text || activeAsset.original_name}
+                  referrerPolicy="no-referrer"
+                  className="w-11 h-11 object-cover border border-neutral-200 bg-[#F4F4F4] shrink-0"
+                />
+                <div className="min-w-0 text-xs">
+                  <div className="font-semibold text-[#142B4E] truncate max-w-[260px] sm:max-w-md">
+                    {activeAsset.original_name}
+                  </div>
+                  <div className="text-[11px] font-mono-tabular text-neutral-500 truncate max-w-[260px] sm:max-w-md">
+                    {activeAsset.url}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="media-picker-choose-btn"
+                onClick={() => onSelectMedia(activeAsset)}
+                className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-[0.16em] font-semibold inline-flex items-center gap-2 shadow-sm cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Choose Image</span>
+              </button>
+            </>
+          ) : (
+            <div className="w-full flex items-center justify-between text-xs text-neutral-500">
+              <span>Click any image above to select it.</span>
+              <span className="px-5 py-2 bg-neutral-200 text-neutral-500 uppercase tracking-wider font-medium">
+                Choose Image
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

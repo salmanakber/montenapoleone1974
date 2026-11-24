@@ -3,11 +3,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Globe, Minus, Plus, RotateCcw, Users } from 'lucide-react';
-import type { CountryMetric, VisitorSessionMetric } from '../types.ts';
+import type { CountryMetric, VisitorCountryRollup, VisitorSessionMetric } from '../types.ts';
 
 interface Globe3DMapProps {
   countries: CountryMetric[];
   visitors?: VisitorSessionMetric[];
+  visitorCountries?: VisitorCountryRollup[];
   activeVisitorsCount?: number;
 }
 
@@ -200,6 +201,7 @@ function createLightEarthTexture(maxAnisotropy: number): THREE.CanvasTexture {
 export const Globe3DMap: React.FC<Globe3DMapProps> = ({
   countries,
   visitors = [],
+  visitorCountries = [],
   activeVisitorsCount = 0,
 }) => {
   const markets = countries.length > 0 ? countries : DEFAULT_MARKETS;
@@ -207,6 +209,30 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
   const [selectedCode, setSelectedCode] = useState<string>(markets[0]?.region_code || 'it');
   const [trafficMode, setTrafficMode] = useState<GlobeTrafficMode>('all');
   const [webglError, setWebglError] = useState(false);
+
+  const derivedVisitorCountries: VisitorCountryRollup[] = React.useMemo(() => {
+    if (visitorCountries.length > 0) return visitorCountries;
+    const map = new Map<string, VisitorCountryRollup>();
+    for (const v of visitors) {
+      const code = (v.country_code || v.country || 'UN').toUpperCase();
+      const cur = map.get(code) || {
+        country: v.country || code,
+        country_code: code,
+        lat: v.lat,
+        lng: v.lng,
+        active_count: 0,
+        total_count: 0,
+        sample_cities: [],
+      };
+      cur.total_count += 1;
+      if (v.is_active) cur.active_count += 1;
+      if (v.city && cur.sample_cities && !cur.sample_cities.includes(v.city)) {
+        cur.sample_cities.push(v.city);
+      }
+      map.set(code, cur);
+    }
+    return Array.from(map.values()).sort((a, b) => b.active_count - a.active_count || b.total_count - a.total_count);
+  }, [visitorCountries, visitors]);
 
   const selectedCodeRef = useRef(selectedCode);
   selectedCodeRef.current = selectedCode;
@@ -779,28 +805,58 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
           })}
         </div>
 
-        {visitors.length > 0 && (
-          <div className="pt-2 border-t border-neutral-200 flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span className="uppercase tracking-wider text-neutral-500 font-semibold mr-1">
-              Recent Visitors:
-            </span>
-            {visitors.slice(0, 6).map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => flyToRef.current(v.lat, v.lng)}
-                className="px-2 py-0.5 bg-[#F8FAFC] hover:bg-sky-50 border border-neutral-200 text-neutral-700 inline-flex items-center gap-1 cursor-pointer"
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    v.is_active ? 'bg-[#0284C7]' : 'bg-neutral-400'
-                  }`}
-                />
-                <span>
-                  {v.city}, {v.country}
+        {(derivedVisitorCountries.length > 0 || visitors.length > 0) && (
+          <div className="pt-2.5 border-t border-neutral-200 space-y-2 text-[11px]">
+            {derivedVisitorCountries.length > 0 && (
+              <div data-testid="globe-visitor-countries" className="flex flex-wrap items-center gap-1.5">
+                <span className="uppercase tracking-wider text-[#142B4E] font-semibold mr-1">
+                  Live Visitor Countries:
                 </span>
-              </button>
-            ))}
+                {derivedVisitorCountries.map((vc) => (
+                  <button
+                    key={vc.country_code}
+                    type="button"
+                    onClick={() => flyToRef.current(vc.lat, vc.lng)}
+                    className="px-2.5 py-1 bg-sky-50/70 hover:bg-sky-100 border border-sky-200 text-[#142B4E] inline-flex items-center gap-1.5 font-medium cursor-pointer"
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        vc.active_count > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-sky-500'
+                      }`}
+                    />
+                    <span>{vc.country}</span>
+                    <span className="font-mono-tabular text-[10px] text-sky-800">
+                      ({vc.active_count > 0 ? `${vc.active_count} live` : `${vc.total_count} visits`})
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {visitors.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="uppercase tracking-wider text-neutral-500 font-semibold mr-1">
+                  Recent Sessions:
+                </span>
+                {visitors.slice(0, 6).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => flyToRef.current(v.lat, v.lng)}
+                    className="px-2 py-0.5 bg-[#F8FAFC] hover:bg-sky-50 border border-neutral-200 text-neutral-700 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        v.is_active ? 'bg-emerald-500' : 'bg-neutral-400'
+                      }`}
+                    />
+                    <span>
+                      {v.city}, {v.country}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

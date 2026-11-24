@@ -1013,9 +1013,36 @@ const REGION_GEO_DEFAULTS: Record<
   en: { country: 'United States', countryCode: 'US', city: 'New York', lat: 40.7128, lng: -74.006 },
 };
 
+const COUNTRY_GEO_COORDS: Record<
+  string,
+  { country: string; city: string; lat: number; lng: number }
+> = {
+  NO: { country: 'Norway', city: 'Oslo', lat: 59.9139, lng: 10.7522 },
+  IT: { country: 'Italy', city: 'Milano', lat: 45.4642, lng: 9.19 },
+  VN: { country: 'Việt Nam', city: 'Ho Chi Minh City', lat: 10.7769, lng: 106.7009 },
+  US: { country: 'United States', city: 'New York', lat: 40.7128, lng: -74.006 },
+  GB: { country: 'United Kingdom', city: 'London', lat: 51.5072, lng: -0.1276 },
+  SE: { country: 'Sweden', city: 'Stockholm', lat: 59.3293, lng: 18.0686 },
+  DK: { country: 'Denmark', city: 'Copenhagen', lat: 55.6761, lng: 12.5683 },
+  DE: { country: 'Germany', city: 'Munich', lat: 48.1351, lng: 11.582 },
+  FR: { country: 'France', city: 'Paris', lat: 48.8566, lng: 2.3522 },
+  CH: { country: 'Switzerland', city: 'Zurich', lat: 47.3769, lng: 8.5417 },
+  NL: { country: 'Netherlands', city: 'Amsterdam', lat: 52.3676, lng: 4.9041 },
+  ES: { country: 'Spain', city: 'Madrid', lat: 40.4168, lng: -3.7038 },
+  AT: { country: 'Austria', city: 'Vienna', lat: 48.2082, lng: 16.3738 },
+  BE: { country: 'Belgium', city: 'Brussels', lat: 50.8503, lng: 4.3517 },
+  CA: { country: 'Canada', city: 'Toronto', lat: 43.6532, lng: -79.3832 },
+  AU: { country: 'Australia', city: 'Sydney', lat: -33.8688, lng: 151.2093 },
+  JP: { country: 'Japan', city: 'Tokyo', lat: 35.6762, lng: 139.6503 },
+  SG: { country: 'Singapore', city: 'Singapore', lat: 1.3521, lng: 103.8198 },
+  KR: { country: 'South Korea', city: 'Seoul', lat: 37.5665, lng: 126.978 },
+  AE: { country: 'United Arab Emirates', city: 'Dubai', lat: 25.2048, lng: 55.2708 },
+};
+
 export async function resolveVisitorGeo(
   ipAddress: string | undefined,
-  regionCode: RegionCode
+  regionCode: RegionCode,
+  proxyCountryHeader?: string | undefined
 ): Promise<{ country: string; country_code: string; city: string; lat: number; lng: number }> {
   const cleanIp = (ipAddress || '').split(',')[0].trim();
   const isPrivate =
@@ -1024,6 +1051,10 @@ export async function resolveVisitorGeo(
     cleanIp.startsWith('127.') ||
     cleanIp.startsWith('10.') ||
     cleanIp.startsWith('192.168.') ||
+    cleanIp.startsWith('172.16.') ||
+    cleanIp.startsWith('172.17.') ||
+    cleanIp.startsWith('172.18.') ||
+    cleanIp.startsWith('172.19.') ||
     cleanIp.startsWith('::ffff:127.');
 
   const geoToken = getResolvedSecret('GEOIP_API_KEY');
@@ -1035,11 +1066,12 @@ export async function resolveVisitorGeo(
         const [latStr, lngStr] = (d.loc || '').split(',');
         const lat = Number(latStr);
         const lng = Number(lngStr);
-        if (Number.isFinite(lat) && Number.isFinite(lng) && d.country) {
+        const cc = String(d.country || '').toUpperCase();
+        if (Number.isFinite(lat) && Number.isFinite(lng) && cc) {
           return {
-            country: d.country,
-            country_code: d.country,
-            city: d.city || d.country,
+            country: COUNTRY_GEO_COORDS[cc]?.country || cc,
+            country_code: cc,
+            city: d.city || COUNTRY_GEO_COORDS[cc]?.city || cc,
             lat,
             lng,
           };
@@ -1048,6 +1080,21 @@ export async function resolveVisitorGeo(
     } catch {
       // fall through gracefully
     }
+  }
+
+  const headerCode = String(proxyCountryHeader || '')
+    .trim()
+    .toUpperCase()
+    .slice(0, 2);
+  if (headerCode && headerCode !== 'XX' && headerCode !== 'T1' && COUNTRY_GEO_COORDS[headerCode]) {
+    const match = COUNTRY_GEO_COORDS[headerCode];
+    return {
+      country: match.country,
+      country_code: headerCode,
+      city: match.city,
+      lat: match.lat,
+      lng: match.lng,
+    };
   }
 
   const fb = REGION_GEO_DEFAULTS[regionCode] || REGION_GEO_DEFAULTS.en;

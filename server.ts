@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import {
   GoogleGenAI,
   Modality,
+  ThinkingLevel,
   Type,
   type FunctionDeclaration,
   type LiveServerMessage,
@@ -64,9 +65,11 @@ import type {
   ShippingMethod,
   StaffPermissions,
   TopBannerSettings,
+  VisitorCountryRollup,
   WooProductImportRow,
 } from './src/types.ts';
 import {
+  buildDeterministicMultilingualCopy,
   calculateCheckoutTotals,
   calculateTailoringSurcharge,
   computeBulkPriceAdjustment,
@@ -574,14 +577,26 @@ app.post('/api/analytics/visit', async (req, res) => {
   const regionCode = parseRegion(b.regionCode);
   const pathUrl = String(b.path || '/').slice(0, 120);
   const forwarded = String(req.headers['x-forwarded-for'] || req.ip || '');
+  const proxyCountryHeader = String(
+    req.headers['cf-ipcountry'] ||
+      req.headers['x-vercel-ip-country'] ||
+      req.headers['x-country-code'] ||
+      req.headers['x-appengine-country'] ||
+      ''
+  ).trim();
 
   try {
-    const geo = await resolveVisitorGeo(forwarded, regionCode);
+    const geo = await resolveVisitorGeo(forwarded, regionCode, proxyCountryHeader);
     db.prepare(
       `INSERT INTO visitor_sessions (
         session_id, country, country_code, city, region_code, lat, lng, current_path, last_seen_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(session_id) DO UPDATE SET
+        country = excluded.country,
+        country_code = excluded.country_code,
+        city = excluded.city,
+        lat = excluded.lat,
+        lng = excluded.lng,
         region_code = excluded.region_code,
         current_path = excluded.current_path,
         last_seen_at = datetime('now')`
@@ -2256,7 +2271,11 @@ app.get('/api/admin/overview', requireStaffOrOwner, (_req, res) => {
   const totalMedia = (db.prepare('SELECT COUNT(*) AS c FROM media').get() as { c: number }).c;
   const pendingB2B = (db.prepare(`SELECT COUNT(*) AS c FROM b2b_inquiries WHERE status = 'new'`).get() as { c: number }).c;
   const activeVisitorsCount = (
-    db.prepare(`SELECT COUNT(*) AS c FROM visitor_sessions`).get() as { c: number }
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM visitor_sessions WHERE datetime(last_seen_at) >= datetime('now', '-10 minutes')`
+      )
+      .get() as { c: number }
   ).c;
 
   const toUsdRate: Record<RegionCode, number> = {
@@ -2532,6 +2551,153 @@ app.get('/api/admin/orders', requirePermission('manage_orders'), (_req, res) => 
       items: JSON.parse(String(r.items_json)),
     })),
   });
+});
+
+app.patch('/api/admin/orders/bulk', requirePermission('manage_orders'), async (req: AuthedRequest, res) => {
+  const rawIds = Array.isArray(req.body?.orderIds) ? req.body.orderIds : [];
+  const orderIds: number[] = Array.from(
+    new Set(rawIds.map((v: unknown) => Number(v)).filter((n: number) => Number.isInteger(n) && n > 0))
+  );
+  if (orderIds.length === 0) {
+    res.status(400).json({ error: 'Select at least one order for bulk update.' });
+    return;
+  }
+
+  const nextOrderStatusRaw = req.body?.order_status ? String(req.body.order_status).trim() : '';
+  const nextPayStatusRaw = req.body?.payment_status ? String(req.body.payment_status).trim() : '';
+  const allowedOrderStatuses = new Set(['pending', 'processing', 'tailoring', 'shipped', 'delivered', 'cancelled']);
+  const allowedPayStatuses = new Set(['pending', 'awaiting_transfer', 'paid', 'refunded']);
+
+  if (nextOrderStatusRaw && !allowedOrderStatuses.has(nextOrderStatusRaw)) {
+    res.status(400).json({ error: 'Invalid order_status.' });
+    return;
+  }
+  if (nextPayStatusRaw && !allowedPayStatuses.has(nextPayStatusRaw)) {
+    res.status(400).json({ error: 'Invalid payment_status.' });
+    return;
+  }
+  if (!nextOrderStatusRaw && !nextPayStatusRaw) {
+    res.status(400).json({ error: 'Provide order_status or payment_status to update.' });
+    return;
+  }
+
+  const placeholders = orderIds.map(() => '?').join(', ');
+  const existingRows = db
+    .prepare(`SELECT * FROM orders WHERE id IN (${placeholders})`)
+    .all(...orderIds) as Array<Record<string, unknown>>;
+
+  const transitionedForEmail: Array<{ id: number; order_status: string }> = [];
+  let updatedCount = 0;
+
+  db.transaction(() => {
+    for (const existing of existingRows) {
+      const id = Number(existing.id);
+      const paymentStatus = nextPayStatusRaw || String(existing.payment_status);
+      const orderStatus = nextOrderStatusRaw || String(existing.order_status);
+      const shouldRestock = orderStatus === 'cancelled' && existing.order_status !== 'cancelled';
+
+      db.prepare('UPDATE orders SET payment_status = ?, order_status = ? WHERE id = ?').run(
+        paymentStatus,
+        orderStatus,
+        id
+      );
+
+      if (shouldRestock) {
+        const regionCode = parseRegion(existing.region_code);
+        const stockCol = `stock_${regionCode}`;
+        let orderItems: Array<{ productId: number; sku: string; quantity: number; tailoring?: BespokeTailoring }> = [];
+        try {
+          orderItems = JSON.parse(String(existing.items_json || '[]'));
+        } catch {
+          orderItems = [];
+        }
+        for (const item of orderItems) {
+          const pid = Number(item.productId);
+          const qty = Math.max(1, Number(item.quantity || 1));
+          const locRow = db
+            .prepare('SELECT stock_qty FROM product_localizations WHERE product_id = ? AND region_code = ?')
+            .get(pid, regionCode) as { stock_qty: number } | undefined;
+          if (locRow) {
+            const nextQty = locRow.stock_qty + qty;
+            db.prepare('UPDATE product_localizations SET stock_qty = ? WHERE product_id = ? AND region_code = ?').run(
+              nextQty,
+              pid,
+              regionCode
+            );
+            db.prepare(
+              `INSERT INTO stock_movements (
+                product_id, sku, variant_label, region_code, delta_qty, previous_qty, new_qty, reason, reference_id, actor_email
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, 'order_cancelled_restock', ?, ?)`
+            ).run(
+              pid,
+              String(item.sku || `PRD-${pid}`),
+              item.tailoring ? `${item.tailoring.fit} · ${item.tailoring.size}` : null,
+              regionCode,
+              qty,
+              locRow.stock_qty,
+              nextQty,
+              String(existing.order_number),
+              req.authUser?.email || 'staff'
+            );
+          }
+          if (item.tailoring?.fit && item.tailoring?.size) {
+            db.prepare(
+              `UPDATE product_variants SET ${stockCol} = ${stockCol} + ? WHERE product_id = ? AND fit = ? AND size_label = ?`
+            ).run(qty, pid, item.tailoring.fit, item.tailoring.size);
+          }
+        }
+      }
+
+      if ((orderStatus === 'shipped' || orderStatus === 'delivered') && existing.order_status !== orderStatus) {
+        transitionedForEmail.push({ id, order_status: orderStatus });
+      }
+      updatedCount++;
+    }
+  })();
+
+  for (const item of transitionedForEmail) {
+    const updatedRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(item.id) as Record<string, unknown> | undefined;
+    if (!updatedRow) continue;
+    const reg = getRegionByCode(parseRegion(updatedRow.region_code));
+    if (!reg) continue;
+    const hydrated = {
+      ...updatedRow,
+      is_b2b: Boolean(updatedRow.is_b2b),
+      items: JSON.parse(String(updatedRow.items_json || '[]')),
+    };
+    if (item.order_status === 'shipped') {
+      await dispatchLocalizedOrderEmail({
+        type: 'shipping_tracking',
+        order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
+        region: reg,
+      }).catch(() => {});
+    } else if (item.order_status === 'delivered') {
+      const reviewLinks = createOrGetReviewInvitesForOrder({
+        orderNumber: String(updatedRow.order_number),
+        regionCode: reg.code,
+        customerEmail: String(updatedRow.customer_email),
+        customerName: String(updatedRow.customer_name),
+        items: hydrated.items,
+        origin: resolveRequestOrigin(req),
+      });
+      await dispatchLocalizedOrderEmail({
+        type: 'review_request',
+        order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
+        region: reg,
+        reviewLinks,
+      }).catch(() => {});
+    }
+  }
+
+  if (req.authUser) {
+    logAudit(
+      req.authUser,
+      'ORDERS_BULK_UPDATED',
+      `${updatedCount} orders`,
+      `${nextOrderStatusRaw ? `Status: ${nextOrderStatusRaw} ` : ''}${nextPayStatusRaw ? `Payment: ${nextPayStatusRaw}` : ''}`.trim()
+    );
+  }
+  res.json({ ok: true, updatedCount });
 });
 
 app.patch('/api/admin/orders/:id', requirePermission('manage_orders'), async (req: AuthedRequest, res) => {
@@ -3426,8 +3592,8 @@ app.post('/api/admin/import/products', requireStaffOrOwner, (req: AuthedRequest,
   res.json({ ok: true, updatedCount, skippedCount });
 });
 
-// Full WooCommerce CSV Product + Hierarchical Category + Multi-Region Importer
-app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedRequest, res) => {
+// Full WooCommerce CSV Product + Variations + Hierarchical Category + Multi-Language Rewriter
+app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: AuthedRequest, res) => {
   const user = req.authUser!;
   if (!hasPermission(user, 'manage_products')) {
     res.status(403).json({ error: 'Product import requires manage_products permission.' });
@@ -3435,6 +3601,7 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
   }
 
   const baseRegion = parseRegion(req.body?.baseRegion || 'en');
+  const translateLanguages = req.body?.translateLanguages !== false;
   let rows: WooProductImportRow[] = [];
   let parseErrors: string[] = [];
 
@@ -3456,13 +3623,141 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
     return;
   }
 
+  // Prepare localized copies (EN, NO, IT, VN) using Gemini AI when configured, falling back to deterministic multi-language builder
+  const resolvedTranslationsMap = new Map<
+    number,
+    Record<RegionCode, { title: string; subtitle: string; description: string }>
+  >();
+
+  let translatedWithAi = false;
+  const aiSettings = getAiSettingsInternal();
+  const geminiKey = getResolvedSecret('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || process.env.API_KEY;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const deterministic = buildDeterministicMultilingualCopy({
+      title: row.title,
+      shortDescription: row.shortDescription,
+      description: row.description,
+      fabricSpec: row.fabricSpec,
+      sourceRegion: parseRegion(row.sourceRegion || baseRegion),
+    });
+    if (row.translations) {
+      resolvedTranslationsMap.set(i, {
+        en: row.translations.en || deterministic.en,
+        no: row.translations.no || deterministic.no,
+        it: row.translations.it || deterministic.it,
+        vn: row.translations.vn || deterministic.vn,
+      });
+    } else {
+      resolvedTranslationsMap.set(i, deterministic);
+    }
+  }
+
+  if (translateLanguages && geminiKey && rows.length <= 25) {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        apiVersion: 'v1beta',
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+      const promptItems = rows.map((r, idx) => ({
+        index: idx,
+        title: r.title,
+        shortDescription: r.shortDescription,
+        description: r.description,
+        fabricSpec: r.fabricSpec,
+      }));
+      const modelId = aiSettings.geminiModel || 'gemini-4-hydrogen';
+      const resp = await ai.models.generateContent({
+        model: modelId,
+        contents: `Rewrite and localize these luxury menswear shirt product descriptions from Monte Napoleone 1974 into refined, natural English (en), Norwegian Bokmal (no), Italian (it), and Vietnamese (vn). Preserve fabric details accurately.\nInput JSON:\n${JSON.stringify(promptItems)}`,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                index: { type: Type.INTEGER },
+                en: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    subtitle: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                  },
+                  required: ['title', 'subtitle', 'description'],
+                },
+                no: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    subtitle: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                  },
+                  required: ['title', 'subtitle', 'description'],
+                },
+                it: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    subtitle: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                  },
+                  required: ['title', 'subtitle', 'description'],
+                },
+                vn: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    subtitle: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                  },
+                  required: ['title', 'subtitle', 'description'],
+                },
+              },
+              required: ['index', 'en', 'no', 'it', 'vn'],
+            },
+          },
+        },
+      });
+      const textOut = resp.text;
+      if (textOut) {
+        const parsedArr = JSON.parse(textOut) as Array<{
+          index: number;
+          en: { title: string; subtitle: string; description: string };
+          no: { title: string; subtitle: string; description: string };
+          it: { title: string; subtitle: string; description: string };
+          vn: { title: string; subtitle: string; description: string };
+        }>;
+        for (const item of parsedArr) {
+          if (typeof item.index === 'number' && resolvedTranslationsMap.has(item.index)) {
+            resolvedTranslationsMap.set(item.index, {
+              en: item.en,
+              no: item.no,
+              it: item.it,
+              vn: item.vn,
+            });
+          }
+        }
+        translatedWithAi = parsedArr.length > 0;
+      }
+    } catch {
+      // Deterministic translations already populated cleanly
+    }
+  }
+
   let createdProducts = 0;
   let updatedProducts = 0;
   let createdCategories = 0;
+  let variantsSynced = 0;
 
-  const ensureCategoryChain = (chain: string[]): string => {
+  const ensureCategoryChain = (chain: string[]): { leafSlug: string; chainSlugs: string[] } => {
     let parentId: number | null = null;
     let leafSlug = 'business';
+    const chainSlugs: string[] = [];
     for (const rawName of chain) {
       const slug = slugifyCategoryName(rawName);
       if (!slug) continue;
@@ -3483,26 +3778,32 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
         leafSlug = slug;
         createdCategories++;
       }
+      if (!chainSlugs.includes(slug)) chainSlugs.push(slug);
     }
-    return leafSlug;
+    return { leafSlug, chainSlugs };
   };
 
   const tx = db.transaction(() => {
-    for (const row of rows) {
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
       const rawPaths = Array.isArray(row.categoryPaths) ? row.categoryPaths.filter(Boolean) : [];
-      const collectedCatSlugs: string[] = [];
+      const collectedLeafSlugs: string[] = [];
+      const collectedAllSlugs: string[] = [];
       for (const pathStr of rawPaths) {
         const chain = String(pathStr)
           .split('>')
           .map((s) => s.trim())
           .filter(Boolean);
         if (chain.length > 0) {
-          const leaf = ensureCategoryChain(chain);
-          if (leaf && !collectedCatSlugs.includes(leaf)) collectedCatSlugs.push(leaf);
+          const { leafSlug, chainSlugs } = ensureCategoryChain(chain);
+          if (leafSlug && !collectedLeafSlugs.includes(leafSlug)) collectedLeafSlugs.push(leafSlug);
+          for (const cs of chainSlugs) {
+            if (!collectedAllSlugs.includes(cs)) collectedAllSlugs.push(cs);
+          }
         }
       }
-      const leafCategorySlug = collectedCatSlugs[0] || 'business';
-      const allCategorySlugs = collectedCatSlugs.length > 0 ? collectedCatSlugs : [leafCategorySlug];
+      const leafCategorySlug = collectedLeafSlugs[0] || 'business';
+      const allCategorySlugs = collectedAllSlugs.length > 0 ? collectedAllSlugs : [leafCategorySlug];
       const sourceRc = parseRegion(row.sourceRegion || baseRegion);
       const basePrice = row.salePrice && row.salePrice > 0 ? row.salePrice : row.regularPrice;
       const compareAt = row.salePrice && row.salePrice > 0 && row.regularPrice > row.salePrice ? row.regularPrice : null;
@@ -3512,14 +3813,20 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
       const primaryImg = row.images?.[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
       const secondaryImg = row.images?.[1] || primaryImg;
       const galleryArr = row.images && row.images.length > 0 ? row.images : [primaryImg];
-      const sizes = ['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL'];
+      const sizes =
+        Array.isArray(row.sizes) && row.sizes.length > 0
+          ? row.sizes
+          : ['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL'];
       const stockQty = Math.max(0, Number(row.stockQty || 0));
+      const locCopies = resolvedTranslationsMap.get(idx)!;
 
       const existing = db.prepare('SELECT id FROM products WHERE sku = ?').get(row.sku) as
         | { id: number }
         | undefined;
 
+      let productId: number;
       if (existing) {
+        productId = existing.id;
         db.prepare(
           `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?, active = 1
            WHERE id = ?`
@@ -3531,31 +3838,42 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
           secondaryImg,
           JSON.stringify(galleryArr),
           JSON.stringify(sizes),
-          existing.id
+          productId
         );
 
         for (const rc of ['en', 'no', 'it', 'vn'] as const) {
+          const lc = locCopies[rc];
+          const seoTitle = `${lc.title} | Monte Napoleone 1974`.slice(0, 68);
+          const seoDesc = lc.description.slice(0, 156);
+          const seoKeywords = `${lc.title}, ${row.fabricSpec || 'Italian shirt'}, Monte Napoleone 1974`;
           db.prepare(
             `INSERT INTO product_localizations (
-              product_id, region_code, title, subtitle, description, price, compare_at_price, stock_qty, warehouse_location, delivery_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              product_id, region_code, title, subtitle, description, price, compare_at_price, stock_qty, warehouse_location, delivery_note, seo_title, seo_description, seo_keywords
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(product_id, region_code) DO UPDATE SET
               title = excluded.title,
+              subtitle = excluded.subtitle,
               description = excluded.description,
               price = excluded.price,
               compare_at_price = excluded.compare_at_price,
-              stock_qty = excluded.stock_qty`
+              stock_qty = excluded.stock_qty,
+              seo_title = excluded.seo_title,
+              seo_description = excluded.seo_description,
+              seo_keywords = excluded.seo_keywords`
           ).run(
-            existing.id,
+            productId,
             rc,
-            row.title,
-            row.shortDescription || 'Imported Italian Shirting',
-            row.description || row.shortDescription || 'Tailored Italian shirting from Treviso.',
+            lc.title,
+            lc.subtitle || 'Imported Italian Shirting',
+            lc.description,
             regionPrices[rc],
             regionCompare ? regionCompare[rc] : null,
             stockQty,
             rc === 'no' ? 'Oslo Hub' : rc === 'vn' ? 'HCMC Hub' : 'Treviso HQ',
-            'Ships via DHL Express'
+            'Ships via DHL Express',
+            seoTitle,
+            seoDesc,
+            seoKeywords
           );
         }
         updatedProducts++;
@@ -3583,35 +3901,101 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
             JSON.stringify(sizes)
           );
 
-        const productId = Number(info.lastInsertRowid);
+        productId = Number(info.lastInsertRowid);
         for (const rc of ['en', 'no', 'it', 'vn'] as const) {
+          const lc = locCopies[rc];
+          const seoTitle = `${lc.title} | Monte Napoleone 1974`.slice(0, 68);
+          const seoDesc = lc.description.slice(0, 156);
+          const seoKeywords = `${lc.title}, ${row.fabricSpec || 'Italian shirt'}, Monte Napoleone 1974`;
           db.prepare(
             `INSERT INTO product_localizations (
-              product_id, region_code, title, subtitle, description, price, compare_at_price, stock_qty, warehouse_location, delivery_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              product_id, region_code, title, subtitle, description, price, compare_at_price, stock_qty, warehouse_location, delivery_note, seo_title, seo_description, seo_keywords
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             productId,
             rc,
-            row.title,
-            row.shortDescription || 'Imported Italian Shirting',
-            row.description || row.shortDescription || 'Tailored Italian shirting from Treviso.',
+            lc.title,
+            lc.subtitle || 'Imported Italian Shirting',
+            lc.description,
             regionPrices[rc],
             regionCompare ? regionCompare[rc] : null,
             stockQty,
             rc === 'no' ? 'Oslo Hub' : rc === 'vn' ? 'HCMC Hub' : 'Treviso HQ',
-            'Ships via DHL Express'
+            'Ships via DHL Express',
+            seoTitle,
+            seoDesc,
+            seoKeywords
           );
         }
-
-        for (const sz of sizes) {
-          const num = (sz.match(/\d{2}/) || ['40'])[0];
-          db.prepare(
-            `INSERT OR IGNORE INTO product_variants (
-              product_id, fit, size_label, sku_variant, stock_en, stock_no, stock_it, stock_vn, active
-            ) VALUES (?, 'Regular Fit', ?, ?, ?, ?, ?, ?, 1)`
-          ).run(productId, sz, `${row.sku}-REG-${num}`, stockQty, stockQty, stockQty, stockQty);
-        }
         createdProducts++;
+      }
+
+      // Sync WooCommerce variations (or generate from parsed fits & sizes)
+      const upsertVar = db.prepare(
+        `INSERT INTO product_variants (
+          product_id, fit, size_label, sku_variant, price_en, price_no, price_it, price_vn,
+          stock_en, stock_no, stock_it, stock_vn, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(product_id, fit, size_label) DO UPDATE SET
+          sku_variant = excluded.sku_variant,
+          price_en = excluded.price_en,
+          price_no = excluded.price_no,
+          price_it = excluded.price_it,
+          price_vn = excluded.price_vn,
+          stock_en = excluded.stock_en,
+          stock_no = excluded.stock_no,
+          stock_it = excluded.stock_it,
+          stock_vn = excluded.stock_vn,
+          active = 1`
+      );
+
+      if (Array.isArray(row.variations) && row.variations.length > 0) {
+        for (const v of row.variations) {
+          const varBase = v.salePrice && v.salePrice > 0 ? v.salePrice : v.regularPrice;
+          const vPrices = varBase > 0 ? convertBasePriceAcrossRegions(varBase, sourceRc) : regionPrices;
+          const vStock = Math.max(0, Number(v.stockQty || 0));
+          upsertVar.run(
+            productId,
+            v.fit || 'Regular Fit',
+            v.sizeLabel || sizes[0],
+            v.skuVariant || `${row.sku}-${slugifyCategoryName(v.sizeLabel || 'M').toUpperCase()}`,
+            vPrices.en,
+            vPrices.no,
+            vPrices.it,
+            vPrices.vn,
+            vStock,
+            vStock,
+            vStock,
+            vStock
+          );
+          variantsSynced++;
+        }
+      } else {
+        const fitList =
+          Array.isArray(row.fits) && row.fits.length > 0
+            ? row.fits
+            : (['Regular Fit'] as const);
+        for (const fit of fitList) {
+          for (const sz of sizes) {
+            const num = (sz.match(/\d{2}/) || [slugifyCategoryName(sz).toUpperCase()])[0];
+            const fitTag = fit === 'Slim Fit' ? 'SLM' : fit === 'Contemporary Fit' ? 'CTM' : 'REG';
+            upsertVar.run(
+              productId,
+              fit,
+              sz,
+              `${row.sku}-${fitTag}-${num}`,
+              regionPrices.en,
+              regionPrices.no,
+              regionPrices.it,
+              regionPrices.vn,
+              stockQty,
+              stockQty,
+              stockQty,
+              stockQty
+            );
+            variantsSynced++;
+          }
+        }
       }
     }
   });
@@ -3621,7 +4005,7 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
     user,
     'WOOCOMMERCE_CSV_IMPORTED',
     `${rows.length} SKUs`,
-    `Created ${createdProducts}, updated ${updatedProducts}, new categories ${createdCategories}`
+    `Created ${createdProducts}, updated ${updatedProducts}, categories ${createdCategories}, variants ${variantsSynced}${translatedWithAi ? ' (AI multilingual)' : ''}`
   );
   res.json({
     ok: true,
@@ -3629,6 +4013,8 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, (req: AuthedReque
     createdCount: createdProducts,
     updatedCount: updatedProducts,
     categoriesCreated: createdCategories,
+    variantsSynced,
+    translatedWithAi,
     createdProducts,
     updatedProducts,
     createdCategories,
@@ -4097,6 +4483,81 @@ app.post('/api/admin/tailoring-options/sync-products', requireStaffOrOwner, (req
   res.json({ ok: true, updatedProducts: info.changes });
 });
 
+app.patch('/api/admin/tailoring-options/bulk', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions to bulk save collar/cuff options.' });
+    return;
+  }
+
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (items.length === 0) {
+    res.status(400).json({ error: 'Provide items array to save.' });
+    return;
+  }
+
+  let updatedCount = 0;
+  try {
+    db.transaction(() => {
+      const updateStmt = db.prepare(
+        `UPDATE tailoring_options
+         SET name = ?, subtitle = ?, detail = ?, stitch_spec = ?, image_url = ?, sort_order = ?, is_default = ?, active = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      );
+      const defaultWinners = new Map<string, number>();
+
+      for (const raw of items) {
+        const id = Number(raw?.id);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        const existing = db.prepare('SELECT * FROM tailoring_options WHERE id = ?').get(id) as
+          | Record<string, unknown>
+          | undefined;
+        if (!existing) continue;
+
+        const nextName = raw.name !== undefined ? String(raw.name).trim() || String(existing.name) : String(existing.name);
+        const nextSubtitle = raw.subtitle !== undefined ? String(raw.subtitle).trim() : String(existing.subtitle || '');
+        const nextDetail = raw.detail !== undefined ? String(raw.detail).trim() : String(existing.detail || '');
+        const nextStitch = raw.stitch_spec !== undefined ? String(raw.stitch_spec).trim() : String(existing.stitch_spec || '');
+        const nextImage = raw.image_url !== undefined ? String(raw.image_url).trim() : String(existing.image_url || '');
+        const nextSort = raw.sort_order !== undefined && Number.isFinite(Number(raw.sort_order))
+          ? Number(raw.sort_order)
+          : Number(existing.sort_order);
+        const nextActive = raw.active !== undefined ? (raw.active ? 1 : 0) : Number(existing.active);
+        const nextIsDefault = raw.is_default !== undefined ? (raw.is_default ? 1 : 0) : Number(existing.is_default);
+
+        updateStmt.run(
+          nextName,
+          nextSubtitle,
+          nextDetail,
+          nextStitch,
+          nextImage,
+          nextSort,
+          nextIsDefault,
+          nextActive,
+          id
+        );
+        if (nextIsDefault === 1) {
+          defaultWinners.set(String(existing.option_type), id);
+        }
+        updatedCount++;
+      }
+
+      for (const [optType, winnerId] of defaultWinners.entries()) {
+        db.prepare('UPDATE tailoring_options SET is_default = 0 WHERE option_type = ? AND id != ?').run(
+          optType,
+          winnerId
+        );
+        db.prepare('UPDATE tailoring_options SET is_default = 1 WHERE id = ?').run(winnerId);
+      }
+    })();
+
+    logAudit(user, 'TAILORING_OPTIONS_BULK_SAVED', `${updatedCount} items`, 'Atomic bulk studio update');
+    res.json({ ok: true, updatedCount, options: getTailoringOptions(true) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save collar & cuff options.' });
+  }
+});
+
 app.patch('/api/admin/tailoring-options/:id', requireStaffOrOwner, (req: AuthedRequest, res) => {
   const user = req.authUser!;
   if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
@@ -4358,14 +4819,51 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
   const visitorRows = db
     .prepare(
       `SELECT id, session_id, country, country_code, city, region_code, lat, lng, current_path, last_seen_at,
-              CASE WHEN datetime(last_seen_at) >= datetime('now', '-60 minutes') THEN 1 ELSE 0 END AS is_active
-       FROM visitor_sessions ORDER BY last_seen_at DESC LIMIT 60`
+              CASE WHEN datetime(last_seen_at) >= datetime('now', '-10 minutes') THEN 1 ELSE 0 END AS is_active
+       FROM visitor_sessions ORDER BY last_seen_at DESC LIMIT 100`
     )
     .all() as Array<Record<string, unknown>>;
   const visitorLocations = visitorRows.map((v) => ({
     ...v,
     is_active: Boolean(v.is_active),
   }));
+
+  const visitorCountryMap = new Map<
+    string,
+    VisitorCountryRollup & { _cities: Set<string> }
+  >();
+  for (const v of visitorLocations as Array<{
+    country?: unknown;
+    country_code?: unknown;
+    city?: unknown;
+    lat?: unknown;
+    lng?: unknown;
+    is_active?: boolean;
+  }>) {
+    const cc = String(v.country_code || 'US').toUpperCase();
+    const countryName = String(v.country || cc);
+    const cityName = String(v.city || '').trim();
+    const existing = visitorCountryMap.get(cc) || {
+      country: countryName,
+      country_code: cc,
+      lat: Number(v.lat || 0),
+      lng: Number(v.lng || 0),
+      active_count: 0,
+      total_count: 0,
+      sample_cities: [],
+      _cities: new Set<string>(),
+    };
+    existing.total_count++;
+    if (v.is_active) existing.active_count++;
+    if (cityName) existing._cities.add(cityName);
+    visitorCountryMap.set(cc, existing);
+  }
+  const byVisitorCountry: VisitorCountryRollup[] = Array.from(visitorCountryMap.values())
+    .map(({ _cities, ...rest }) => ({
+      ...rest,
+      sample_cities: Array.from(_cities).slice(0, 4),
+    }))
+    .sort((a, b) => b.active_count - a.active_count || b.total_count - a.total_count);
 
   res.json({
     byRegion: Array.from(byRegionMap.values()),
@@ -4380,7 +4878,8 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
     },
     byCountry: Array.from(countryMap.values()),
     visitorLocations,
-    activeVisitorsCount: visitorLocations.length,
+    byVisitorCountry,
+    activeVisitorsCount: visitorLocations.filter((v) => v.is_active).length,
     dailySeries: Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
     byCategory: Array.from(categoryMap.values()).sort((a, b) => b.units_sold - a.units_sold),
   });

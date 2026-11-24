@@ -1,4 +1,4 @@
-import type { CategoryRecord, Product, RegionCode, RegionConfig } from '../types.ts';
+import type { AdminTab, CategoryRecord, Product, RegionCode, RegionConfig } from '../types.ts';
 
 export type StorefrontView =
   | 'home'
@@ -15,9 +15,69 @@ export interface ParsedRoute {
   view: StorefrontView;
   category?: string;
   slug?: string;
+  adminTab?: AdminTab;
 }
 
 const VALID_REGIONS = new Set<RegionCode>(['en', 'no', 'it', 'vn']);
+
+const ADMIN_SLUG_TO_TAB: Record<string, AdminTab> = {
+  overview: 'overview',
+  products: 'products',
+  categories: 'categories',
+  variants: 'variants',
+  stock: 'stock',
+  tailoring: 'tailoring',
+  'collar-cuff': 'collar_cuff',
+  collar_cuff: 'collar_cuff',
+  menu: 'menu',
+  hero: 'hero',
+  promotions: 'promotions',
+  ai: 'ai',
+  orders: 'orders',
+  emails: 'emails',
+  reports: 'reports',
+  media: 'media',
+  b2b: 'b2b',
+  newsletter: 'newsletter',
+  staff: 'staff',
+  settings: 'settings',
+  credentials: 'credentials',
+  database: 'database',
+};
+
+const ADMIN_TAB_TO_SLUG: Record<AdminTab, string> = {
+  overview: 'overview',
+  products: 'products',
+  categories: 'categories',
+  variants: 'variants',
+  stock: 'stock',
+  tailoring: 'tailoring',
+  collar_cuff: 'collar-cuff',
+  menu: 'menu',
+  hero: 'hero',
+  promotions: 'promotions',
+  ai: 'ai',
+  orders: 'orders',
+  emails: 'emails',
+  reports: 'reports',
+  media: 'media',
+  b2b: 'b2b',
+  newsletter: 'newsletter',
+  staff: 'staff',
+  settings: 'settings',
+  credentials: 'credentials',
+  database: 'database',
+};
+
+export function parseAdminTabSegment(segment?: string | null): AdminTab {
+  if (!segment) return 'overview';
+  const clean = segment.trim().toLowerCase();
+  return ADMIN_SLUG_TO_TAB[clean] || 'overview';
+}
+
+export function adminTabToSlug(tab: AdminTab): string {
+  return ADMIN_TAB_TO_SLUG[tab] || 'overview';
+}
 
 export function isValidRegionCode(val: string | undefined | null): val is RegionCode {
   return Boolean(val && VALID_REGIONS.has(val.toLowerCase() as RegionCode));
@@ -84,7 +144,11 @@ export function parseStorefrontUrl(pathname: string): ParsedRoute {
   }
 
   if (head === 'admin' || head === 'staff-portal') {
-    return { region, view: 'admin' };
+    return {
+      region,
+      view: 'admin',
+      adminTab: parseAdminTabSegment(tail),
+    };
   }
 
   return { region, view: 'home' };
@@ -95,11 +159,14 @@ export function buildStorefrontPath(params: {
   view: StorefrontView;
   category?: string;
   slug?: string | null;
+  adminTab?: AdminTab;
 }): string {
   const rc = params.regionCode || 'en';
   switch (params.view) {
     case 'admin':
-      return '/admin';
+      return params.adminTab && params.adminTab !== 'overview'
+        ? `/admin/${adminTabToSlug(params.adminTab)}`
+        : '/admin';
     case 'catalog': {
       const cat = (params.category || 'all').trim();
       return cat && cat !== 'all' ? `/${rc}/shop/${encodeURIComponent(cat)}` : `/${rc}/shop`;

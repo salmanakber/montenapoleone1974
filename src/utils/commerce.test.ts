@@ -30,6 +30,7 @@ import {
   resolveOrderedTailoringOptions,
   isTopBannerVisibleOnViewport,
   DEFAULT_TOP_BANNER_SETTINGS,
+  buildDeterministicMultilingualCopy,
 } from './commerce.ts';
 import {
   buildRobotsTxt,
@@ -839,6 +840,78 @@ test('builds localized post-purchase review_request email templates with direct 
   assert.match(email.html, /reviewToken=abc123/);
   assert.match(email.html, /BEIGE Linskjorte #L3/);
 });
+
+test('parses WooCommerce variable + variation rows, sizes, fits, HTML stripping, and generates EN/NO/IT/VN copy', () => {
+  const wooVariableCsv = [
+    'ID,Type,SKU,Name,Published,Short description,Description,"Regular price","Sale price",Categories,Images,Stock,Parent,"Attribute 1 name","Attribute 1 value(s)","Attribute 2 name","Attribute 2 value(s)"',
+    '501,variable,MN-WOO-VAR,"Milano Twill Classic",1,"<p>Crisp <strong>Italian</strong> twill</p>","Two-ply Egyptian cotton woven in Como.",210,185,"Business > Non-Iron Shirts","/img/twill-1.jpg, /img/twill-2.jpg",,,Size,"38 / S, 40 / M, 42 / L",Fit,"Slim Fit, Regular Fit"',
+    '502,variation,MN-WOO-VAR-38S,"Milano Twill - 38",1,"","",210,185,"",,12,MN-WOO-VAR,Size,"38 / S",Fit,"Slim Fit"',
+    '503,variation,MN-WOO-VAR-40R,"Milano Twill - 40",1,"","",220,195,"",,9,501,Size,"40 / M",Fit,"Regular Fit"',
+  ].join('\n');
+
+  assert.equal(isWooCommerceCsvHeader(wooVariableCsv), true);
+  const parsed = parseWooCommerceCsv(wooVariableCsv, 'en');
+  assert.equal(parsed.errors.length, 0);
+  assert.equal(parsed.rows.length, 1);
+
+  const parent = parsed.rows[0];
+  assert.equal(parent.productType, 'variable');
+  assert.equal(parent.shortDescription, 'Crisp Italian twill');
+  assert.equal(parent.stockQty, 21);
+  assert.equal(parent.salePrice, 185);
+  assert.deepEqual(parent.sizes, ['38 / S', '40 / M', '42 / L']);
+  assert.deepEqual(parent.fits, ['Slim Fit', 'Regular Fit']);
+  assert.equal(parent.variations?.length, 2);
+  assert.equal(parent.variations?.[0].skuVariant, 'MN-WOO-VAR-38S');
+  assert.equal(parent.variations?.[0].sizeLabel, '38 / S');
+  assert.equal(parent.variations?.[0].fit, 'Slim Fit');
+  assert.equal(parent.variations?.[1].regularPrice, 220);
+
+  const multiCopy = buildDeterministicMultilingualCopy({
+    title: parent.title,
+    shortDescription: parent.shortDescription,
+    description: parent.description,
+    fabricSpec: '100% Two-Ply Cotton',
+    sourceRegion: 'en',
+  });
+  assert.match(multiCopy.no.description, /Skreddersydd i Treviso/);
+  assert.match(multiCopy.it.description, /Camicia sartoriale realizzata a Treviso/);
+  assert.match(multiCopy.vn.description, /Áo sơ mi may đo thủ công tại Treviso/);
+});
+
+test('parses and builds /admin/<tab> routes cleanly for deep-linking and back navigation', () => {
+  assert.deepEqual(parseStorefrontUrl('/admin'), {
+    region: undefined,
+    view: 'admin',
+    adminTab: 'overview',
+  });
+  assert.deepEqual(parseStorefrontUrl('/admin/collar-cuff'), {
+    region: undefined,
+    view: 'admin',
+    adminTab: 'collar_cuff',
+  });
+  assert.deepEqual(parseStorefrontUrl('/no/admin/orders'), {
+    region: 'no',
+    view: 'admin',
+    adminTab: 'orders',
+  });
+  assert.deepEqual(parseStorefrontUrl('/admin/reports'), {
+    region: undefined,
+    view: 'admin',
+    adminTab: 'reports',
+  });
+
+  assert.equal(buildStorefrontPath({ regionCode: 'en', view: 'admin', adminTab: 'overview' }), '/admin');
+  assert.equal(
+    buildStorefrontPath({ regionCode: 'en', view: 'admin', adminTab: 'collar_cuff' }),
+    '/admin/collar-cuff'
+  );
+  assert.equal(
+    buildStorefrontPath({ regionCode: 'no', view: 'admin', adminTab: 'orders' }),
+    '/admin/orders'
+  );
+});
+
 
 
 

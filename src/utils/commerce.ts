@@ -16,6 +16,8 @@ import type {
   StaffPermissions,
   TailoringSizeSpec,
   TopBannerSettings,
+  WooProductImportRow,
+  WooProductVariationImportRow,
 } from '../types.ts';
 
 export const DEFAULT_TOP_BANNER_SETTINGS: TopBannerSettings = {
@@ -743,13 +745,117 @@ function parseFullCsvTable(csvText: string): string[][] {
   return rows;
 }
 
+function stripWooHtml(raw: string): string {
+  return (raw || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeWooFit(raw: string): 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit' {
+  const s = (raw || '').toLowerCase();
+  if (s.includes('slim')) return 'Slim Fit';
+  if (s.includes('contemp') || s.includes('modern')) return 'Contemporary Fit';
+  return 'Regular Fit';
+}
+
+function normalizeWooSizeLabel(raw: string): string {
+  const clean = (raw || '').trim();
+  if (!clean) return '40 / M';
+  // Preserve "S / 38" or "38 / S" style; expand bare numbers if common Italian shirt neck sizes
+  const numericOnly = clean.match(/^(\d{2})$/);
+  if (numericOnly) {
+    const map: Record<string, string> = {
+      '36': '36 / XS',
+      '37': '37 / S',
+      '38': '38 / S',
+      '39': '39 / M',
+      '40': '40 / M',
+      '41': '41 / L',
+      '42': '42 / L',
+      '43': '43 / XL',
+      '44': '44 / XL',
+      '45': '45 / 2XL',
+      '46': '46 / 2XL',
+      '48': '48 / 3XL',
+    };
+    return map[numericOnly[1]] || clean;
+  }
+  return clean;
+}
+
+export function buildDeterministicMultilingualCopy(input: {
+  title: string;
+  shortDescription: string;
+  description: string;
+  fabricSpec: string;
+  sourceRegion: RegionCode;
+}): Record<RegionCode, { title: string; subtitle: string; description: string }> {
+  const cleanTitle = (input.title || 'Italian Signature Shirt').trim();
+  const cleanDesc = stripWooHtml(input.description || input.shortDescription);
+  const cleanShort = stripWooHtml(input.shortDescription);
+  const fabric = (input.fabricSpec || '100% Italian Two-Ply Cotton').trim();
+
+  const enDesc =
+    cleanDesc ||
+    `Tailored in Treviso from ${fabric}. Crafted with complimentary sleeve & shirt length adjustments and crisp mother-of-pearl buttons.`;
+  const noDesc =
+    input.sourceRegion === 'no' && cleanDesc
+      ? cleanDesc
+      : `Skreddersydd i Treviso av ${fabric}. Leveres med kostnadsfri erme- og skjortelengdetilpasning og perlemorknapper. (${enDesc.slice(0, 140)})`;
+  const itDesc =
+    input.sourceRegion === 'it' && cleanDesc
+      ? cleanDesc
+      : `Camicia sartoriale realizzata a Treviso in ${fabric}. Lunghezza maniche e busto su misura inclusa con bottoni in madreperla. (${enDesc.slice(0, 140)})`;
+  const vnDesc =
+    input.sourceRegion === 'vn' && cleanDesc
+      ? cleanDesc
+      : `Áo sơ mi may đo thủ công tại Treviso từ chất liệu ${fabric}. Miễn phí điều chỉnh chiều dài tay và thân áo cùng khuy ngọc trai cao cấp. (${enDesc.slice(0, 140)})`;
+
+  return {
+    en: {
+      title: cleanTitle,
+      subtitle: cleanShort || fabric,
+      description: enDesc,
+    },
+    no: {
+      title: cleanTitle,
+      subtitle: cleanShort || fabric,
+      description: noDesc,
+    },
+    it: {
+      title: cleanTitle,
+      subtitle: cleanShort || fabric,
+      description: itDesc,
+    },
+    vn: {
+      title: cleanTitle,
+      subtitle: cleanShort || fabric,
+      description: vnDesc,
+    },
+  };
+}
+
 export function isWooCommerceCsvHeader(csvText: string): boolean {
   const table = parseFullCsvTable(csvText);
   if (table.length === 0) return false;
   const headers = table[0].map((h) => h.toLowerCase());
   return (
-    headers.includes('name') &&
-    (headers.includes('regular price') || headers.includes('categories') || headers.includes('images'))
+    (headers.includes('name') || headers.includes('post_title')) &&
+    (headers.includes('regular price') ||
+      headers.includes('regular_price') ||
+      headers.includes('categories') ||
+      headers.includes('images') ||
+      headers.includes('parent') ||
+      headers.includes('type'))
   );
 }
 
@@ -757,20 +863,7 @@ export function parseWooCommerceCsv(
   csvText: string,
   sourceRegion: RegionCode = 'en'
 ): {
-  rows: Array<{
-    sku: string;
-    title: string;
-    shortDescription: string;
-    description: string;
-    regularPrice: number;
-    salePrice: number | null;
-    stockQty: number;
-    categoryPaths: string[];
-    images: string[];
-    fabricSpec: string;
-    published: boolean;
-    sourceRegion: RegionCode;
-  }>;
+  rows: WooProductImportRow[];
   categories: Array<{ slug: string; name: string; parentSlug: string | null }>;
   errors: string[];
 } {
@@ -783,7 +876,7 @@ export function parseWooCommerceCsv(
     };
   }
 
-  const headers = table[0].map((h) => h.toLowerCase());
+  const headers = table[0].map((h) => h.toLowerCase().trim());
   const col = (...names: string[]) => {
     for (const n of names) {
       const i = headers.indexOf(n);
@@ -792,7 +885,10 @@ export function parseWooCommerceCsv(
     return -1;
   };
 
+  const idIdx = col('id');
+  const typeIdx = col('type');
   const skuIdx = col('sku', 'id');
+  const parentIdx = col('parent');
   const nameIdx = col('name', 'post_title', 'title');
   const regularPriceIdx = col('regular price', 'regular_price', 'price');
   const salePriceIdx = col('sale price', 'sale_price');
@@ -802,8 +898,6 @@ export function parseWooCommerceCsv(
   const descIdx = col('description', 'post_content');
   const shortDescIdx = col('short description', 'post_excerpt', 'short_description');
   const publishedIdx = col('published');
-  const attr1NameIdx = col('attribute 1 name');
-  const attr1ValIdx = col('attribute 1 value(s)', 'attribute 1 values');
 
   if (nameIdx === -1) {
     return {
@@ -813,40 +907,116 @@ export function parseWooCommerceCsv(
     };
   }
 
-  const rows: Array<{
-    sku: string;
-    title: string;
-    shortDescription: string;
-    description: string;
-    regularPrice: number;
-    salePrice: number | null;
-    stockQty: number;
-    categoryPaths: string[];
-    images: string[];
-    fabricSpec: string;
-    published: boolean;
-    sourceRegion: RegionCode;
-  }> = [];
+  // Detect Attribute 1..6 name & value(s) columns
+  const attrCols: Array<{ nameIdx: number; valIdx: number }> = [];
+  for (let n = 1; n <= 8; n++) {
+    const aName = col(`attribute ${n} name`, `attribute:${n} name`, `attribute_${n}_name`);
+    const aVal = col(
+      `attribute ${n} value(s)`,
+      `attribute ${n} values`,
+      `attribute ${n} value`,
+      `attribute:${n} value(s)`,
+      `attribute_${n}_value`
+    );
+    if (aName !== -1 || aVal !== -1) {
+      attrCols.push({ nameIdx: aName, valIdx: aVal });
+    }
+  }
+
   const categoryMap = new Map<string, { slug: string; name: string; parentSlug: string | null }>();
   const errors: string[] = [];
 
+  interface ParentEntry {
+    wooId: string;
+    row: WooProductImportRow;
+  }
+
+  const parents: ParentEntry[] = [];
+  const parentById = new Map<string, ParentEntry>();
+  const parentBySku = new Map<string, ParentEntry>();
+  const pendingVariations: Array<{ rowNum: number; cells: string[] }> = [];
+
+  const extractAttributes = (cells: string[]) => {
+    const sizes: string[] = [];
+    const fits: Array<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'> = [];
+    const fabricParts: string[] = [];
+
+    for (const pair of attrCols) {
+      const aName = pair.nameIdx !== -1 ? (cells[pair.nameIdx] || '').trim() : '';
+      const aValRaw = pair.valIdx !== -1 ? (cells[pair.valIdx] || '').trim() : '';
+      if (!aValRaw) continue;
+      const lowerName = aName.toLowerCase();
+      const parts = aValRaw
+        .split(/[,|]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      if (
+        lowerName.includes('size') ||
+        lowerName.includes('størrelse') ||
+        lowerName.includes('taglia') ||
+        lowerName.includes('kích') ||
+        lowerName.includes('collar') ||
+        lowerName.includes('neck')
+      ) {
+        for (const p of parts) {
+          const norm = normalizeWooSizeLabel(p);
+          if (!sizes.includes(norm)) sizes.push(norm);
+        }
+      } else if (
+        lowerName.includes('fit') ||
+        lowerName.includes('passform') ||
+        lowerName.includes('vestibilit')
+      ) {
+        for (const p of parts) {
+          const nf = normalizeWooFit(p);
+          if (!fits.includes(nf)) fits.push(nf);
+        }
+      } else if (
+        lowerName.includes('fabric') ||
+        lowerName.includes('material') ||
+        lowerName.includes('stoff') ||
+        lowerName.includes('tessuto') ||
+        lowerName.includes('cotton') ||
+        lowerName.includes('linen')
+      ) {
+        fabricParts.push(parts.join(', '));
+      } else if (!lowerName && parts.length > 0) {
+        fabricParts.push(parts.join(', '));
+      }
+    }
+
+    return { sizes, fits, fabricSpec: fabricParts.join(' · ') };
+  };
+
   for (let r = 1; r < table.length; r++) {
     const cells = table[r];
+    if (cells.every((c) => !c.trim())) continue;
+    const rawType = typeIdx !== -1 ? (cells[typeIdx] || '').trim().toLowerCase() : 'simple';
+
+    if (rawType === 'variation') {
+      pendingVariations.push({ rowNum: r + 1, cells });
+      continue;
+    }
+
     const title = (cells[nameIdx] || '').trim();
     if (!title) {
       errors.push(`Row ${r + 1}: empty product Name.`);
       continue;
     }
+
+    const wooId = idIdx !== -1 ? (cells[idIdx] || '').trim() : '';
     const rawSku = skuIdx !== -1 ? (cells[skuIdx] || '').trim() : '';
     const sku = rawSku || `WOO-${slugifyCategoryName(title).toUpperCase().slice(0, 12)}-${r}`;
 
     const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
     const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const regularPrice = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : saleRaw > 0 ? saleRaw : 175;
-    const salePrice = Number.isFinite(saleRaw) && saleRaw > 0 && saleRaw < regularPrice ? saleRaw : null;
+    const regularPrice = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : saleRaw > 0 ? saleRaw : 0;
+    const salePrice = Number.isFinite(saleRaw) && saleRaw > 0 && (regularPrice === 0 || saleRaw < regularPrice) ? saleRaw : null;
 
-    const stockRaw = stockIdx !== -1 ? Math.floor(Number(cells[stockIdx] || 15)) : 15;
-    const stockQty = Number.isFinite(stockRaw) && stockRaw >= 0 ? stockRaw : 15;
+    const stockStr = stockIdx !== -1 ? (cells[stockIdx] || '').trim() : '';
+    const stockNum = stockStr !== '' ? Math.floor(Number(stockStr)) : NaN;
+    const stockQty = Number.isFinite(stockNum) && stockNum >= 0 ? stockNum : 0;
 
     const rawCats = categoriesIdx !== -1 ? cells[categoriesIdx] || '' : '';
     const categoryPaths = rawCats
@@ -875,28 +1045,143 @@ export function parseWooCommerceCsv(
       .map((s) => s.trim())
       .filter((s) => /^https?:\/\//i.test(s) || s.startsWith('/'));
 
-    const attrName = attr1NameIdx !== -1 ? (cells[attr1NameIdx] || '').trim() : '';
-    const attrVal = attr1ValIdx !== -1 ? (cells[attr1ValIdx] || '').trim() : '';
-    const fabricSpec = attrVal ? `${attrName ? `${attrName}: ` : ''}${attrVal}` : '100% Italian 2-Ply Cotton';
+    const attrs = extractAttributes(cells);
+    const shortDesc = shortDescIdx !== -1 ? stripWooHtml(cells[shortDescIdx] || '') : '';
+    const desc = descIdx !== -1 ? stripWooHtml(cells[descIdx] || '') : '';
+    const fabricSpec = attrs.fabricSpec || '100% Italian 2-Ply Cotton';
 
     const publishedVal = publishedIdx !== -1 ? (cells[publishedIdx] || '1').trim() : '1';
     const published = publishedVal !== '0' && publishedVal.toLowerCase() !== 'false';
 
-    rows.push({
+    const rowObj: WooProductImportRow = {
       sku,
+      productType: rawType === 'variable' ? 'variable' : 'simple',
       title,
-      shortDescription: shortDescIdx !== -1 ? (cells[shortDescIdx] || '').replace(/<[^>]+>/g, '').trim() : '',
-      description: descIdx !== -1 ? (cells[descIdx] || '').replace(/<[^>]+>/g, '').trim() : '',
-      regularPrice,
+      shortDescription: shortDesc,
+      description: desc,
+      regularPrice: regularPrice > 0 ? regularPrice : 175,
       salePrice,
-      stockQty,
+      stockQty: stockStr !== '' ? stockQty : rawType === 'variable' ? 0 : 15,
       categoryPaths,
       images,
       fabricSpec,
+      sizes: attrs.sizes.length > 0 ? attrs.sizes : [],
+      fits: attrs.fits.length > 0 ? attrs.fits : [],
+      variations: [],
       published,
       sourceRegion,
-    });
+    };
+
+    const entry: ParentEntry = { wooId, row: rowObj };
+    parents.push(entry);
+    if (wooId) parentById.set(wooId, entry);
+    if (sku) parentBySku.set(sku.toLowerCase(), entry);
   }
+
+  // Attach variation rows to their parent variable product
+  for (const vItem of pendingVariations) {
+    const cells = vItem.cells;
+    const parentRef = parentIdx !== -1 ? (cells[parentIdx] || '').trim() : '';
+    if (!parentRef) {
+      errors.push(`Row ${vItem.rowNum}: variation row missing Parent reference.`);
+      continue;
+    }
+    const cleanRefId = parentRef.replace(/^id:/i, '').trim();
+    const targetParent =
+      parentById.get(parentRef) ||
+      parentById.get(cleanRefId) ||
+      parentBySku.get(parentRef.toLowerCase()) ||
+      parentBySku.get(cleanRefId.toLowerCase());
+
+    if (!targetParent) {
+      errors.push(`Row ${vItem.rowNum}: variation parent "${parentRef}" not found.`);
+      continue;
+    }
+
+    const attrs = extractAttributes(cells);
+    const fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit' =
+      attrs.fits[0] || targetParent.row.fits[0] || 'Regular Fit';
+    let sizeLabel = attrs.sizes[0] || '';
+    if (!sizeLabel) {
+      // Fallback: derive from variation name suffix e.g. "White Poplin - 40 / M"
+      const vName = (cells[nameIdx] || '').trim();
+      const dashPart = vName.includes(' - ') ? vName.split(' - ').pop() || '' : '';
+      sizeLabel = normalizeWooSizeLabel(dashPart);
+    }
+
+    const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const vReg = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : targetParent.row.regularPrice;
+    const vSale = Number.isFinite(saleRaw) && saleRaw > 0 && saleRaw < vReg ? saleRaw : null;
+
+    const vStockStr = stockIdx !== -1 ? (cells[stockIdx] || '').trim() : '';
+    const vStockNum = vStockStr !== '' ? Math.floor(Number(vStockStr)) : 12;
+    const vStock = Number.isFinite(vStockNum) && vStockNum >= 0 ? vStockNum : 12;
+
+    const rawVarSku = skuIdx !== -1 ? (cells[skuIdx] || '').trim() : '';
+    const skuVariant =
+      rawVarSku ||
+      `${targetParent.row.sku}-${fit === 'Slim Fit' ? 'SLIM' : fit === 'Contemporary Fit' ? 'CONT' : 'REG'}-${sizeLabel.replace(/[^A-Za-z0-9]+/g, '')}`;
+
+    // Variation image fallback if parent had fewer gallery shots
+    const rawVarImgs = imagesIdx !== -1 ? cells[imagesIdx] || '' : '';
+    const varImgs = rawVarImgs
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^https?:\/\//i.test(s) || s.startsWith('/'));
+    for (const vi of varImgs) {
+      if (!targetParent.row.images.includes(vi)) targetParent.row.images.push(vi);
+    }
+
+    const varRow: WooProductVariationImportRow = {
+      skuVariant,
+      fit,
+      sizeLabel,
+      regularPrice: vReg,
+      salePrice: vSale,
+      stockQty: vStock,
+    };
+    targetParent.row.productType = 'variable';
+    targetParent.row.variations.push(varRow);
+    if (!targetParent.row.sizes.includes(sizeLabel)) targetParent.row.sizes.push(sizeLabel);
+    if (!targetParent.row.fits.includes(fit)) targetParent.row.fits.push(fit);
+  }
+
+  // Finalize defaults + aggregate variation prices & stocks
+  const rows = parents.map((p) => {
+    const r = p.row;
+    if (r.variations.length > 0) {
+      const varPrices = r.variations.map((v) => v.salePrice || v.regularPrice).filter((n) => n > 0);
+      const varRegPrices = r.variations.map((v) => v.regularPrice).filter((n) => n > 0);
+      if (varRegPrices.length > 0) {
+        r.regularPrice = Math.min(...varRegPrices);
+      }
+      const varSales = r.variations.map((v) => v.salePrice).filter((n): n is number => n !== null && n > 0);
+      if (varSales.length > 0 && varSales.length === r.variations.length) {
+        r.salePrice = Math.min(...varSales);
+      } else if (varPrices.length > 0 && r.salePrice === null && Math.min(...varPrices) < r.regularPrice) {
+        r.salePrice = Math.min(...varPrices);
+      }
+      const sumStock = r.variations.reduce((sum, v) => sum + v.stockQty, 0);
+      if (r.stockQty === 0 || sumStock > 0) {
+        r.stockQty = sumStock;
+      }
+    }
+    if (r.sizes.length === 0) {
+      r.sizes = ['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL'];
+    }
+    if (r.fits.length === 0) {
+      r.fits = ['Regular Fit'];
+    }
+    r.translations = buildDeterministicMultilingualCopy({
+      title: r.title,
+      shortDescription: r.shortDescription,
+      description: r.description,
+      fabricSpec: r.fabricSpec,
+      sourceRegion: r.sourceRegion,
+    });
+    return r;
+  });
 
   return { rows, categories: Array.from(categoryMap.values()), errors };
 }

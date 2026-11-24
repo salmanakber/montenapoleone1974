@@ -167,6 +167,16 @@ export interface CategoryMetric {
   revenue_usd_equiv: number;
 }
 
+export interface VisitorCountryRollup {
+  country: string;
+  country_code: string;
+  lat: number;
+  lng: number;
+  active_count: number;
+  total_count: number;
+  sample_cities?: string[];
+}
+
 export interface AdminReportData {
   byRegion: Array<{ region_code: RegionCode; currency_code: string; orders: number; paid_revenue: number; total_revenue: number; items_sold: number }>;
   byPaymentMethod: Array<{ payment_method: PaymentMethod; count: number; total_amount: number }>;
@@ -177,6 +187,7 @@ export interface AdminReportData {
   dailySeries?: DailyRevenuePoint[];
   byCategory?: CategoryMetric[];
   visitorLocations?: VisitorSessionMetric[];
+  byVisitorCountry?: VisitorCountryRollup[];
   activeVisitorsCount?: number;
 }
 
@@ -685,8 +696,41 @@ export interface ParsedCategoryImport {
   scope?: CategoryScope;
 }
 
+export type AdminTab =
+  | 'overview'
+  | 'products'
+  | 'categories'
+  | 'variants'
+  | 'stock'
+  | 'tailoring'
+  | 'collar_cuff'
+  | 'menu'
+  | 'hero'
+  | 'promotions'
+  | 'ai'
+  | 'orders'
+  | 'emails'
+  | 'reports'
+  | 'media'
+  | 'b2b'
+  | 'newsletter'
+  | 'staff'
+  | 'settings'
+  | 'credentials'
+  | 'database';
+
+export interface WooProductVariationImportRow {
+  skuVariant: string;
+  fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit';
+  sizeLabel: string;
+  regularPrice: number;
+  salePrice: number | null;
+  stockQty: number;
+}
+
 export interface WooProductImportRow {
   sku: string;
+  productType: 'simple' | 'variable';
   title: string;
   shortDescription: string;
   description: string;
@@ -696,8 +740,12 @@ export interface WooProductImportRow {
   categoryPaths: string[];
   images: string[];
   fabricSpec: string;
+  sizes: string[];
+  fits: Array<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'>;
+  variations: WooProductVariationImportRow[];
   published: boolean;
   sourceRegion: RegionCode;
+  translations?: Record<RegionCode, { title: string; subtitle: string; description: string }>;
 }
 
 

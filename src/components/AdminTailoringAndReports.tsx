@@ -727,7 +727,8 @@ export const OrderDetailModal: React.FC<{
 export const ReportsPanel: React.FC<{
   report: AdminReportData | null;
   onRefresh: () => void;
-}> = ({ report, onRefresh }) => {
+  lastUpdatedAt?: string | null;
+}> = ({ report, onRefresh, lastUpdatedAt }) => {
   if (!report) {
     return (
       <div className="p-8 border border-neutral-200 bg-white text-center text-xs text-neutral-500">
@@ -743,22 +744,28 @@ export const ReportsPanel: React.FC<{
 
   return (
     <div className="space-y-6">
-      <div className="border-b border-neutral-200 pb-3 flex items-center justify-between">
+      <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-[#142B4E]" />
             <span>Global 3D Commerce Globe, Revenue Charts & Inventory Reporting</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono-tabular uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Real-Time
+            </span>
           </h1>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Live SQLite rollup of cross-market order capture, 3D logistics telemetry, daily sales velocity, and regional SKU health.
+            Live SQLite rollup of cross-market order capture, 3D visitor country telemetry, daily sales velocity, and regional SKU health
+            {lastUpdatedAt ? ` · Synced ${lastUpdatedAt}` : ''}.
           </p>
         </div>
         <button
           type="button"
           onClick={onRefresh}
-          className="px-3 py-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 text-xs cursor-pointer"
+          className="px-3 py-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 text-xs cursor-pointer inline-flex items-center gap-1.5"
         >
-          Refresh Metrics
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span>Refresh Metrics</span>
         </button>
       </div>
 
@@ -768,6 +775,7 @@ export const ReportsPanel: React.FC<{
           <Globe3DMap
             countries={report.byCountry || []}
             visitors={report.visitorLocations || []}
+            visitorCountries={report.byVisitorCountry || []}
             activeVisitorsCount={report.activeVisitorsCount || 0}
           />
         </div>
@@ -1083,6 +1091,48 @@ export const TailoringOptionsPanel: React.FC<{
     }
   };
 
+  const dirtyItems = Object.values(drafts);
+
+  const handleBulkSaveOptions = async () => {
+    if (dirtyItems.length === 0) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/tailoring-options/bulk', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          items: dirtyItems.map((item) => ({
+            id: item.id,
+            name: item.name,
+            subtitle: item.subtitle,
+            detail: item.detail,
+            stitch_spec: item.stitch_spec,
+            image_url: item.image_url,
+            is_default: item.is_default,
+            active: item.active,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDrafts({});
+        onUpdated(data.options);
+        setFeedback({
+          type: 'ok',
+          text: `Bulk-saved ${data.updatedCount || dirtyItems.length} collar/cuff option(s) cleanly without leaving this studio.`,
+        });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Bulk update failed.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleDeleteOption = async (opt: TailoringOptionRecord) => {
     setBusy(true);
     setFeedback(null);
@@ -1180,15 +1230,29 @@ export const TailoringOptionsPanel: React.FC<{
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={handleSyncToAllProducts}
-          className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Sync Active Options to All Shirts</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirtyItems.length > 0 && (
+            <button
+              type="button"
+              data-testid="tailoring-bulk-save-btn"
+              disabled={busy}
+              onClick={handleBulkSaveOptions}
+              className="px-4 py-2 bg-[#4F8A47] hover:bg-[#3f7238] text-white uppercase tracking-wider font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Save All Changes ({dirtyItems.length})</span>
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleSyncToAllProducts}
+            className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Sync Active Options to All Shirts</span>
+          </button>
+        </div>
       </div>
 
       {/* Collars / Cuffs Switcher */}
@@ -1484,6 +1548,36 @@ export const TailoringOptionsPanel: React.FC<{
           </button>
         </div>
       </form>
+
+      {dirtyItems.length > 0 && (
+        <div
+          data-testid="tailoring-bulk-save-bar"
+          className="sticky bottom-3 z-20 p-3.5 bg-white/95 backdrop-blur-md border border-[#4F8A47]/40 shadow-lg flex flex-wrap items-center justify-between gap-3"
+        >
+          <span className="text-xs font-medium text-[#142B4E]">
+            <strong>{dirtyItems.length}</strong> collar/cuff item(s) have unsaved edits.
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setDrafts({})}
+              className="px-3.5 py-2 border border-neutral-300 bg-white hover:bg-neutral-50 text-xs cursor-pointer"
+            >
+              Discard Edits
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleBulkSaveOptions}
+              className="px-5 py-2 bg-[#4F8A47] hover:bg-[#3f7238] text-white text-xs uppercase tracking-wider font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>{busy ? 'Saving...' : `Save All Changes (${dirtyItems.length})`}</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
