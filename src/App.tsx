@@ -15,6 +15,7 @@ import type {
   PromotionPopupSettings,
   RegionCode,
   RegionConfig,
+  TailoringOptionRecord,
   TailoringSizeSpec,
   TopBannerSettings,
 } from './types.ts';
@@ -25,6 +26,7 @@ import {
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_TAILORING_SURCHARGE,
   DEFAULT_TOP_BANNER_SETTINGS,
+  resolveOrderedTailoringOptions,
   resolveVariantPriceAndStock,
 } from './utils/commerce.ts';
 import {
@@ -126,6 +128,7 @@ export default function App() {
   const [promoClaimedOrUsed, setPromoClaimedOrUsed] = useState<boolean>(getInitialPromoClaimed);
   const [products, setProducts] = useState<Product[]>([]);
   const [tailoringSpecs, setTailoringSpecs] = useState<TailoringSizeSpec[]>([]);
+  const [tailoringOptions, setTailoringOptions] = useState<TailoringOptionRecord[]>([]);
   const [tailoringSurcharges, setTailoringSurcharges] = useState<Record<RegionCode, number>>(
     DEFAULT_TAILORING_SURCHARGE
   );
@@ -139,6 +142,13 @@ export default function App() {
   const [b2bProductSlug, setB2bProductSlug] = useState<string | null>(
     initialRoute.view === 'b2b' ? initialRoute.slug || null : null
   );
+  const [reviewToken, setReviewToken] = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('reviewToken');
+    } catch {
+      return null;
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -173,6 +183,7 @@ export default function App() {
         data.tailoringSurcharges || DEFAULT_TAILORING_SURCHARGE;
       setTailoringSurcharges(surcharges);
       if (Array.isArray(data.tailoringSpecs)) setTailoringSpecs(data.tailoringSpecs);
+      if (Array.isArray(data.tailoringOptions)) setTailoringOptions(data.tailoringOptions);
       if (Array.isArray(data.products)) {
         setProducts(data.products);
         // Sync regional unit prices (including variant + tailoring surcharge) for items already in bag
@@ -373,14 +384,25 @@ export default function App() {
       };
 
       setMetaTag('name', 'description', seo.description);
+      setMetaTag('name', 'keywords', seo.keywords);
       setMetaTag('name', 'robots', seo.robots);
       setMetaTag('property', 'og:title', seo.title);
       setMetaTag('property', 'og:description', seo.description);
       setMetaTag('property', 'og:type', seo.ogType);
+      setMetaTag('property', 'og:site_name', seo.ogSiteName);
+      setMetaTag('property', 'og:locale', seo.ogLocale);
       setMetaTag('property', 'og:url', seo.canonicalUrl);
       setMetaTag('property', 'og:image', seo.ogImage);
+      setMetaTag('property', 'og:image:alt', seo.ogImageAlt);
+      if (seo.productMeta) {
+        setMetaTag('property', 'product:price:amount', String(seo.productMeta.priceAmount));
+        setMetaTag('property', 'product:price:currency', seo.productMeta.priceCurrency);
+        setMetaTag('property', 'product:availability', seo.productMeta.availability);
+        setMetaTag('property', 'product:retailer_item_id', seo.productMeta.retailerItemId);
+      }
       setMetaTag('name', 'twitter:title', seo.title);
       setMetaTag('name', 'twitter:description', seo.description);
+      setMetaTag('name', 'twitter:image', seo.ogImage);
 
       let canonicalEl = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
       if (!canonicalEl) {
@@ -413,12 +435,20 @@ export default function App() {
     }
   }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct]);
 
-  const navigate = (view: AppView, opts?: { category?: string; slug?: string }) => {
+  const navigate = (
+    view: AppView,
+    opts?: { category?: string; slug?: string; reviewToken?: string | null }
+  ) => {
     const nextCat = opts?.category !== undefined ? opts.category : selectedCategory;
     const nextSlug =
       opts?.slug !== undefined ? opts.slug : view === 'product' ? selectedSlug : view === 'b2b' ? b2bProductSlug : null;
     if (opts?.category !== undefined) setSelectedCategory(opts.category);
     if (opts?.slug !== undefined) setSelectedSlug(opts.slug);
+    if (opts?.reviewToken !== undefined) {
+      setReviewToken(opts.reviewToken);
+    } else if (view !== 'product') {
+      setReviewToken(null);
+    }
     setActiveView(view);
     pushBrowserUrl(regionCode, view, nextCat, nextSlug);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -493,11 +523,13 @@ export default function App() {
   ) => {
     const resolvedSize =
       size && product.sizes.includes(size) ? size : product.sizes[Math.floor(product.sizes.length / 2)] || '40 / M';
+    const ordCollars = resolveOrderedTailoringOptions('collar', product.collars, tailoringOptions);
+    const ordCuffs = resolveOrderedTailoringOptions('cuff', product.cuffs, tailoringOptions);
     handleAddToBag(product, {
       fit,
       size: resolvedSize,
-      collar: product.collars[0] || 'Cutaway',
-      cuff: product.cuffs[0] || 'Single Cuff (Round)',
+      collar: ordCollars.find((c) => c.isDefault)?.name || ordCollars[0]?.name || 'Spread',
+      cuff: ordCuffs.find((c) => c.isDefault)?.name || ordCuffs[0]?.name || 'Modern',
       sleeveAdjustmentCm: 0,
       lengthAdjustmentCm: 0,
       waistAdjustmentCm: 0,
@@ -635,11 +667,14 @@ export default function App() {
             region={activeRegion}
             copy={copy}
             tailoringSpecs={tailoringSpecs}
+            tailoringOptions={tailoringOptions}
             tailoringSurcharges={tailoringSurcharges}
+            authToken={authToken}
+            reviewToken={reviewToken}
             inWishlist={wishlistIds.includes(activeProduct.id)}
             wishlistIds={wishlistIds}
             onBack={() => navigate('catalog')}
-            onOpenProduct={(slug) => navigate('product', { slug })}
+            onOpenProduct={(slug) => navigate('product', { slug, reviewToken: null })}
             onToggleWishlist={handleToggleWishlist}
             onAddToBag={handleAddToBag}
             onSwitchToB2B={(p) => {
@@ -648,6 +683,7 @@ export default function App() {
             }}
             onOpenSizeGuide={() => setInfoModal('size_guide')}
             onOpenReturnForm={() => setInfoModal('return_form')}
+            onProductReviewSubmitted={() => fetchStorefront(regionCode)}
           />
         ) : activeView === 'b2b' ? (
           <B2BView
@@ -655,6 +691,7 @@ export default function App() {
             copy={copy}
             categories={categories}
             products={products}
+            tailoringOptions={tailoringOptions}
             wishlistIds={wishlistIds}
             initialProductSlug={b2bProductSlug}
             onClearInitialProduct={() => setB2bProductSlug(null)}
@@ -698,6 +735,9 @@ export default function App() {
               setActivePromoCode(code);
               markPromoClaimedOrUsed();
             }}
+            onOpenProduct={(slug, invToken) =>
+              navigate('product', { slug, reviewToken: invToken || null })
+            }
           />
         ) : (
           <AdminDashboard

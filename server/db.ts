@@ -328,6 +328,52 @@ export function initializeDatabase(): void {
       error_message TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS tailoring_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      option_type TEXT NOT NULL CHECK (option_type IN ('collar', 'cuff')),
+      name TEXT NOT NULL,
+      subtitle TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      stitch_spec TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(option_type, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS product_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      order_number TEXT NOT NULL,
+      customer_email TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      title TEXT NOT NULL DEFAULT '',
+      comment TEXT NOT NULL DEFAULT '',
+      fit_feedback TEXT NOT NULL DEFAULT 'true_to_size',
+      region_code TEXT NOT NULL DEFAULT 'en',
+      verified_purchase INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(product_id, customer_email),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS review_invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT UNIQUE NOT NULL,
+      order_number TEXT NOT NULL,
+      product_id INTEGER NOT NULL,
+      customer_email TEXT NOT NULL,
+      customer_name TEXT NOT NULL DEFAULT '',
+      region_code TEXT NOT NULL DEFAULT 'en',
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(order_number, product_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
   `);
 
   ensureColumn('categories', 'parent_id', 'INTEGER REFERENCES categories(id) ON DELETE SET NULL');
@@ -349,6 +395,9 @@ export function initializeDatabase(): void {
   ensureColumn('newsletter_subscribers', 'mailchimp_member_id', 'TEXT');
   ensureColumn('newsletter_subscribers', 'synced_at', 'TEXT');
   ensureColumn('products', 'category_slugs_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn('product_localizations', 'seo_title', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('product_localizations', 'seo_description', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('product_localizations', 'seo_keywords', "TEXT NOT NULL DEFAULT ''");
   db.exec(
     "UPDATE products SET category_slugs_json = json_array(category_slug) WHERE category_slugs_json = '[]' OR category_slugs_json = ''"
   );
@@ -1411,5 +1460,142 @@ function seedInitialData(): void {
     insVis.run('seed-en-ny', 'United States', 'US', 'New York', 40.7128, -74.006, 'en', '/catalog/business', '-4 minutes');
     insVis.run('seed-vn-hcmc', 'Việt Nam', 'VN', 'Ho Chi Minh City', 10.7769, 106.7009, 'vn', '/b2b', '-5 minutes');
     insVis.run('seed-gb-lon', 'United Kingdom', 'GB', 'London', 51.5072, -0.1276, 'en', '/product/signature-white-100-2-ply-b1', '-6 minutes');
+  }
+
+  const existingTailoringOpts = db
+    .prepare('SELECT COUNT(*) AS count FROM tailoring_options')
+    .get() as { count: number };
+  if (existingTailoringOpts.count === 0) {
+    const insertOpt = db.prepare(`
+      INSERT INTO tailoring_options (
+        option_type, name, subtitle, detail, stitch_spec, image_url, sort_order, is_default, active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+    insertOpt.run(
+      'collar',
+      'Spread',
+      'Signature Italian Business',
+      'Balanced open points (10.5 cm spread) engineered to frame silk ties cleanly or stand crisply unbuttoned.',
+      'Height 3.6 cm · Points 7.2 cm',
+      '',
+      1,
+      1
+    );
+    insertOpt.run(
+      'collar',
+      'Semi Spread',
+      'Classic Versatility',
+      'Timeless Treviso proportion between narrow and wide spread; tailored for everyday corporate suiting.',
+      'Height 3.4 cm · Points 7.0 cm',
+      '',
+      2,
+      0
+    );
+    insertOpt.run(
+      'collar',
+      'Button Down',
+      'Refined Casual Roll',
+      'Soft unlined interlining with concealed horn/mother-of-pearl buttons creating a natural S-curve roll.',
+      'Height 3.5 cm · Points 8.0 cm',
+      '',
+      3,
+      0
+    );
+    insertOpt.run(
+      'collar',
+      'Cutaway',
+      'Wide Architectural',
+      'Swept-back Milanese cutaway profile for bold tie knots or open-neck Riviera linen layering.',
+      'Height 3.8 cm · Points 6.8 cm',
+      '',
+      4,
+      0
+    );
+
+    insertOpt.run(
+      'cuff',
+      'Angle',
+      'Chiseled Geometric Edge',
+      'Crisp 45° beveled corner inspired by 1970s Via Monte Napoleone dress tailoring.',
+      'Single button · 6.5 cm width',
+      '',
+      1,
+      0
+    );
+    insertOpt.run(
+      'cuff',
+      'Modern',
+      'Minimal Square Atelier',
+      'Two-button adjustable square barrel cuff with reinforced 18-stitch-per-inch Italian lockstitch.',
+      'Twin button · 6.8 cm width',
+      '',
+      2,
+      1
+    );
+    insertOpt.run(
+      'cuff',
+      'Rounded',
+      'Soft Venetian Curve',
+      'Gentle curved single-button barrel cuff suited to breathable linen and casual Oxford weaves.',
+      'Single button · 6.2 cm width',
+      '',
+      3,
+      0
+    );
+    insertOpt.run(
+      'cuff',
+      'Single French',
+      'Cufflink Formal Dress',
+      'Single-layer mitered French cuff designed for silk knots or engraved gold cufflinks without bulk.',
+      'Cufflink hole · 7.2 cm width',
+      '',
+      4,
+      0
+    );
+  }
+
+  const existingReviews = db.prepare('SELECT COUNT(*) AS count FROM product_reviews').get() as { count: number };
+  if (existingReviews.count === 0) {
+    const insertReview = db.prepare(`
+      INSERT INTO product_reviews (
+        product_id, order_number, customer_email, customer_name, rating, title, comment, fit_feedback, region_code, verified_purchase, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now', ?))
+    `);
+    insertReview.run(
+      1,
+      'MN-2026-1001',
+      'henrik.solberg@nordicexec.no',
+      'Henrik Solberg',
+      5,
+      'Perfekt passform og utrolig lin-kvalitet',
+      'Bestilte med -1 cm ermelengde under Skreddersøm og skjorten sitter som støpt. Luften går rett gjennom stoffet.',
+      'true_to_size',
+      'no',
+      '-2 days'
+    );
+    insertReview.run(
+      1,
+      'MN-2026-1003',
+      'tuan.nguyen@saigonventures.vn',
+      'Nguyễn Minh Tuấn',
+      5,
+      'Vải linen Ý rất mát và đứng phom',
+      'Chiều dài tay áo chỉnh -2cm chuẩn xác từng milimet. Rất hài lòng khi mặc tại TP.HCM.',
+      'true_to_size',
+      'vn',
+      '-1 days'
+    );
+    insertReview.run(
+      4,
+      'MN-2026-1004',
+      'j.vance@manhattan-capital.com',
+      'Julian Vance',
+      5,
+      'Two-ply crispness all the way from morning briefing to dinner',
+      'The 100/2-ply cotton drapes cleanly beneath a blazer and the French cuffs hold their structure effortlessly.',
+      'true_to_size',
+      'en',
+      '-1 days'
+    );
   }
 }

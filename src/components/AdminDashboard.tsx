@@ -23,6 +23,7 @@ import {
   Plus,
   RefreshCw,
   Ruler,
+  Scissors,
   Shield,
   ShoppingBag,
   SlidersHorizontal,
@@ -55,6 +56,7 @@ import type {
   StaffPermissionKey,
   StaffPermissions,
   StockMovement,
+  TailoringOptionRecord,
   TailoringSizeSpec,
   TopBannerSettings,
 } from '../types.ts';
@@ -80,6 +82,7 @@ import {
   OrderDetailModal,
   ReportsPanel,
   TailoringMatrixPanel,
+  TailoringOptionsPanel,
 } from './AdminTailoringAndReports.tsx';
 import { DatabaseInspectorPanel, MenuManagerPanel } from './AdminMenuAndDatabase.tsx';
 import {
@@ -105,6 +108,7 @@ type AdminTab =
   | 'variants'
   | 'stock'
   | 'tailoring'
+  | 'collar_cuff'
   | 'menu'
   | 'hero'
   | 'promotions'
@@ -185,6 +189,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [tailoringSpecs, setTailoringSpecs] = useState<TailoringSizeSpec[]>([]);
+  const [tailoringOptions, setTailoringOptions] = useState<TailoringOptionRecord[]>([]);
   const [reportData, setReportData] = useState<AdminReportData | null>(null);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
@@ -192,6 +197,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [promoRules, setPromoRules] = useState<PromotionPopupSettings>(DEFAULT_PROMO_POPUP_SETTINGS);
   const [bulkDiscount, setBulkDiscount] = useState<BulkDiscountSettings>(DEFAULT_BULK_DISCOUNT_SETTINGS);
   const [customerAuth, setCustomerAuth] = useState<CustomerAuthSettings>(DEFAULT_CUSTOMER_AUTH_SETTINGS);
+  const [googleCallbackUrl, setGoogleCallbackUrl] = useState<string>('');
   const [customerAuthMsg, setCustomerAuthMsg] = useState<string | null>(null);
   const [aiSettings, setAiSettings] = useState<AiAdminSettings>({
     enabled: true,
@@ -282,6 +288,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       fetch('/api/admin/tailoring-specs', { headers })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => d?.specs && setTailoringSpecs(d.specs)),
+      fetch('/api/admin/tailoring-options', { headers })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d?.options && setTailoringOptions(d.options)),
       fetch('/api/admin/reports', { headers })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
@@ -362,6 +371,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             if (d?.promoRules) setPromoRules(d.promoRules);
             if (d?.bulkDiscount) setBulkDiscount(d.bulkDiscount);
             if (d?.customerAuth) setCustomerAuth(d.customerAuth);
+            if (d?.googleCallbackUrl) setGoogleCallbackUrl(d.googleCallbackUrl);
             if (d?.aiSettings) setAiSettings(d.aiSettings);
           })
       );
@@ -969,6 +979,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       id: 'tailoring',
       label: 'Tailoring Size Matrix',
       icon: <Ruler className="w-4 h-4" />,
+      visible:
+        hasPermission(authUser, 'manage_products') || hasPermission(authUser, 'manage_settings'),
+    },
+    {
+      id: 'collar_cuff',
+      label: 'Collar & Cuff Studio',
+      icon: <Scissors className="w-4 h-4" />,
       visible:
         hasPermission(authUser, 'manage_products') || hasPermission(authUser, 'manage_settings'),
     },
@@ -1723,6 +1740,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               />
             )}
 
+          {/* COLLAR & CUFF STUDIO (IMAGES, REORDER, DEFAULT SELECTED) */}
+          {safeActiveTab === 'collar_cuff' &&
+            authToken &&
+            (hasPermission(authUser, 'manage_products') ||
+              hasPermission(authUser, 'manage_settings')) && (
+              <TailoringOptionsPanel
+                authToken={authToken}
+                options={tailoringOptions}
+                onUpdated={(nextOpts) => {
+                  if (nextOpts) setTailoringOptions(nextOpts);
+                  else loadAdminData();
+                  onRefreshStorefront();
+                }}
+                onOpenMediaPicker={(cb) => {
+                  setTailoringPickerCb(() => cb);
+                  setMediaPickerTarget('tailoring');
+                }}
+              />
+            )}
+
           {/* B2C MEGA-MENU & CATEGORY MANAGER */}
           {safeActiveTab === 'menu' &&
             authToken &&
@@ -2423,9 +2460,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {customerAuthMsg ? (
                     <span className="text-xs text-[#2E5D28] font-medium">{customerAuthMsg}</span>
                   ) : (
-                    <span className="text-[11px] text-neutral-500">
-                      Callback URI: {typeof window !== 'undefined' ? `${window.location.origin}/api/auth/google/callback` : '/api/auth/google/callback'}
-                    </span>
+                    <div className="text-[11px] text-neutral-600 space-y-0.5">
+                      <div>
+                        Authorized Redirect URI:{' '}
+                        <span className="font-mono-tabular text-[#142B4E] font-medium">
+                          {googleCallbackUrl ||
+                            (typeof window !== 'undefined'
+                              ? `${window.location.origin}/api/auth/google/callback`
+                              : '/api/auth/google/callback')}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-neutral-500">
+                        Set <span className="font-mono-tabular">PUBLIC_DOMAIN_URL</span> in API Vault when deploying to a custom domain behind Nginx.
+                      </div>
+                    </div>
                   )}
                   <button
                     type="button"
@@ -2563,6 +2611,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             hasPermission(authUser, 'manage_settings') && (
               <ApiVaultAndOnboardingPanel
                 authToken={authToken}
+                googleCallbackUrl={googleCallbackUrl}
                 onRefreshSettings={() => {
                   loadAdminData();
                   onRefreshStorefront();
@@ -2787,6 +2836,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white font-mono-tabular disabled:bg-neutral-100"
                         />
                       </div>
+                    </div>
+
+                    {/* Per-Region Product SEO Fields */}
+                    <div className="pt-2 border-t border-neutral-200 space-y-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                        Search Engine Optimization ({rc.toUpperCase()})
+                      </div>
+                      <input
+                        disabled={!hasPermission(authUser, 'manage_products')}
+                        value={loc.seo_title || ''}
+                        onChange={(e) =>
+                          setEditingProduct((prev) =>
+                            prev && prev.localizations
+                              ? {
+                                  ...prev,
+                                  localizations: {
+                                    ...prev.localizations,
+                                    [rc]: { ...loc, seo_title: e.target.value },
+                                  },
+                                }
+                              : prev
+                          )
+                        }
+                        placeholder="SEO Title (leave blank for auto-optimized title)"
+                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                      />
+                      <textarea
+                        rows={2}
+                        disabled={!hasPermission(authUser, 'manage_products')}
+                        value={loc.seo_description || ''}
+                        onChange={(e) =>
+                          setEditingProduct((prev) =>
+                            prev && prev.localizations
+                              ? {
+                                  ...prev,
+                                  localizations: {
+                                    ...prev.localizations,
+                                    [rc]: { ...loc, seo_description: e.target.value },
+                                  },
+                                }
+                              : prev
+                          )
+                        }
+                        placeholder="Meta Description (120–160 chars)"
+                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                      />
+                      <input
+                        disabled={!hasPermission(authUser, 'manage_products')}
+                        value={loc.seo_keywords || ''}
+                        onChange={(e) =>
+                          setEditingProduct((prev) =>
+                            prev && prev.localizations
+                              ? {
+                                  ...prev,
+                                  localizations: {
+                                    ...prev.localizations,
+                                    [rc]: { ...loc, seo_keywords: e.target.value },
+                                  },
+                                }
+                              : prev
+                          )
+                        }
+                        placeholder="SEO Keywords (comma-separated, e.g. Italian linen shirt, Oslo dress shirt)"
+                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                      />
                     </div>
                   </div>
                 );

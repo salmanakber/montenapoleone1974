@@ -1,12 +1,20 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   Check,
+  GripVertical,
   Image as ImageIcon,
   Mail,
   Package,
+  Plus,
+  RefreshCw,
   RotateCcw,
   Ruler,
+  Scissors,
+  Star,
+  Trash2,
   Truck,
   X,
 } from 'lucide-react';
@@ -14,6 +22,8 @@ import type {
   AdminReportData,
   OrderRecord,
   RegionCode,
+  TailoringOptionRecord,
+  TailoringOptionType,
   TailoringSizeSpec,
   TailoringZoneKey,
 } from '../types.ts';
@@ -427,7 +437,9 @@ export const OrderDetailModal: React.FC<{
     }
   };
 
-  const handleResendEmail = async (templateType: 'order_confirmation' | 'shipping_tracking') => {
+  const handleResendEmail = async (
+    templateType: 'order_confirmation' | 'shipping_tracking' | 'review_request'
+  ) => {
     setBusy(true);
     setEmailFeedback(null);
     try {
@@ -677,6 +689,15 @@ export const OrderDetailModal: React.FC<{
             >
               <Mail className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Send Tracking Email</span>
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => handleResendEmail('review_request')}
+              className="px-3 py-2 border border-neutral-300 bg-white hover:bg-neutral-50 inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Star className="w-3.5 h-3.5 text-amber-500" />
+              <span>Send Review Invite</span>
             </button>
           </div>
           <div className="flex gap-2">
@@ -939,3 +960,531 @@ export const ReportsPanel: React.FC<{
     </div>
   );
 };
+
+export const TailoringOptionsPanel: React.FC<{
+  authToken: string;
+  options: TailoringOptionRecord[];
+  onUpdated: (nextOptions?: TailoringOptionRecord[]) => void;
+  onOpenMediaPicker: (onPicked: (url: string) => void) => void;
+}> = ({ authToken, options, onUpdated, onOpenMediaPicker }) => {
+  const [activeType, setActiveType] = useState<TailoringOptionType>('collar');
+  const [drafts, setDrafts] = useState<Record<number, TailoringOptionRecord>>({});
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const [newName, setNewName] = useState('');
+  const [newSubtitle, setNewSubtitle] = useState('');
+  const [newDetail, setNewDetail] = useState('');
+  const [newStitch, setNewStitch] = useState('');
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [newIsDefault, setNewIsDefault] = useState(false);
+
+  const typedOptions = useMemo(
+    () =>
+      options
+        .filter((o) => o.option_type === activeType)
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
+    [options, activeType]
+  );
+
+  const getDraft = (opt: TailoringOptionRecord): TailoringOptionRecord => drafts[opt.id] || opt;
+
+  const updateDraft = (opt: TailoringOptionRecord, patch: Partial<TailoringOptionRecord>) => {
+    const current = getDraft(opt);
+    setDrafts((prev) => ({
+      ...prev,
+      [opt.id]: { ...current, ...patch },
+    }));
+  };
+
+  const commitReorder = async (orderedIds: number[]) => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/tailoring-options/reorder', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ optionType: activeType, orderedIds }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onUpdated(data.options);
+        setFeedback({ type: 'ok', text: `Updated display order for ${activeType} options.` });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Could not reorder options.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const moveItem = (id: number, delta: -1 | 1) => {
+    const idx = typedOptions.findIndex((o) => o.id === id);
+    const target = idx + delta;
+    if (idx < 0 || target < 0 || target >= typedOptions.length) return;
+    const copy = typedOptions.map((o) => o.id);
+    const [removed] = copy.splice(idx, 1);
+    copy.splice(target, 0, removed);
+    commitReorder(copy);
+  };
+
+  const handleDropOn = (targetId: number) => {
+    if (dragId === null || dragId === targetId) return;
+    const ids = typedOptions.map((o) => o.id);
+    const fromIdx = ids.indexOf(dragId);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const [moved] = ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, moved);
+    setDragId(null);
+    commitReorder(ids);
+  };
+
+  const handleSaveOption = async (opt: TailoringOptionRecord, overridePatch?: Partial<TailoringOptionRecord>) => {
+    const payload = { ...getDraft(opt), ...(overridePatch || {}) };
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/admin/tailoring-options/${opt.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          name: payload.name,
+          subtitle: payload.subtitle,
+          detail: payload.detail,
+          stitch_spec: payload.stitch_spec,
+          image_url: payload.image_url,
+          is_default: payload.is_default,
+          active: payload.active,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDrafts((prev) => {
+          const next = { ...prev };
+          delete next[opt.id];
+          return next;
+        });
+        onUpdated(data.options);
+        setFeedback({ type: 'ok', text: `Saved "${payload.name}" (${activeType}).` });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Could not update tailoring option.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteOption = async (opt: TailoringOptionRecord) => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/admin/tailoring-options/${opt.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onUpdated(data.options);
+        setFeedback({ type: 'ok', text: `Deleted "${opt.name}".` });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Could not delete option.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAddOption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/tailoring-options', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          option_type: activeType,
+          name: newName.trim(),
+          subtitle: newSubtitle.trim(),
+          detail: newDetail.trim(),
+          stitch_spec: newStitch.trim(),
+          image_url: newImageUrl.trim(),
+          is_default: newIsDefault,
+          active: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewName('');
+        setNewSubtitle('');
+        setNewDetail('');
+        setNewStitch('');
+        setNewImageUrl('');
+        setNewIsDefault(false);
+        onUpdated(data.options);
+        setFeedback({ type: 'ok', text: `Added new ${activeType} option.` });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Could not add option.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSyncToAllProducts = async () => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/tailoring-options/sync-products', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onUpdated();
+        setFeedback({
+          type: 'ok',
+          text: `Synced active collars & cuffs across ${data.updatedProducts} shirt catalog item(s).`,
+        });
+      } else {
+        setFeedback({ type: 'err', text: data.error || 'Sync failed.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 text-xs">
+      <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
+            <Scissors className="w-4 h-4 text-[#142B4E]" />
+            <span>Collar & Cuff Studio (Images, Order & Default Selection)</span>
+          </h1>
+          <p className="text-neutral-500 mt-0.5">
+            Upload custom collar/cuff photographs from Media Library, drag cards or use arrows to reorder display, and mark the default pre-selected choice.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={handleSyncToAllProducts}
+          className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span>Sync Active Options to All Shirts</span>
+        </button>
+      </div>
+
+      {/* Collars / Cuffs Switcher */}
+      <div className="flex items-center gap-2">
+        {(['collar', 'cuff'] as TailoringOptionType[]).map((t) => {
+          const count = options.filter((o) => o.option_type === t).length;
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setActiveType(t)}
+              className={`px-4 py-2 border uppercase tracking-wider font-semibold cursor-pointer ${
+                activeType === t
+                  ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                  : 'bg-white border-neutral-300 text-neutral-700 hover:bg-neutral-50'
+              }`}
+            >
+              {t === 'collar' ? `Collars (${count})` : `Cuffs (${count})`}
+            </button>
+          );
+        })}
+      </div>
+
+      {feedback && (
+        <div
+          className={`p-3 border font-medium ${
+            feedback.type === 'ok'
+              ? 'bg-[#F4F8F4] border-[#4F8A47]/40 text-[#2E5D28]'
+              : 'bg-red-50 border-red-200 text-red-700'
+          }`}
+        >
+          {feedback.text}
+        </div>
+      )}
+
+      {/* Draggable / Reorderable Option Cards */}
+      <div className="space-y-3" data-testid="collar-cuff-studio-list">
+        {typedOptions.map((opt, idx) => {
+          const d = getDraft(opt);
+          const hasUnsaved = Boolean(drafts[opt.id]);
+          return (
+            <div
+              key={opt.id}
+              draggable
+              onDragStart={() => setDragId(opt.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => handleDropOn(opt.id)}
+              className={`border bg-white p-4 space-y-3 transition-colors ${
+                d.is_default
+                  ? 'border-[#142B4E] ring-1 ring-[#142B4E]/30'
+                  : 'border-neutral-200'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-neutral-100">
+                <div className="flex items-center gap-2">
+                  <GripVertical className="w-4 h-4 text-neutral-400 cursor-grab" />
+                  <span className="font-mono-tabular px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[11px]">
+                    #{idx + 1}
+                  </span>
+                  <span className="font-semibold text-sm text-[#1A1A1A]">{d.name}</span>
+                  {d.is_default && (
+                    <span className="px-2 py-0.5 bg-[#142B4E] text-white text-[10px] uppercase tracking-wider font-semibold">
+                      Default Selected
+                    </span>
+                  )}
+                  {!d.active && (
+                    <span className="px-2 py-0.5 bg-neutral-200 text-neutral-600 text-[10px] uppercase">
+                      Hidden
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={busy || idx === 0}
+                    onClick={() => moveItem(opt.id, -1)}
+                    aria-label={`Move ${opt.name} up`}
+                    className="p-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 disabled:opacity-35 cursor-pointer"
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || idx === typedOptions.length - 1}
+                    onClick={() => moveItem(opt.id, 1)}
+                    aria-label={`Move ${opt.name} down`}
+                    className="p-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 disabled:opacity-35 cursor-pointer"
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </button>
+                  {!opt.is_default && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleSaveOption(opt, { is_default: true })}
+                      className="px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
+                    >
+                      Set Default
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handleDeleteOption(opt)}
+                    aria-label={`Delete ${opt.name}`}
+                    className="p-1.5 border border-red-200 text-red-600 hover:bg-red-50 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                {/* Image Thumbnail + Picker */}
+                <div className="lg:col-span-3 flex items-center gap-3">
+                  <div className="w-20 h-16 border border-neutral-200 bg-[#F7F7F7] flex items-center justify-center overflow-hidden shrink-0">
+                    {d.image_url ? (
+                      <img
+                        src={d.image_url}
+                        alt={d.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-neutral-400 uppercase">SVG Sketch</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenMediaPicker((url) => updateDraft(opt, { image_url: url }))
+                      }
+                      className="w-full px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E]/5 text-[11px] inline-flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>Pick Image</span>
+                    </button>
+                    {d.image_url && (
+                      <button
+                        type="button"
+                        onClick={() => updateDraft(opt, { image_url: '' })}
+                        className="w-full px-2 py-1 text-[10px] text-neutral-500 hover:text-red-600 border border-neutral-200 cursor-pointer"
+                      >
+                        Reset to SVG
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Editable Attributes */}
+                <div className="lg:col-span-9 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Option Name</label>
+                    <input
+                      value={d.name}
+                      onChange={(e) => updateDraft(opt, { name: e.target.value })}
+                      className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Subtitle / Hint</label>
+                    <input
+                      value={d.subtitle}
+                      onChange={(e) => updateDraft(opt, { subtitle: e.target.value })}
+                      placeholder="e.g. Classic wide spread"
+                      className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Stitch Spec</label>
+                    <input
+                      value={d.stitch_spec}
+                      onChange={(e) => updateDraft(opt, { stitch_spec: e.target.value })}
+                      placeholder="e.g. 6.5 cm · Fusible interlining"
+                      className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Image URL</label>
+                    <input
+                      value={d.image_url}
+                      onChange={(e) => updateDraft(opt, { image_url: e.target.value })}
+                      placeholder="/assets/..."
+                      className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white font-mono-tabular text-[11px]"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Atelier Description</label>
+                    <input
+                      value={d.detail}
+                      onChange={(e) => updateDraft(opt, { detail: e.target.value })}
+                      placeholder="Craftsmanship notes shown to customers"
+                      className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
+                    />
+                  </div>
+                  <div className="flex items-end justify-between gap-2">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={d.active}
+                        onChange={(e) => updateDraft(opt, { active: e.target.checked })}
+                        className="accent-[#142B4E]"
+                      />
+                      <span>Active</span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleSaveOption(opt)}
+                      className={`px-3.5 py-1.5 uppercase tracking-wider font-medium inline-flex items-center gap-1 cursor-pointer ${
+                        hasUnsaved
+                          ? 'bg-[#4F8A47] hover:bg-[#3f7238] text-white'
+                          : 'bg-[#142B4E] hover:bg-[#0f213d] text-white'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Save</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Add New Collar / Cuff Option */}
+      <form onSubmit={handleAddOption} className="border border-neutral-200 bg-white p-5 space-y-3">
+        <div className="font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-1.5">
+          <Plus className="w-3.5 h-3.5" />
+          <span>Add New {activeType === 'collar' ? 'Collar' : 'Cuff'} Option</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <input
+            required
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder={activeType === 'collar' ? 'Collar Name (e.g. Extreme Cutaway)' : 'Cuff Name (e.g. Double French)'}
+            className="px-3 py-2 border border-neutral-300 bg-white"
+          />
+          <input
+            value={newSubtitle}
+            onChange={(e) => setNewSubtitle(e.target.value)}
+            placeholder="Subtitle / Style Hint"
+            className="px-3 py-2 border border-neutral-300 bg-white"
+          />
+          <input
+            value={newStitch}
+            onChange={(e) => setNewStitch(e.target.value)}
+            placeholder="Stitch Spec (e.g. Mother-of-pearl button)"
+            className="px-3 py-2 border border-neutral-300 bg-white"
+          />
+          <input
+            value={newDetail}
+            onChange={(e) => setNewDetail(e.target.value)}
+            placeholder="Detailed craftsmanship note..."
+            className="px-3 py-2 border border-neutral-300 bg-white sm:col-span-2"
+          />
+          <div className="flex gap-2">
+            <input
+              value={newImageUrl}
+              onChange={(e) => setNewImageUrl(e.target.value)}
+              placeholder="Image URL (or Pick)"
+              className="flex-1 min-w-0 px-3 py-2 border border-neutral-300 bg-white font-mono-tabular"
+            />
+            <button
+              type="button"
+              onClick={() => onOpenMediaPicker((url) => setNewImageUrl(url))}
+              className="px-3 py-2 border border-neutral-300 bg-[#FAFAFA] hover:bg-neutral-100 shrink-0 cursor-pointer"
+            >
+              Pick
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={newIsDefault}
+              onChange={(e) => setNewIsDefault(e.target.checked)}
+              className="accent-[#142B4E]"
+            />
+            <span>Make this option Default Selected for shoppers</span>
+          </label>
+          <button
+            type="submit"
+            disabled={busy}
+            className="px-5 py-2 bg-[#142B4E] hover:bg-[#0f213d] text-white uppercase tracking-wider font-medium cursor-pointer"
+          >
+            Add {activeType === 'collar' ? 'Collar' : 'Cuff'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+

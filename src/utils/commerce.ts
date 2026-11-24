@@ -1014,8 +1014,104 @@ export const DEFAULT_CUSTOMER_AUTH_SETTINGS: CustomerAuthSettings = {
   cornerPopupDelaySeconds: 3,
 };
 
+export interface ResolvedTailoringChoice {
+  name: string;
+  subtitle: string;
+  detail: string;
+  stitchSpec: string;
+  imageUrl: string;
+  isDefault: boolean;
+  sortOrder: number;
+}
 
+const DEFAULT_FALLBACK_COLLARS = ['Spread', 'Semi Spread', 'Button Down', 'Cutaway'];
+const DEFAULT_FALLBACK_CUFFS = ['Angle', 'Modern', 'Rounded', 'Single French'];
 
+export function resolveOrderedTailoringOptions(
+  optionType: 'collar' | 'cuff',
+  productOptionNames: string[] | undefined,
+  catalogOptions: Array<{
+    option_type: 'collar' | 'cuff';
+    name: string;
+    subtitle: string;
+    detail: string;
+    stitch_spec: string;
+    image_url: string;
+    sort_order: number;
+    is_default: boolean;
+    active: boolean;
+  }> | undefined
+): ResolvedTailoringChoice[] {
+  const fallbackNames = optionType === 'collar' ? DEFAULT_FALLBACK_COLLARS : DEFAULT_FALLBACK_CUFFS;
+  const activeCatalog = (catalogOptions || [])
+    .filter((o) => o.option_type === optionType && o.active)
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
 
+  const cleanProductNames = (productOptionNames || []).map((n) => n.trim()).filter(Boolean);
 
+  if (activeCatalog.length === 0) {
+    const baseNames = cleanProductNames.length > 0 ? cleanProductNames : fallbackNames;
+    return baseNames.map((name, idx) => ({
+      name,
+      subtitle: '',
+      detail: '',
+      stitchSpec: '',
+      imageUrl: '',
+      isDefault: idx === 0,
+      sortOrder: idx + 1,
+    }));
+  }
+
+  const productSet = new Set(cleanProductNames.map((n) => n.toLowerCase()));
+  const catalogByLower = new Map(activeCatalog.map((c) => [c.name.toLowerCase(), c]));
+
+  let ordered: ResolvedTailoringChoice[] = activeCatalog
+    .filter((c) => productSet.size === 0 || productSet.has(c.name.toLowerCase()))
+    .map((c) => ({
+      name: c.name,
+      subtitle: c.subtitle,
+      detail: c.detail,
+      stitchSpec: c.stitch_spec,
+      imageUrl: c.image_url,
+      isDefault: Boolean(c.is_default),
+      sortOrder: c.sort_order,
+    }));
+
+  for (const rawName of cleanProductNames) {
+    const low = rawName.toLowerCase();
+    const inFullCatalog = (catalogOptions || []).find(
+      (c) => c.option_type === optionType && c.name.toLowerCase() === low
+    );
+    if (!inFullCatalog && !catalogByLower.has(low) && !ordered.some((o) => o.name.toLowerCase() === low)) {
+      ordered.push({
+        name: rawName,
+        subtitle: '',
+        detail: '',
+        stitchSpec: '',
+        imageUrl: '',
+        isDefault: false,
+        sortOrder: ordered.length + 100,
+      });
+    }
+  }
+
+  if (ordered.length === 0) {
+    ordered = activeCatalog.map((c) => ({
+      name: c.name,
+      subtitle: c.subtitle,
+      detail: c.detail,
+      stitchSpec: c.stitch_spec,
+      imageUrl: c.image_url,
+      isDefault: Boolean(c.is_default),
+      sortOrder: c.sort_order,
+    }));
+  }
+
+  if (!ordered.some((o) => o.isDefault) && ordered.length > 0) {
+    ordered[0] = { ...ordered[0], isDefault: true };
+  }
+
+  return ordered;
+}
 

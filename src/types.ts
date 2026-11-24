@@ -64,6 +64,9 @@ export interface ProductLocalization {
   stock_qty: number;
   warehouse_location: string;
   delivery_note: string;
+  seo_title?: string;
+  seo_description?: string;
+  seo_keywords?: string;
 }
 
 export type TailoringZoneKey =
@@ -204,8 +207,63 @@ export interface Product {
   stock_qty: number;
   warehouse_location: string;
   delivery_note: string;
+  seo_title?: string;
+  seo_description?: string;
+  seo_keywords?: string;
+  review_count?: number;
+  average_rating?: number;
+  reviews?: Array<{
+    customer_name: string;
+    rating: number;
+    title: string;
+    comment: string;
+    created_at: string;
+  }>;
   localizations?: Record<RegionCode, ProductLocalization>;
   variants?: ProductVariant[];
+}
+
+export type TailoringOptionType = 'collar' | 'cuff';
+
+export interface TailoringOptionRecord {
+  id: number;
+  option_type: TailoringOptionType;
+  name: string;
+  subtitle: string;
+  detail: string;
+  stitch_spec: string;
+  image_url: string;
+  sort_order: number;
+  is_default: boolean;
+  active: boolean;
+  updated_at?: string;
+}
+
+export interface ProductReview {
+  id: number;
+  product_id: number;
+  order_number: string;
+  customer_name: string;
+  rating: number;
+  title: string;
+  comment: string;
+  fit_feedback?: 'runs_small' | 'true_to_size' | 'runs_large';
+  region_code: RegionCode;
+  verified_purchase: boolean;
+  created_at: string;
+}
+
+export interface ProductReviewsResponse {
+  reviews: ProductReview[];
+  reviewCount: number;
+  averageRating: number;
+  viewer: {
+    canReview: boolean;
+    alreadyReviewed: boolean;
+    reason?: 'invite_verified' | 'order_verified' | 'already_reviewed' | 'purchase_required';
+    orderNumber?: string;
+    customerName?: string;
+  };
 }
 
 export interface BespokeTailoring {
@@ -552,7 +610,7 @@ export interface EmailLogRecord {
   order_number: string | null;
   recipient_email: string;
   region_code: RegionCode;
-  template_type: 'order_confirmation' | 'shipping_tracking' | 'test';
+  template_type: 'order_confirmation' | 'shipping_tracking' | 'review_request' | 'test';
   subject: string;
   html_preview: string;
   status: 'sent' | 'sandbox_logged' | 'error';
@@ -562,6 +620,7 @@ export interface EmailLogRecord {
 }
 
 export type ApiCredentialKey =
+  | 'PUBLIC_DOMAIN_URL'
   | 'RESEND_API_KEY'
   | 'RESEND_FROM_EMAIL'
   | 'VIPPS_CLIENT_ID'

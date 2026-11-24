@@ -107,17 +107,17 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
   return (
     <main className="pt-20 pb-20 max-w-[1720px] mx-auto px-1.5 sm:px-3 min-h-[75vh]">
-      {/* Horizontal Snap-Scroll Category Carousel */}
+      {/* Mobile Horizontal Snap-Scroll Carousel / Desktop Auto-Adjusted Category Bar */}
       <div className="flex flex-col items-center gap-2.5 mb-3">
         <div
           data-testid="b2c-category-carousel"
-          className="w-full max-w-4xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1"
+          className="w-full max-w-4xl md:w-auto md:max-w-5xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1 md:px-2"
         >
           <button
             type="button"
             onClick={() => scrollCarousel(-1)}
             aria-label="Scroll categories left"
-            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -125,7 +125,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           <nav
             ref={carouselRef}
             aria-label="Product categories"
-            className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5"
+            className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5 md:flex-wrap md:justify-center md:overflow-visible"
           >
             <button
               type="button"
@@ -172,7 +172,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             type="button"
             onClick={() => scrollCarousel(1)}
             aria-label="Scroll categories right"
-            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
           >
             <ChevronRight className="w-4 h-4" />
           </button>

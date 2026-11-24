@@ -9,7 +9,9 @@ import {
   FileText,
   Heart,
   Ruler,
+  ShieldCheck,
   ShoppingBag,
+  Star,
   X,
   ZoomIn,
   ZoomOut,
@@ -17,8 +19,10 @@ import {
 import type {
   BespokeTailoring,
   Product,
+  ProductReviewsResponse,
   RegionCode,
   RegionConfig,
+  TailoringOptionRecord,
   TailoringSizeSpec,
   TailoringZoneKey,
 } from '../types.ts';
@@ -29,6 +33,7 @@ import {
   DEFAULT_TAILORING_SURCHARGE,
   evaluateStockState,
   formatRegionalPrice,
+  resolveOrderedTailoringOptions,
   resolveVariantPriceAndStock,
 } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
@@ -44,7 +49,10 @@ interface ProductDetailViewProps {
   region: RegionConfig;
   copy: RegionCopy;
   tailoringSpecs: TailoringSizeSpec[];
+  tailoringOptions?: TailoringOptionRecord[];
   tailoringSurcharges: Record<RegionCode, number>;
+  authToken?: string | null;
+  reviewToken?: string | null;
   inWishlist: boolean;
   wishlistIds: number[];
   onBack: () => void;
@@ -54,6 +62,7 @@ interface ProductDetailViewProps {
   onSwitchToB2B?: (product: Product) => void;
   onOpenSizeGuide: () => void;
   onOpenReturnForm: () => void;
+  onProductReviewSubmitted?: () => void;
 }
 
 const COLLAR_META: Record<string, { hint: string }> = {
@@ -117,7 +126,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   region,
   copy,
   tailoringSpecs,
+  tailoringOptions = [],
   tailoringSurcharges,
+  authToken,
+  reviewToken,
   inWishlist,
   wishlistIds,
   onBack,
@@ -127,6 +139,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   onSwitchToB2B,
   onOpenSizeGuide,
   onOpenReturnForm,
+  onProductReviewSubmitted,
 }) => {
   const [showStickyBar, setShowStickyBar] = useState(false);
   const desktopSectionRef = useRef<HTMLDivElement>(null);
@@ -141,6 +154,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const collarSectionRef = useRef<HTMLDivElement>(null);
   const cuffSectionRef = useRef<HTMLDivElement>(null);
   const tailoringSectionRef = useRef<HTMLDivElement>(null);
+  const reviewsSectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const onScroll = () => setShowStickyBar(window.scrollY > 560);
@@ -158,12 +172,25 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       ? product.gallery
       : [product.primary_image, product.secondary_image].filter(Boolean);
 
+  const orderedCollars = useMemo(
+    () => resolveOrderedTailoringOptions('collar', product.collars, tailoringOptions),
+    [product.collars, tailoringOptions]
+  );
+  const orderedCuffs = useMemo(
+    () => resolveOrderedTailoringOptions('cuff', product.cuffs, tailoringOptions),
+    [product.cuffs, tailoringOptions]
+  );
+
   const [fit, setFit] = useState<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'>('Regular Fit');
   const [size, setSize] = useState<string>(
     product.sizes.find((s) => s.startsWith('40')) || product.sizes[0] || '40 / M'
   );
-  const [collar, setCollar] = useState<string>(product.collars[0] || 'Spread');
-  const [cuff, setCuff] = useState<string>(product.cuffs[1] || product.cuffs[0] || 'Modern');
+  const [collar, setCollar] = useState<string>(
+    () => orderedCollars.find((c) => c.isDefault)?.name || orderedCollars[0]?.name || 'Spread'
+  );
+  const [cuff, setCuff] = useState<string>(
+    () => orderedCuffs.find((c) => c.isDefault)?.name || orderedCuffs[0]?.name || 'Modern'
+  );
 
   // 6 bespoke tailoring cm adjustments
   const [lengthAdjustmentCm, setLengthAdjustmentCm] = useState<number>(0);
@@ -181,6 +208,20 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [showMoreMeasurements, setShowMoreMeasurements] = useState(true);
   const [activeTailorEditor, setActiveTailorEditor] = useState<TailoringZoneKey | null>(null);
   const [descExpanded, setDescExpanded] = useState(false);
+
+  // Verified Purchaser-Only Product Reviews State
+  const [reviewsData, setReviewsData] = useState<ProductReviewsResponse>({
+    reviews: [],
+    reviewCount: product.review_count || 0,
+    averageRating: product.average_rating || 0,
+    viewer: { canReview: false, alreadyReviewed: false, reason: 'purchase_required' },
+  });
+  const [ratingInput, setRatingInput] = useState(5);
+  const [reviewTitle, setReviewTitle] = useState('');
+  const [reviewComment, setReviewComment] = useState('');
+  const [fitFeedback, setFitFeedback] = useState<'runs_small' | 'true_to_size' | 'runs_large'>('true_to_size');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewMessage, setReviewMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   // PhotoSwipe-style Full-Screen Lightbox State
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -202,7 +243,66 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
         ? prev
         : product.sizes.find((s) => s.startsWith('40')) || product.sizes[0] || '40 / M'
     );
-  }, [product.id, product.sizes]);
+    const defaultCollar = orderedCollars.find((c) => c.isDefault)?.name || orderedCollars[0]?.name;
+    const defaultCuff = orderedCuffs.find((c) => c.isDefault)?.name || orderedCuffs[0]?.name;
+    if (defaultCollar) setCollar(defaultCollar);
+    if (defaultCuff) setCuff(defaultCuff);
+  }, [product.id, product.sizes, orderedCollars, orderedCuffs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const headers: Record<string, string> = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const qs = reviewToken ? `?reviewToken=${encodeURIComponent(reviewToken)}` : '';
+    fetch(`/api/products/${encodeURIComponent(product.slug)}/reviews${qs}`, { headers })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: ProductReviewsResponse | null) => {
+        if (!cancelled && data && Array.isArray(data.reviews)) {
+          setReviewsData(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [product.slug, authToken, reviewToken]);
+
+  const handleSubmitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewsData.viewer.canReview || reviewSubmitting) return;
+    setReviewSubmitting(true);
+    setReviewMessage(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      const res = await fetch(`/api/products/${encodeURIComponent(product.slug)}/reviews`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          rating: ratingInput,
+          title: reviewTitle,
+          comment: reviewComment,
+          fitFeedback,
+          regionCode: region.code,
+          reviewToken: reviewToken || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReviewMessage({ type: 'err', text: data.error || 'Could not publish verified review.' });
+        return;
+      }
+      setReviewsData(data);
+      setReviewTitle('');
+      setReviewComment('');
+      setReviewMessage({ type: 'ok', text: 'Thank you! Your verified review has been published.' });
+      onProductReviewSubmitted?.();
+    } catch {
+      setReviewMessage({ type: 'err', text: 'Network error submitting review.' });
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (lightboxIndex === null && !fitDrawerOpen) return;
@@ -604,6 +704,21 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 {product.title}
               </h1>
               <p className="text-xs text-neutral-500 mt-0.5">{product.fabric_spec}</p>
+              {reviewsData.reviewCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => scrollToSection(reviewsSectionRef)}
+                  className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-[#142B4E] hover:underline cursor-pointer"
+                >
+                  <span className="inline-flex items-center text-amber-500">
+                    <Star className="w-3.5 h-3.5 fill-amber-400" />
+                  </span>
+                  <span className="font-mono-tabular font-semibold">{reviewsData.averageRating.toFixed(1)}</span>
+                  <span className="text-neutral-500">
+                    ({reviewsData.reviewCount} verified {reviewsData.reviewCount === 1 ? 'review' : 'reviews'})
+                  </span>
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -771,13 +886,14 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
               {collarOpen && (
                 <div className="px-3 pb-3 pt-2 grid grid-cols-2 gap-2.5 border-t border-black/10 bg-[#FAFAFA]">
-                  {product.collars.map((c) => {
-                    const selected = collar === c;
+                  {orderedCollars.map((c) => {
+                    const selected = collar === c.name;
+                    const hint = c.subtitle || COLLAR_META[c.name]?.hint || 'Bespoke option';
                     return (
                       <button
-                        key={c}
+                        key={c.name}
                         type="button"
-                        onClick={() => setCollar(c)}
+                        onClick={() => setCollar(c.name)}
                         className={`relative p-2.5 border text-center flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer bg-white ${
                           selected
                             ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
@@ -791,12 +907,24 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                         >
                           {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
                         </span>
-                        <CollarIllustration name={c} />
+                        {c.isDefault && (
+                          <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#142B4E]/10 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold rounded">
+                            Default
+                          </span>
+                        )}
+                        {c.imageUrl ? (
+                          <img
+                            src={c.imageUrl}
+                            alt={c.name}
+                            referrerPolicy="no-referrer"
+                            className="w-16 h-11 object-cover rounded border border-black/10 bg-[#F5F5F5]"
+                          />
+                        ) : (
+                          <CollarIllustration name={c.name} />
+                        )}
                         <div>
-                          <div className="text-xs font-medium text-[#1A1A1A]">{c}</div>
-                          <div className="text-[10px] text-neutral-500 mt-0.5">
-                            {COLLAR_META[c]?.hint || 'Bespoke option'}
-                          </div>
+                          <div className="text-xs font-medium text-[#1A1A1A]">{c.name}</div>
+                          <div className="text-[10px] text-neutral-500 mt-0.5">{hint}</div>
                         </div>
                       </button>
                     );
@@ -805,7 +933,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               )}
             </div>
 
-            {/* Module 3: Choose cuff (optional) — Enhanced Visual Cuff Showcase */}
+            {/* Module 3: Choose cuff (optional) — Backend-Editable Visual Cuff Showcase */}
             <div ref={cuffSectionRef} className="border border-black/15 bg-white">
               <button
                 type="button"
@@ -830,14 +958,14 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     {copy.pdp.cuffShowcaseCaption}
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
-                    {product.cuffs.map((cf) => {
-                      const selected = cuff === cf;
-                      const meta = CUFF_SPECS[cf];
+                    {orderedCuffs.map((cf) => {
+                      const selected = cuff === cf.name;
+                      const subtitle = cf.subtitle || CUFF_SPECS[cf.name]?.subtitle;
                       return (
                         <button
-                          key={cf}
+                          key={cf.name}
                           type="button"
-                          onClick={() => setCuff(cf)}
+                          onClick={() => setCuff(cf.name)}
                           className={`relative p-3 border text-center flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer bg-white ${
                             selected
                               ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
@@ -851,11 +979,25 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           >
                             {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
                           </span>
-                          <CuffShowcaseIllustration name={cf} selected={selected} />
+                          {cf.isDefault && (
+                            <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#142B4E]/10 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold rounded">
+                              Default
+                            </span>
+                          )}
+                          {cf.imageUrl ? (
+                            <img
+                              src={cf.imageUrl}
+                              alt={cf.name}
+                              referrerPolicy="no-referrer"
+                              className="w-20 h-14 object-cover rounded border border-black/10 bg-[#F5F5F5]"
+                            />
+                          ) : (
+                            <CuffShowcaseIllustration name={cf.name} selected={selected} />
+                          )}
                           <div>
-                            <div className="text-xs font-medium text-[#1A1A1A]">{cf}</div>
-                            {meta && (
-                              <div className="text-[10px] text-neutral-500 mt-0.5">{meta.subtitle}</div>
+                            <div className="text-xs font-medium text-[#1A1A1A]">{cf.name}</div>
+                            {subtitle && (
+                              <div className="text-[10px] text-neutral-500 mt-0.5">{subtitle}</div>
                             )}
                           </div>
                         </button>
@@ -864,22 +1006,40 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   </div>
 
                   {/* Active Cuff Craftsmanship Preview Banner */}
-                  {CUFF_SPECS[cuff] && (
-                    <div className="p-2.5 bg-white border border-black/10 flex items-center gap-3 text-[11px]">
-                      <div className="shrink-0">
-                        <CuffShowcaseIllustration name={cuff} selected />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-semibold text-[#142B4E]">{cuff} — Atelier Spec</div>
-                        <div className="text-neutral-600 leading-snug mt-0.5">
-                          {CUFF_SPECS[cuff].detail}
+                  {(() => {
+                    const activeOpt = orderedCuffs.find((x) => x.name === cuff);
+                    const specFallback = CUFF_SPECS[cuff];
+                    const detailText = activeOpt?.detail || specFallback?.detail;
+                    const stitchText = activeOpt?.stitchSpec || specFallback?.stitchSpec;
+                    if (!detailText && !stitchText) return null;
+                    return (
+                      <div className="p-2.5 bg-white border border-black/10 flex items-center gap-3 text-[11px]">
+                        <div className="shrink-0">
+                          {activeOpt?.imageUrl ? (
+                            <img
+                              src={activeOpt.imageUrl}
+                              alt={cuff}
+                              referrerPolicy="no-referrer"
+                              className="w-16 h-12 object-cover rounded border border-black/10"
+                            />
+                          ) : (
+                            <CuffShowcaseIllustration name={cuff} selected />
+                          )}
                         </div>
-                        <div className="text-[10px] font-mono-tabular text-neutral-500 mt-1">
-                          {CUFF_SPECS[cuff].stitchSpec}
+                        <div className="min-w-0">
+                          <div className="font-semibold text-[#142B4E]">{cuff} — Atelier Spec</div>
+                          {detailText && (
+                            <div className="text-neutral-600 leading-snug mt-0.5">{detailText}</div>
+                          )}
+                          {stitchText && (
+                            <div className="text-[10px] font-mono-tabular text-neutral-500 mt-1">
+                              {stitchText}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -1058,6 +1218,202 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Verified Purchaser Reviews Section (Form hidden from non-buyers) */}
+      <section
+        ref={reviewsSectionRef}
+        id="pdp-reviews"
+        data-testid="pdp-reviews-section"
+        className="mt-10 pt-8 border-t border-black/10 px-4 md:px-6 max-w-5xl"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+          <div>
+            <h2 className="text-sm font-medium uppercase tracking-[0.12em] text-[#1A1A1A] flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-[#142B4E]" />
+              <span>Verified Customer Reviews</span>
+            </h2>
+            <p className="text-xs text-neutral-500 mt-1">
+              Every rating is linked to a confirmed shirt order (one review per customer per product).
+            </p>
+          </div>
+          {reviewsData.reviewCount > 0 && (
+            <div className="flex items-center gap-2 px-3.5 py-2 bg-[#FAFAFA] border border-black/10">
+              <div className="flex items-center gap-0.5 text-amber-500">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <Star
+                    key={s}
+                    className={`w-3.5 h-3.5 ${
+                      s <= Math.round(reviewsData.averageRating)
+                        ? 'fill-amber-400 text-amber-500'
+                        : 'text-neutral-300'
+                    }`}
+                  />
+                ))}
+              </div>
+              <span className="text-xs font-mono-tabular font-semibold text-[#142B4E]">
+                {reviewsData.averageRating.toFixed(1)} / 5.0
+              </span>
+              <span className="text-xs text-neutral-500">
+                ({reviewsData.reviewCount})
+              </span>
+            </div>
+          )}
+        </div>
+
+        {reviewMessage && (
+          <div
+            className={`mb-4 p-3 text-xs border ${
+              reviewMessage.type === 'ok'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {reviewMessage.text}
+          </div>
+        )}
+
+        {/* STRICTLY RENDER REVIEW FORM ONLY FOR VERIFIED PURCHASERS WHO HAVEN'T REVIEWED YET */}
+        {reviewsData.viewer.canReview ? (
+          <form
+            onSubmit={handleSubmitReview}
+            data-testid="verified-review-form"
+            className="mb-6 border border-[#142B4E]/25 bg-[#F8FAFC] p-5 space-y-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/10 pb-3">
+              <div className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
+                Rate Your Purchased Shirt
+              </div>
+              <span className="text-[11px] font-mono-tabular text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5">
+                Verified Order {reviewsData.viewer.orderNumber || ''}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-6">
+              <div>
+                <div className="text-[11px] text-neutral-600 mb-1">Star Rating *</div>
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setRatingInput(star)}
+                      aria-label={`Rate ${star} stars`}
+                      className="p-1 cursor-pointer"
+                    >
+                      <Star
+                        className={`w-5 h-5 ${
+                          star <= ratingInput ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
+                        }`}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[11px] text-neutral-600 mb-1">How does this fit?</div>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  {(
+                    [
+                      ['runs_small', 'Runs Small'],
+                      ['true_to_size', 'True to Size'],
+                      ['runs_large', 'Runs Large'],
+                    ] as const
+                  ).map(([val, lbl]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setFitFeedback(val)}
+                      className={`px-2.5 py-1 border cursor-pointer ${
+                        fitFeedback === val
+                          ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                          : 'bg-white text-neutral-700 border-black/15'
+                      }`}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <input
+              type="text"
+              value={reviewTitle}
+              onChange={(e) => setReviewTitle(e.target.value)}
+              placeholder="Headline (e.g. Effortless drape and breathable linen)"
+              maxLength={140}
+              className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
+            />
+
+            <textarea
+              required
+              minLength={5}
+              rows={3}
+              value={reviewComment}
+              onChange={(e) => setReviewComment(e.target.value)}
+              placeholder="Share your experience with fabric feel, collar structure, and sleeve fit..."
+              className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
+            />
+
+            <button
+              type="submit"
+              disabled={reviewSubmitting}
+              className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
+            >
+              {reviewSubmitting ? 'Publishing Review...' : 'Submit Verified Review'}
+            </button>
+          </form>
+        ) : (
+          <div className="mb-5 px-4 py-3 bg-[#FAFAFA] border border-black/10 text-[11px] text-neutral-600">
+            {reviewsData.viewer.alreadyReviewed
+              ? 'Thank you — you have already submitted your verified review for this shirt (limit one review per customer per product).'
+              : 'Review submission is reserved exclusively for verified buyers via the rating link emailed after purchase or your signed-in order history.'}
+          </div>
+        )}
+
+        {reviewsData.reviews.length === 0 ? (
+          <div className="text-xs text-neutral-500 py-4">
+            No customer reviews yet for this shirt.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {reviewsData.reviews.map((rev) => (
+              <article key={rev.id} className="border border-black/10 bg-white p-4 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-0.5 text-amber-500">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Star
+                        key={s}
+                        className={`w-3.5 h-3.5 ${
+                          s <= rev.rating ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-[10px] font-mono-tabular px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Verified Buyer
+                  </span>
+                </div>
+                {rev.title && <h3 className="text-xs font-semibold text-[#1A1A1A]">{rev.title}</h3>}
+                <p className="text-xs text-neutral-600 leading-relaxed">{rev.comment}</p>
+                <div className="pt-1 flex items-center justify-between text-[11px] text-neutral-400">
+                  <span>{rev.customer_name}</span>
+                  <span>
+                    {rev.fit_feedback === 'runs_small'
+                      ? 'Fit: Runs Small'
+                      : rev.fit_feedback === 'runs_large'
+                      ? 'Fit: Runs Large'
+                      : 'Fit: True to Size'}
+                    {' · '}
+                    {rev.created_at.slice(0, 10)}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Recommendations Row Using Hover Scrubber Cards */}
       {recommendations.length > 0 && (

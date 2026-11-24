@@ -134,10 +134,21 @@ export function clampSeoText(text: string, minLen: number, maxLen: number, fallb
 export interface SeoMetadataResult {
   title: string;
   description: string;
+  keywords: string;
   canonicalUrl: string;
   ogType: 'website' | 'product';
+  ogLocale: string;
+  ogSiteName: string;
   ogImage: string;
+  ogImageAlt: string;
   robots: string;
+  productMeta?: {
+    priceAmount: string;
+    priceCurrency: string;
+    availability: string;
+    brand: string;
+    retailerItemId: string;
+  };
   hreflangs: Array<{ hreflang: string; href: string }>;
   jsonLd: Array<Record<string, unknown>>;
 }
@@ -147,7 +158,7 @@ export function buildSeoMetadata(params: {
   region: Pick<RegionConfig, 'code' | 'name' | 'currency_code' | 'warehouse_name'>;
   category?: string;
   categoryRecord?: Pick<CategoryRecord, 'slug' | 'name_en' | 'name_no' | 'name_it' | 'name_vn'> | null;
-  product?: Pick<
+  product?: (Pick<
     Product,
     | 'sku'
     | 'slug'
@@ -158,7 +169,17 @@ export function buildSeoMetadata(params: {
     | 'primary_image'
     | 'stock_qty'
     | 'preorder_allowed'
-  > | null;
+    | 'seo_title'
+    | 'seo_description'
+    | 'seo_keywords'
+    | 'review_count'
+    | 'average_rating'
+    | 'reviews'
+  > & {
+    category_slug?: string;
+    subtitle?: string;
+    gallery?: string[];
+  }) | null;
   origin: string;
 }): SeoMetadataResult {
   const baseOrigin = (params.origin || 'https://montenapoleone1974.com').replace(/\/+$/, '');
@@ -177,6 +198,9 @@ export function buildSeoMetadata(params: {
     if (/^https?:\/\//i.test(clean)) return clean;
     return `${baseOrigin}${clean.startsWith('/') ? clean : `/${clean}`}`;
   };
+
+  const ogLocale =
+    rc === 'no' ? 'nb_NO' : rc === 'it' ? 'it_IT' : rc === 'vn' ? 'vi_VN' : 'en_US';
 
   const hreflangs: Array<{ hreflang: string; href: string }> = (['en', 'no', 'it', 'vn'] as const).map(
     (code) => ({
@@ -206,6 +230,7 @@ export function buildSeoMetadata(params: {
     url: baseOrigin,
     logo: `${baseOrigin}/assets/aistudio/logo__2__1ee1df15.png`,
     foundingDate: '1974',
+    email: 'monte@montenapoleone1974.com',
     address: {
       '@type': 'PostalAddress',
       streetAddress: 'Maridalsveien 87',
@@ -213,15 +238,23 @@ export function buildSeoMetadata(params: {
       postalCode: '0461',
       addressCountry: 'NO',
     },
+    sameAs: [
+      'https://www.facebook.com/MonteNapoleoneShirts',
+      'https://www.instagram.com/montenapoleoneshirts/',
+    ],
   };
 
   if (params.view === 'admin') {
     return {
       title: 'Monte Napoleone 1974 — Operations Admin',
       description: 'Store administration and multi-region inventory portal for Monte Napoleone 1974 bespoke Italian shirts.',
+      keywords: 'Monte Napoleone 1974 admin',
       canonicalUrl,
       ogType: 'website',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage('/src/assets/images/hero_oxford_olive_1795248294228.jpg'),
+      ogImageAlt: 'Monte Napoleone 1974 Atelier',
       robots: 'noindex, nofollow',
       hreflangs: [],
       jsonLd: [orgSchema],
@@ -230,36 +263,109 @@ export function buildSeoMetadata(params: {
 
   if (params.view === 'product' && params.product) {
     const p = params.product;
-    const rawTitle = `${p.title} – Monte Napoleone 1974`;
-    const title = clampSeoText(rawTitle, 30, 60, `(${params.region.currency_code})`);
-    const rawDesc = `${p.title} in ${p.fabric_spec}. Complimentary bespoke sleeve & shirt length tailoring in ${params.region.name} with worldwide DHL dispatch.`;
-    const description = clampSeoText(rawDesc, 120, 160, 'Shop Italian bespoke shirting.');
-    const availability =
+    const rawTitle = (p.seo_title || '').trim() || `${p.title} (${p.fabric_spec}) – Monte Napoleone 1974`;
+    const title = clampSeoText(rawTitle, 32, 60, `| Bespoke ${params.region.currency_code}`);
+    const rawDesc =
+      (p.seo_description || '').trim() ||
+      `Shop ${p.title} crafted from ${p.fabric_spec}. Free bespoke sleeve & shirt length tailoring in ${params.region.name} with worldwide DHL Express dispatch.`;
+    const description = clampSeoText(rawDesc, 120, 160, 'Monte Napoleone Treviso 1974.');
+    const keywords =
+      (p.seo_keywords || '').trim() ||
+      [
+        p.title,
+        p.fabric_spec,
+        p.category_slug ? `${p.category_slug} shirt` : 'Italian dress shirt',
+        'bespoke shirt tailoring',
+        'Monte Napoleone 1974',
+        p.sku,
+        params.region.name,
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+    const schemaAvailability =
       p.stock_qty > 0
         ? 'https://schema.org/InStock'
         : p.preorder_allowed
         ? 'https://schema.org/PreOrder'
         : 'https://schema.org/OutOfStock';
+    const ogAvailability = p.stock_qty > 0 ? 'instock' : p.preorder_allowed ? 'available for order' : 'oos';
+
+    const imagesList = Array.from(
+      new Set([p.primary_image, ...(p.gallery || [])].filter(Boolean).map(resolveImage))
+    );
+    const nextYear = `${new Date().getFullYear() + 1}-12-31`;
 
     const productSchema: Record<string, unknown> = {
       '@context': 'https://schema.org',
       '@type': 'Product',
+      '@id': `${canonicalUrl}#product`,
       name: p.title,
       sku: p.sku,
-      image: [resolveImage(p.primary_image)],
+      mpn: p.sku,
+      url: canonicalUrl,
+      category: p.category_slug || 'Dress Shirts',
+      material: p.fabric_spec,
+      image: imagesList,
       description: p.description || description,
       brand: {
         '@type': 'Brand',
         name: 'Monte Napoleone 1974',
+      },
+      manufacturer: {
+        '@type': 'Organization',
+        name: 'Monte Napoleone Treviso Sartoria',
       },
       offers: {
         '@type': 'Offer',
         url: canonicalUrl,
         priceCurrency: params.region.currency_code,
         price: p.price,
-        availability,
+        priceValidUntil: nextYear,
+        itemCondition: 'https://schema.org/NewCondition',
+        availability: schemaAvailability,
+        seller: {
+          '@type': 'Organization',
+          name: 'Monte Napoleone 1974',
+        },
+        hasMerchantReturnPolicy: {
+          '@type': 'MerchantReturnPolicy',
+          applicableCountry: rc === 'no' ? 'NO' : rc === 'it' ? 'IT' : rc === 'vn' ? 'VN' : 'US',
+          returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+          merchantReturnDays: 14,
+        },
       },
     };
+
+    const reviewCount = Number(p.review_count || (p.reviews ? p.reviews.length : 0));
+    const avgRating = Number(p.average_rating || 0);
+    if (reviewCount > 0 && avgRating > 0) {
+      productSchema.aggregateRating = {
+        '@type': 'AggregateRating',
+        ratingValue: Number(avgRating.toFixed(1)),
+        reviewCount,
+        bestRating: 5,
+        worstRating: 1,
+      };
+    }
+    if (Array.isArray(p.reviews) && p.reviews.length > 0) {
+      productSchema.review = p.reviews.slice(0, 8).map((rev) => ({
+        '@type': 'Review',
+        author: {
+          '@type': 'Person',
+          name: rev.customer_name,
+        },
+        datePublished: String(rev.created_at || '').slice(0, 10),
+        name: rev.title || `${p.title} verified review`,
+        reviewBody: rev.comment,
+        reviewRating: {
+          '@type': 'Rating',
+          ratingValue: rev.rating,
+          bestRating: 5,
+          worstRating: 1,
+        },
+      }));
+    }
 
     const breadcrumbSchema: Record<string, unknown> = {
       '@context': 'https://schema.org',
@@ -279,10 +385,21 @@ export function buildSeoMetadata(params: {
     return {
       title,
       description,
+      keywords,
       canonicalUrl,
       ogType: 'product',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage(p.primary_image),
-      robots: 'index, follow',
+      ogImageAlt: `${p.title} – ${p.fabric_spec} Italian Bespoke Shirt`,
+      robots: 'index, follow, max-image-preview:large, max-snippet:-1',
+      productMeta: {
+        priceAmount: String(p.price),
+        priceCurrency: params.region.currency_code,
+        availability: ogAvailability,
+        brand: 'Monte Napoleone 1974',
+        retailerItemId: p.sku,
+      },
       hreflangs,
       jsonLd: [orgSchema, productSchema, breadcrumbSchema],
     };
@@ -303,7 +420,7 @@ export function buildSeoMetadata(params: {
     const title = clampSeoText(
       `${catName} Collection – Monte Napoleone 1974`,
       30,
-      60,
+      62,
       `${params.region.name}`
     );
     const description = clampSeoText(
@@ -322,10 +439,14 @@ export function buildSeoMetadata(params: {
     return {
       title,
       description,
+      keywords: `${catName}, Italian bespoke shirts, tailored shirting, Monte Napoleone 1974, ${params.region.name}`,
       canonicalUrl,
       ogType: 'website',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage('/src/assets/images/editorial_casual_linen_1795248294319.jpg'),
-      robots: 'index, follow',
+      ogImageAlt: `${catName} – Monte Napoleone 1974`,
+      robots: 'index, follow, max-image-preview:large',
       hreflangs,
       jsonLd: [orgSchema, collectionSchema],
     };
@@ -335,7 +456,7 @@ export function buildSeoMetadata(params: {
     const title = clampSeoText(
       `Corporate B2B Shirts (${params.region.name}) – Monte Napoleone 1974`,
       30,
-      60,
+      62,
       'Wholesale'
     );
     const description = clampSeoText(
@@ -347,17 +468,21 @@ export function buildSeoMetadata(params: {
     return {
       title,
       description,
+      keywords: 'corporate uniform shirts, B2B tailored shirts, embroidered company shirts, Monte Napoleone 1974',
       canonicalUrl,
       ogType: 'website',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage('/src/assets/images/editorial_corporate_b2b_1795248294517.jpg'),
-      robots: 'index, follow',
+      ogImageAlt: 'Monte Napoleone 1974 Corporate B2B Tailoring',
+      robots: 'index, follow, max-image-preview:large',
       hreflangs,
       jsonLd: [orgSchema],
     };
   }
 
   if (params.view === 'about') {
-    const title = clampSeoText('Heritage Since 1974 – Monte Napoleone Treviso', 30, 60, 'Atelier');
+    const title = clampSeoText('Heritage Since 1974 – Monte Napoleone Treviso', 30, 62, 'Atelier');
     const description = clampSeoText(
       'Discover Monte Napoleone 1974: Italian bespoke shirting craftsmanship founded in Treviso, 2-ply Egyptian cotton, Tuscan linen, and Nordic Oslo showroom.',
       120,
@@ -367,10 +492,14 @@ export function buildSeoMetadata(params: {
     return {
       title,
       description,
+      keywords: 'Monte Napoleone 1974 heritage, Treviso Italy shirtmaker, Oslo Gulbrandsens Agencies showroom',
       canonicalUrl,
       ogType: 'website',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage('/src/assets/images/editorial_tailoring_guide_1795248294030.jpg'),
-      robots: 'index, follow',
+      ogImageAlt: 'Monte Napoleone 1974 Heritage Treviso Atelier',
+      robots: 'index, follow, max-image-preview:large',
       hreflangs,
       jsonLd: [orgSchema],
     };
@@ -392,10 +521,14 @@ export function buildSeoMetadata(params: {
   return {
     title: homeTitles[rc] || homeTitles.en,
     description: homeDescs[rc] || homeDescs.en,
+    keywords: 'Monte Napoleone 1974, Italian dress shirts, bespoke shirting, custom sleeve length, linen shirts, Oslo, Treviso',
     canonicalUrl,
     ogType: 'website',
+    ogLocale,
+    ogSiteName: 'Monte Napoleone 1974',
     ogImage: resolveImage('/src/assets/images/hero_oxford_olive_1795248294228.jpg'),
-    robots: params.view === 'checkout' || params.view === 'account' ? 'noindex, follow' : 'index, follow',
+    ogImageAlt: 'Monte Napoleone 1974 Bespoke Italian Shirts',
+    robots: params.view === 'checkout' || params.view === 'account' ? 'noindex, follow' : 'index, follow, max-image-preview:large',
     hreflangs,
     jsonLd: [orgSchema],
   };
@@ -427,13 +560,19 @@ export function buildSitemapXml(params: {
   origin: string;
   regions: RegionCode[];
   categories: Array<{ slug: string }>;
-  products: Array<{ slug: string }>;
+  products: Array<{ slug: string; primary_image?: string; title?: string }>;
 }): string {
   const baseOrigin = (params.origin || 'https://montenapoleone1974.com').replace(/\/+$/, '');
   const nowDate = new Date().toISOString().slice(0, 10);
-  const urls: Array<{ loc: string; changefreq: string; priority: string; altPaths?: Record<RegionCode, string> }> = [];
+  const urls: Array<{
+    loc: string;
+    changefreq: string;
+    priority: string;
+    altPaths?: Record<RegionCode, string>;
+    imageLoc?: string;
+    imageTitle?: string;
+  }> = [];
 
-  // Homepages per region
   for (const rc of params.regions) {
     urls.push({
       loc: `${baseOrigin}${buildStorefrontPath({ regionCode: rc, view: 'home' })}`,
@@ -475,11 +614,18 @@ export function buildSitemapXml(params: {
   }
 
   for (const prod of params.products) {
+    const imgUrl = prod.primary_image
+      ? /^https?:\/\//i.test(prod.primary_image)
+        ? prod.primary_image
+        : `${baseOrigin}${prod.primary_image.startsWith('/') ? prod.primary_image : `/${prod.primary_image}`}`
+      : undefined;
     for (const rc of params.regions) {
       urls.push({
         loc: `${baseOrigin}${buildStorefrontPath({ regionCode: rc, view: 'product', slug: prod.slug })}`,
         changefreq: 'weekly',
-        priority: '0.8',
+        priority: '0.9',
+        imageLoc: imgUrl,
+        imageTitle: prod.title || prod.slug,
       });
     }
   }
@@ -494,9 +640,15 @@ export function buildSitemapXml(params: {
             })
             .join('\n')
         : '';
-      return `  <url>\n    <loc>${escapeXml(u.loc)}</loc>\n    <lastmod>${nowDate}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>${altXml ? `\n${altXml}` : ''}\n  </url>`;
+      const imgXml = u.imageLoc
+        ? `    <image:image>\n      <image:loc>${escapeXml(u.imageLoc)}</image:loc>${
+            u.imageTitle ? `\n      <image:title>${escapeXml(u.imageTitle)}</image:title>` : ''
+          }\n    </image:image>`
+        : '';
+      return `  <url>\n    <loc>${escapeXml(u.loc)}</loc>\n    <lastmod>${nowDate}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>${altXml ? `\n${altXml}` : ''}${imgXml ? `\n${imgXml}` : ''}\n  </url>`;
     })
     .join('\n');
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${body}\n</urlset>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${body}\n</urlset>`;
 }
+

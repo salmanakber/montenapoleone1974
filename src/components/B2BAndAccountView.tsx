@@ -26,6 +26,7 @@ import type {
   OrderRecord,
   Product,
   RegionConfig,
+  TailoringOptionRecord,
 } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
 import { GoogleIcon } from './GmailLoginCornerPopup.tsx';
@@ -35,6 +36,7 @@ import {
   estimateB2BUnitRate,
   formatRegionalPrice,
   productMatchesCategories,
+  resolveOrderedTailoringOptions,
 } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
 
@@ -45,6 +47,7 @@ interface B2BViewProps {
   copy: RegionCopy;
   categories: CategoryRecord[];
   products: Product[];
+  tailoringOptions?: TailoringOptionRecord[];
   wishlistIds: number[];
   initialProductSlug?: string | null;
   onClearInitialProduct?: () => void;
@@ -59,6 +62,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
   copy,
   categories,
   products,
+  tailoringOptions = [],
   wishlistIds,
   initialProductSlug,
   onClearInitialProduct,
@@ -114,12 +118,42 @@ export const B2BView: React.FC<B2BViewProps> = ({
     '2XL / 45': 2,
     '3XL / 48': 1,
   });
+  const resolvedCollars = useMemo(
+    () =>
+      resolveOrderedTailoringOptions(
+        'collar',
+        activeProduct?.collars || ['Spread', 'Semi Spread', 'Button Down', 'Cutaway'],
+        tailoringOptions
+      ),
+    [activeProduct, tailoringOptions]
+  );
+  const resolvedCuffs = useMemo(
+    () =>
+      resolveOrderedTailoringOptions(
+        'cuff',
+        activeProduct?.cuffs || ['Angle', 'Modern', 'Rounded', 'Single French'],
+        tailoringOptions
+      ),
+    [activeProduct, tailoringOptions]
+  );
+
   const [bodyFit, setBodyFit] = useState<'SLIM FIT' | 'REGULAR FIT' | 'CONTEMPORARY FIT'>(
     'REGULAR FIT'
   );
-  const [collarType, setCollarType] = useState('Spread');
-  const [cuffType, setCuffType] = useState('Modern');
+  const [collarType, setCollarType] = useState(
+    () => resolvedCollars.find((c) => c.isDefault)?.name || resolvedCollars[0]?.name || 'Spread'
+  );
+  const [cuffType, setCuffType] = useState(
+    () => resolvedCuffs.find((c) => c.isDefault)?.name || resolvedCuffs[0]?.name || 'Modern'
+  );
   const [supplierNotes, setSupplierNotes] = useState('');
+
+  useEffect(() => {
+    const defCollar = resolvedCollars.find((c) => c.isDefault)?.name || resolvedCollars[0]?.name;
+    const defCuff = resolvedCuffs.find((c) => c.isDefault)?.name || resolvedCuffs[0]?.name;
+    if (defCollar) setCollarType(defCollar);
+    if (defCuff) setCuffType(defCuff);
+  }, [activeProduct?.id, resolvedCollars, resolvedCuffs]);
 
   // Corporate Shipping Details & Order Summary Form
   const [companyName, setCompanyName] = useState('');
@@ -715,18 +749,25 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     {copy.b2b.collarType}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {activeProduct.collars.map((c) => (
+                    {resolvedCollars.map((c) => (
                       <button
-                        key={c}
+                        key={c.name}
                         type="button"
-                        onClick={() => setCollarType(c)}
-                        className={`py-2 px-2 text-[11px] border text-left cursor-pointer ${
-                          collarType === c
+                        onClick={() => setCollarType(c.name)}
+                        className={`p-2 text-[11px] border text-left flex items-center gap-2 cursor-pointer ${
+                          collarType === c.name
                             ? 'border-[#142B4E] bg-[#142B4E]/5 font-semibold text-[#142B4E]'
                             : 'border-black/10 hover:border-black/30'
                         }`}
                       >
-                        {c}
+                        {c.imageUrl && (
+                          <img
+                            src={c.imageUrl}
+                            alt={c.name}
+                            className="w-7 h-7 object-cover rounded border border-black/10 shrink-0"
+                          />
+                        )}
+                        <span className="truncate">{c.name}</span>
                       </button>
                     ))}
                   </div>
@@ -737,18 +778,25 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     {copy.b2b.cuffType}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {activeProduct.cuffs.map((cf) => (
+                    {resolvedCuffs.map((cf) => (
                       <button
-                        key={cf}
+                        key={cf.name}
                         type="button"
-                        onClick={() => setCuffType(cf)}
-                        className={`py-2 px-2 text-[11px] border text-left cursor-pointer ${
-                          cuffType === cf
+                        onClick={() => setCuffType(cf.name)}
+                        className={`p-2 text-[11px] border text-left flex items-center gap-2 cursor-pointer ${
+                          cuffType === cf.name
                             ? 'border-[#142B4E] bg-[#142B4E]/5 font-semibold text-[#142B4E]'
                             : 'border-black/10 hover:border-black/30'
                         }`}
                       >
-                        {cf}
+                        {cf.imageUrl && (
+                          <img
+                            src={cf.imageUrl}
+                            alt={cf.name}
+                            className="w-7 h-7 object-cover rounded border border-black/10 shrink-0"
+                          />
+                        )}
+                        <span className="truncate">{cf.name}</span>
                       </button>
                     ))}
                   </div>
@@ -833,17 +881,17 @@ export const B2BView: React.FC<B2BViewProps> = ({
       {/* VIEW 3: DEFAULT MONTE CONNECTED B2B PRICE-FREE 4-COL CATALOG */}
       {!submittedId && !showCheckoutSummary && !activeProduct && (
         <div className="space-y-6">
-          {/* Horizontal Snap-Scroll Category Carousel (B2B Scoped + Subcategories) */}
+          {/* Mobile Horizontal Carousel / Desktop Auto-Adjusted Category Bar */}
           <div className="flex flex-col items-center gap-2.5">
             <div
               data-testid="b2b-category-carousel"
-              className="w-full max-w-4xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1"
+              className="w-full max-w-4xl md:w-auto md:max-w-5xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1 md:px-2"
             >
               <button
                 type="button"
                 onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
                 aria-label="Scroll B2B categories left"
-                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -851,7 +899,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
               <nav
                 ref={b2bCatCarouselRef}
                 aria-label="B2B shirt categories"
-                className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5"
+                className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5 md:flex-wrap md:justify-center md:overflow-visible"
               >
                 <button
                   type="button"
@@ -884,7 +932,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
                 type="button"
                 onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
                 aria-label="Scroll B2B categories right"
-                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -953,6 +1001,7 @@ interface AccountViewProps {
   customerAuthConfig: CustomerAuthPublicConfig;
   onAuthChange: (token: string | null, user: AuthUser | null) => void;
   onPromoUnlocked: (code: string) => void;
+  onOpenProduct?: (slug: string, reviewToken?: string) => void;
 }
 
 export const AccountView: React.FC<AccountViewProps> = ({
@@ -963,6 +1012,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
   customerAuthConfig,
   onAuthChange,
   onPromoUnlocked,
+  onOpenProduct,
 }) => {
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [loginEmail, setLoginEmail] = useState('');
@@ -978,7 +1028,19 @@ export const AccountView: React.FC<AccountViewProps> = ({
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [authMessage, setAuthMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  const [myOrders, setMyOrders] = useState<OrderRecord[]>([]);
+  const [myOrders, setMyOrders] = useState<
+    Array<
+      OrderRecord & {
+        reviewInvites?: Array<{
+          productId: number;
+          slug: string;
+          title: string;
+          token: string;
+          alreadyReviewed?: boolean;
+        }>;
+      }
+    >
+  >([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
 
   const [orderNumber, setOrderNumber] = useState('MN-2026-1001');
@@ -1357,24 +1419,49 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 {myOrders.map((ord) => (
                   <div
                     key={ord.id}
-                    className="border border-black/10 bg-[#FAFAFA] p-4 flex flex-wrap items-center justify-between gap-3 text-xs"
+                    className="border border-black/10 bg-[#FAFAFA] p-4 space-y-2.5 text-xs"
                   >
-                    <div>
-                      <div className="font-mono-tabular font-semibold text-[#1A1A1A]">
-                        {ord.order_number}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-mono-tabular font-semibold text-[#1A1A1A]">
+                          {ord.order_number}
+                        </div>
+                        <div className="text-neutral-500">
+                          {ord.shipping_city}, {ord.shipping_country} · {ord.payment_method.toUpperCase()}
+                        </div>
                       </div>
-                      <div className="text-neutral-500">
-                        {ord.shipping_city}, {ord.shipping_country} · {ord.payment_method.toUpperCase()}
+                      <div className="flex items-center gap-3">
+                        <span className="px-2 py-0.5 bg-white border border-black/10 uppercase text-[11px]">
+                          {ord.order_status}
+                        </span>
+                        <span className="font-mono-tabular font-semibold">
+                          {formatRegionalPrice(ord.total, ord.region_code)}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="px-2 py-0.5 bg-white border border-black/10 uppercase text-[11px]">
-                        {ord.order_status}
-                      </span>
-                      <span className="font-mono-tabular font-semibold">
-                        {formatRegionalPrice(ord.total, ord.region_code)}
-                      </span>
-                    </div>
+                    {ord.order_status !== 'cancelled' && Array.isArray(ord.reviewInvites) && ord.reviewInvites.length > 0 && (
+                      <div className="pt-2 border-t border-black/10 flex flex-wrap items-center gap-2">
+                        {ord.reviewInvites.map((inv) =>
+                          inv.alreadyReviewed ? (
+                            <span
+                              key={`${ord.id}-${inv.productId}`}
+                              className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px]"
+                            >
+                              {inv.title}: Reviewed ✓
+                            </span>
+                          ) : (
+                            <button
+                              key={`${ord.id}-${inv.productId}`}
+                              type="button"
+                              onClick={() => onOpenProduct?.(inv.slug, inv.token)}
+                              className="px-2.5 py-1 bg-white hover:bg-[#142B4E] hover:text-white border border-[#142B4E]/30 text-[#142B4E] text-[11px] font-medium transition-colors cursor-pointer"
+                            >
+                              Rate {inv.title} →
+                            </button>
+                          )
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

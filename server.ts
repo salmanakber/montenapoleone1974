@@ -104,6 +104,7 @@ dotenv.config();
 initializeDatabase();
 
 const app = express();
+app.set('trust proxy', true);
 app.use(express.json({ limit: '4mb' }));
 
 // Static serving for uploaded WordPress-style media files
@@ -354,6 +355,214 @@ function hydrateCategoryRow(c: Record<string, unknown>) {
   };
 }
 
+function hydrateTailoringOptionRow(row: Record<string, unknown>) {
+  return {
+    id: Number(row.id),
+    option_type: row.option_type === 'cuff' ? ('cuff' as const) : ('collar' as const),
+    name: String(row.name || ''),
+    subtitle: String(row.subtitle || ''),
+    detail: String(row.detail || ''),
+    stitch_spec: String(row.stitch_spec || ''),
+    image_url: String(row.image_url || ''),
+    sort_order: Number(row.sort_order ?? 0),
+    is_default: Boolean(row.is_default),
+    active: row.active === undefined ? true : Boolean(row.active),
+  };
+}
+
+function getTailoringOptions(includeInactive = false) {
+  const sql = includeInactive
+    ? 'SELECT * FROM tailoring_options ORDER BY option_type ASC, sort_order ASC, id ASC'
+    : 'SELECT * FROM tailoring_options WHERE active = 1 ORDER BY option_type ASC, sort_order ASC, id ASC';
+  return (db.prepare(sql).all() as Array<Record<string, unknown>>).map(hydrateTailoringOptionRow);
+}
+
+function createOrGetReviewInvitesForOrder(params: {
+  orderNumber: string;
+  regionCode: RegionCode;
+  customerEmail: string;
+  customerName: string;
+  items: Array<{ productId: number; sku?: string; title?: string; image?: string }>;
+  origin: string;
+}) {
+  const seenProdIds = new Set<number>();
+  const links: Array<{
+    productId: number;
+    slug: string;
+    title: string;
+    sku: string;
+    image: string;
+    token: string;
+    reviewUrl: string;
+  }> = [];
+
+  for (const item of params.items) {
+    const pid = Number(item.productId);
+    if (!pid || seenProdIds.has(pid)) continue;
+    seenProdIds.add(pid);
+
+    const prod = db
+      .prepare('SELECT id, slug, sku, primary_image FROM products WHERE id = ?')
+      .get(pid) as { id: number; slug: string; sku: string; primary_image: string } | undefined;
+    if (!prod) continue;
+
+    let invite = db
+      .prepare('SELECT token FROM review_invites WHERE order_number = ? AND product_id = ?')
+      .get(params.orderNumber, pid) as { token: string } | undefined;
+
+    if (!invite) {
+      const token = crypto.randomBytes(18).toString('hex');
+      db.prepare(
+        `INSERT INTO review_invites (token, order_number, product_id, customer_email, customer_name, region_code)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        token,
+        params.orderNumber,
+        pid,
+        params.customerEmail.trim().toLowerCase(),
+        params.customerName.trim(),
+        params.regionCode
+      );
+      invite = { token };
+    }
+
+    const baseOrigin = params.origin.replace(/\/+$/, '');
+    links.push({
+      productId: pid,
+      slug: prod.slug,
+      title: String(item.title || prod.sku),
+      sku: String(item.sku || prod.sku),
+      image: String(item.image || prod.primary_image),
+      token: invite.token,
+      reviewUrl: `${baseOrigin}/${params.regionCode}/product/${prod.slug}?reviewToken=${invite.token}`,
+    });
+  }
+  return links;
+}
+
+function checkUserPurchasedProduct(customerEmail: string, productId: number): { orderNumber: string } | null {
+  const cleanEmail = customerEmail.trim().toLowerCase();
+  if (!cleanEmail) return null;
+  const orders = db
+    .prepare(
+      `SELECT order_number, items_json FROM orders
+       WHERE LOWER(customer_email) = ? AND order_status != 'cancelled'
+       ORDER BY id DESC`
+    )
+    .all(cleanEmail) as Array<{ order_number: string; items_json: string }>;
+
+  for (const ord of orders) {
+    try {
+      const items = JSON.parse(ord.items_json || '[]') as Array<{ productId?: number }>;
+      if (items.some((it) => Number(it.productId) === productId)) {
+        return { orderNumber: ord.order_number };
+      }
+    } catch {
+      // skip invalid json
+    }
+  }
+  return null;
+}
+
+function buildProductReviewsPayload(params: {
+  productId: number;
+  reviewToken?: string;
+  authUserEmail?: string | null;
+  authUserName?: string | null;
+}) {
+  const reviewRows = db
+    .prepare(
+      `SELECT id, product_id, order_number, customer_name, rating, title, comment, fit_feedback, region_code, verified_purchase, created_at
+       FROM product_reviews
+       WHERE product_id = ?
+       ORDER BY id DESC`
+    )
+    .all(params.productId) as Array<Record<string, unknown>>;
+
+  const reviews = reviewRows.map((r) => ({
+    id: Number(r.id),
+    product_id: Number(r.product_id),
+    order_number: String(r.order_number),
+    customer_name: String(r.customer_name),
+    rating: Number(r.rating),
+    title: String(r.title || ''),
+    comment: String(r.comment || ''),
+    fit_feedback: (r.fit_feedback === 'runs_small' || r.fit_feedback === 'runs_large'
+      ? r.fit_feedback
+      : 'true_to_size') as 'runs_small' | 'true_to_size' | 'runs_large',
+    region_code: parseRegion(r.region_code),
+    verified_purchase: Boolean(r.verified_purchase),
+    created_at: String(r.created_at),
+  }));
+
+  const reviewCount = reviews.length;
+  const averageRating =
+    reviewCount > 0
+      ? Math.round((reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount) * 10) / 10
+      : 0;
+
+  let canReview = false;
+  let alreadyReviewed = false;
+  let reason: 'invite_verified' | 'order_verified' | 'already_reviewed' | 'purchase_required' = 'purchase_required';
+  let orderNumber: string | undefined;
+  let customerName: string | undefined;
+
+  const cleanToken = (params.reviewToken || '').trim();
+  if (cleanToken) {
+    const invite = db
+      .prepare('SELECT * FROM review_invites WHERE token = ? AND product_id = ?')
+      .get(cleanToken, params.productId) as
+      | { order_number: string; customer_email: string; customer_name: string }
+      | undefined;
+    if (invite) {
+      const existing = db
+        .prepare('SELECT id FROM product_reviews WHERE product_id = ? AND LOWER(customer_email) = LOWER(?)')
+        .get(params.productId, invite.customer_email);
+      if (existing) {
+        alreadyReviewed = true;
+        reason = 'already_reviewed';
+      } else {
+        canReview = true;
+        reason = 'invite_verified';
+        orderNumber = invite.order_number;
+        customerName = invite.customer_name;
+      }
+    }
+  }
+
+  if (!canReview && !alreadyReviewed && params.authUserEmail) {
+    const cleanEmail = params.authUserEmail.trim().toLowerCase();
+    const existing = db
+      .prepare('SELECT id FROM product_reviews WHERE product_id = ? AND LOWER(customer_email) = ?')
+      .get(params.productId, cleanEmail);
+    if (existing) {
+      alreadyReviewed = true;
+      reason = 'already_reviewed';
+    } else {
+      const matched = checkUserPurchasedProduct(cleanEmail, params.productId);
+      if (matched) {
+        canReview = true;
+        reason = 'order_verified';
+        orderNumber = matched.orderNumber;
+        customerName = params.authUserName || cleanEmail.split('@')[0];
+      }
+    }
+  }
+
+  return {
+    reviews,
+    reviewCount,
+    averageRating,
+    viewer: {
+      canReview,
+      alreadyReviewed,
+      reason,
+      orderNumber,
+      customerName,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // PUBLIC STOREFRONT ENDPOINTS
 // ---------------------------------------------------------------------------
@@ -418,13 +627,29 @@ app.get('/api/storefront/bootstrap', (req, res) => {
   const productRows = db
     .prepare(
       `SELECT p.*, pl.title, pl.subtitle, pl.description, pl.price, pl.compare_at_price,
-              pl.stock_qty, pl.warehouse_location, pl.delivery_note
+              pl.stock_qty, pl.warehouse_location, pl.delivery_note,
+              pl.seo_title, pl.seo_description, pl.seo_keywords
        FROM products p
        JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
        WHERE p.active = 1
        ORDER BY p.is_featured DESC, p.id ASC`
     )
     .all(regionCode) as Array<Record<string, unknown>>;
+
+  const reviewStatsRows = db
+    .prepare(
+      `SELECT product_id, COUNT(*) AS review_count, ROUND(AVG(rating), 1) AS average_rating
+       FROM product_reviews
+       GROUP BY product_id`
+    )
+    .all() as Array<{ product_id: number; review_count: number; average_rating: number }>;
+  const reviewStatsMap = new Map<number, { reviewCount: number; averageRating: number }>();
+  for (const rs of reviewStatsRows) {
+    reviewStatsMap.set(Number(rs.product_id), {
+      reviewCount: Number(rs.review_count || 0),
+      averageRating: Number(rs.average_rating || 0),
+    });
+  }
 
   const variantsRows = db
     .prepare('SELECT * FROM product_variants WHERE active = 1')
@@ -456,10 +681,14 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     .prepare('SELECT * FROM tailoring_size_specs ORDER BY fit ASC, size_label ASC')
     .all();
 
+  const tailoringOptions = getTailoringOptions(false);
+
   const products = productRows.map((p) => {
     const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
+    const pid = Number(p.id);
+    const rStats = reviewStatsMap.get(pid);
     return {
-      id: Number(p.id),
+      id: pid,
       sku: String(p.sku),
       slug: String(p.slug),
       category_slug: categorySlugs[0] || String(p.category_slug),
@@ -484,7 +713,12 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       stock_qty: Number(p.stock_qty),
       warehouse_location: String(p.warehouse_location),
       delivery_note: String(p.delivery_note),
-      variants: variantsByProd.get(Number(p.id)) || [],
+      seo_title: String(p.seo_title || ''),
+      seo_description: String(p.seo_description || ''),
+      seo_keywords: String(p.seo_keywords || ''),
+      review_count: rStats?.reviewCount || 0,
+      average_rating: rStats?.averageRating || 0,
+      variants: variantsByProd.get(pid) || [],
     };
   });
 
@@ -507,8 +741,145 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     customerAuthConfig: getPublicCustomerAuthConfig(req),
     products,
     tailoringSpecs,
+    tailoringOptions,
     tailoringSurcharges: DEFAULT_TAILORING_SURCHARGE,
   });
+});
+
+app.get('/api/products/:slug/reviews', (req, res) => {
+  const slug = String(req.params.slug || '').trim();
+  const product = db
+    .prepare('SELECT id, slug FROM products WHERE slug = ? AND active = 1')
+    .get(slug) as { id: number; slug: string } | undefined;
+  if (!product) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+
+  const token = extractBearerToken(req);
+  const authUser = getUserByToken(token);
+  const reviewToken = String(req.query.reviewToken || '').trim();
+
+  const payload = buildProductReviewsPayload({
+    productId: product.id,
+    reviewToken,
+    authUserEmail: authUser?.email || null,
+    authUserName: authUser?.name || null,
+  });
+
+  res.json(payload);
+});
+
+app.post('/api/products/:slug/reviews', (req, res) => {
+  const slug = String(req.params.slug || '').trim();
+  const product = db
+    .prepare('SELECT id, slug FROM products WHERE slug = ? AND active = 1')
+    .get(slug) as { id: number; slug: string } | undefined;
+  if (!product) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+
+  const body = req.body || {};
+  const rating = Math.round(Number(body.rating || 0));
+  const title = String(body.title || '').trim().slice(0, 140);
+  const comment = String(body.comment || '').trim().slice(0, 1200);
+  const fitFeedback =
+    body.fitFeedback === 'runs_small' || body.fitFeedback === 'runs_large'
+      ? body.fitFeedback
+      : 'true_to_size';
+  const regionCode = parseRegion(body.regionCode);
+  const reviewToken = String(body.reviewToken || '').trim();
+
+  if (rating < 1 || rating > 5) {
+    res.status(400).json({ error: 'Please select a star rating from 1 to 5.' });
+    return;
+  }
+  if (comment.length < 5) {
+    res.status(400).json({ error: 'Please write a brief review (minimum 5 characters).' });
+    return;
+  }
+
+  const bearerToken = extractBearerToken(req);
+  const authUser = getUserByToken(bearerToken);
+
+  let verifiedEmail = '';
+  let verifiedName = '';
+  let verifiedOrderNumber = '';
+
+  if (reviewToken) {
+    const invite = db
+      .prepare('SELECT * FROM review_invites WHERE token = ? AND product_id = ?')
+      .get(reviewToken, product.id) as
+      | { order_number: string; customer_email: string; customer_name: string }
+      | undefined;
+    if (invite) {
+      verifiedEmail = invite.customer_email.trim().toLowerCase();
+      verifiedName = invite.customer_name.trim() || verifiedEmail.split('@')[0];
+      verifiedOrderNumber = invite.order_number;
+    }
+  }
+
+  if (!verifiedEmail && authUser) {
+    const matched = checkUserPurchasedProduct(authUser.email, product.id);
+    if (matched) {
+      verifiedEmail = authUser.email.trim().toLowerCase();
+      verifiedName = authUser.name.trim() || verifiedEmail.split('@')[0];
+      verifiedOrderNumber = matched.orderNumber;
+    }
+  }
+
+  if (!verifiedEmail || !verifiedOrderNumber) {
+    res.status(403).json({
+      error: 'Only customers who have purchased this product can leave a verified review.',
+    });
+    return;
+  }
+
+  const duplicate = db
+    .prepare('SELECT id FROM product_reviews WHERE product_id = ? AND LOWER(customer_email) = ?')
+    .get(product.id, verifiedEmail);
+  if (duplicate) {
+    res.status(409).json({
+      error: 'You have already submitted a review for this product.',
+    });
+    return;
+  }
+
+  const displayNameInput = String(body.customerName || '').trim().slice(0, 80);
+  const finalName = displayNameInput || verifiedName;
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO product_reviews (
+        product_id, order_number, customer_email, customer_name, rating, title, comment, fit_feedback, region_code, verified_purchase
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    ).run(
+      product.id,
+      verifiedOrderNumber,
+      verifiedEmail,
+      finalName,
+      rating,
+      title,
+      comment,
+      fitFeedback,
+      regionCode
+    );
+
+    db.prepare(
+      `UPDATE review_invites SET used_at = datetime('now')
+       WHERE product_id = ? AND LOWER(customer_email) = ?`
+    ).run(product.id, verifiedEmail);
+  })();
+
+  const updated = buildProductReviewsPayload({
+    productId: product.id,
+    reviewToken,
+    authUserEmail: authUser?.email || verifiedEmail,
+    authUserName: authUser?.name || finalName,
+  });
+
+  res.status(201).json(updated);
 });
 
 app.post('/api/promo/validate', (req, res) => {
@@ -837,16 +1208,35 @@ app.post('/api/checkout/orders', async (req, res) => {
         orderRow.billing_same_as_shipping === undefined ? true : Boolean(orderRow.billing_same_as_shipping),
       items: JSON.parse(String(orderRow.items_json)),
     };
+
+    const origin = resolveRequestOrigin(req);
+    const reviewLinks = createOrGetReviewInvitesForOrder({
+      orderNumber: result.orderNumber,
+      regionCode,
+      customerEmail,
+      customerName,
+      items: hydratedOrder.items,
+      origin,
+    });
+
     const emailLog = await dispatchLocalizedOrderEmail({
       type: 'order_confirmation',
       order: hydratedOrder as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
       region,
     }).catch(() => null);
 
+    await dispatchLocalizedOrderEmail({
+      type: 'review_request',
+      order: hydratedOrder as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
+      region,
+      reviewLinks,
+    }).catch(() => null);
+
     res.status(201).json({
       order: hydratedOrder,
       payment: result.payInit,
       emailStatus: emailLog?.status || 'logged',
+      reviewInvites: reviewLinks,
     });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Checkout failed' });
@@ -1791,12 +2181,39 @@ app.get('/api/account/orders', requireAuth, (req: AuthedRequest, res) => {
   const rows = db
     .prepare('SELECT * FROM orders WHERE LOWER(customer_email) = ? ORDER BY id DESC LIMIT 30')
     .all(email) as Array<Record<string, unknown>>;
+  const reviewedRows = db
+    .prepare('SELECT product_id FROM product_reviews WHERE LOWER(customer_email) = ?')
+    .all(email) as Array<{ product_id: number }>;
+  const reviewedProdSet = new Set<number>(reviewedRows.map((r) => Number(r.product_id)));
+  const origin = resolveRequestOrigin(req);
+
   res.json({
-    orders: rows.map((r) => ({
-      ...r,
-      is_b2b: Boolean(r.is_b2b),
-      items: JSON.parse(String(r.items_json || '[]')),
-    })),
+    orders: rows.map((r) => {
+      const items = JSON.parse(String(r.items_json || '[]')) as Array<{
+        productId: number;
+        sku?: string;
+        title?: string;
+        image?: string;
+      }>;
+      const rc = parseRegion(r.region_code);
+      const invites = createOrGetReviewInvitesForOrder({
+        orderNumber: String(r.order_number),
+        regionCode: rc,
+        customerEmail: email,
+        customerName: String(r.customer_name || req.authUser?.name || ''),
+        items,
+        origin,
+      }).map((inv) => ({
+        ...inv,
+        alreadyReviewed: reviewedProdSet.has(inv.productId),
+      }));
+      return {
+        ...r,
+        is_b2b: Boolean(r.is_b2b),
+        items,
+        reviewInvites: invites,
+      };
+    }),
   });
 });
 
@@ -1975,8 +2392,8 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
       const insertLoc = db.prepare(
         `INSERT INTO product_localizations (
           product_id, region_code, title, subtitle, description, price, compare_at_price,
-          stock_qty, warehouse_location, delivery_note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          stock_qty, warehouse_location, delivery_note, seo_title, seo_description, seo_keywords
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
 
       for (const rc of ['en', 'no', 'it', 'vn'] as const) {
@@ -1991,7 +2408,10 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
           l.compare_at_price ? Number(l.compare_at_price) : null,
           Math.max(0, Number(l.stock_qty ?? 10)),
           String(l.warehouse_location || rc.toUpperCase()),
-          String(l.delivery_note || 'Ships via DHL Express')
+          String(l.delivery_note || 'Ships via DHL Express'),
+          String(l.seo_title || ''),
+          String(l.seo_description || ''),
+          String(l.seo_keywords || '')
         );
       }
       return productId;
@@ -2058,20 +2478,33 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         .prepare('SELECT * FROM product_localizations WHERE product_id = ? AND region_code = ?')
         .get(productId, rc) as Record<string, unknown> | undefined;
       if (!cur) continue;
-      const nextTitle = user.role === 'owner' || user.permissions.manage_products ? String(locs[rc].title ?? cur.title) : String(cur.title);
-      const nextDesc = user.role === 'owner' || user.permissions.manage_products ? String(locs[rc].description ?? cur.description) : String(cur.description);
-      const nextPrice = user.role === 'owner' || user.permissions.manage_pricing ? Number(locs[rc].price ?? cur.price) : Number(cur.price);
-      const nextStock = user.role === 'owner' || user.permissions.manage_inventory ? Math.max(0, Number(locs[rc].stock_qty ?? cur.stock_qty)) : Number(cur.stock_qty);
+      const canEditContent = user.role === 'owner' || user.permissions.manage_products;
+      const nextTitle = canEditContent ? String(locs[rc].title ?? cur.title) : String(cur.title);
+      const nextDesc = canEditContent ? String(locs[rc].description ?? cur.description) : String(cur.description);
+      const nextSeoTitle = canEditContent ? String(locs[rc].seo_title ?? cur.seo_title ?? '') : String(cur.seo_title ?? '');
+      const nextSeoDesc = canEditContent
+        ? String(locs[rc].seo_description ?? cur.seo_description ?? '')
+        : String(cur.seo_description ?? '');
+      const nextSeoKeywords = canEditContent
+        ? String(locs[rc].seo_keywords ?? cur.seo_keywords ?? '')
+        : String(cur.seo_keywords ?? '');
+      const nextPrice =
+        user.role === 'owner' || user.permissions.manage_pricing ? Number(locs[rc].price ?? cur.price) : Number(cur.price);
+      const nextStock =
+        user.role === 'owner' || user.permissions.manage_inventory
+          ? Math.max(0, Number(locs[rc].stock_qty ?? cur.stock_qty))
+          : Number(cur.stock_qty);
 
       db.prepare(
-        `UPDATE product_localizations SET title = ?, description = ?, price = ?, stock_qty = ?
+        `UPDATE product_localizations
+         SET title = ?, description = ?, seo_title = ?, seo_description = ?, seo_keywords = ?, price = ?, stock_qty = ?
          WHERE product_id = ? AND region_code = ?`
-      ).run(nextTitle, nextDesc, nextPrice, nextStock, productId, rc);
+      ).run(nextTitle, nextDesc, nextSeoTitle, nextSeoDesc, nextSeoKeywords, nextPrice, nextStock, productId, rc);
     }
   });
 
   tx();
-  logAudit(user, 'PRODUCT_UPDATED', String(existing.sku), 'Updated regional localization / pricing / stock');
+  logAudit(user, 'PRODUCT_UPDATED', String(existing.sku), 'Updated regional localization, SEO metadata, pricing & stock');
   res.json({ ok: true });
 });
 
@@ -2170,7 +2603,7 @@ app.patch('/api/admin/orders/:id', requirePermission('manage_orders'), async (re
 
   tx();
 
-  if (orderStatus === 'shipped' && existing.order_status !== 'shipped') {
+  if ((orderStatus === 'shipped' || orderStatus === 'delivered') && existing.order_status !== orderStatus) {
     const updatedRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Record<string, unknown>;
     const reg = getRegionByCode(parseRegion(updatedRow.region_code));
     if (reg) {
@@ -2179,11 +2612,28 @@ app.patch('/api/admin/orders/:id', requirePermission('manage_orders'), async (re
         is_b2b: Boolean(updatedRow.is_b2b),
         items: JSON.parse(String(updatedRow.items_json || '[]')),
       };
-      await dispatchLocalizedOrderEmail({
-        type: 'shipping_tracking',
-        order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
-        region: reg,
-      }).catch(() => {});
+      if (orderStatus === 'shipped') {
+        await dispatchLocalizedOrderEmail({
+          type: 'shipping_tracking',
+          order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
+          region: reg,
+        }).catch(() => {});
+      } else if (orderStatus === 'delivered') {
+        const reviewLinks = createOrGetReviewInvitesForOrder({
+          orderNumber: String(updatedRow.order_number),
+          regionCode: reg.code,
+          customerEmail: String(updatedRow.customer_email),
+          customerName: String(updatedRow.customer_name),
+          items: hydrated.items,
+          origin: resolveRequestOrigin(req),
+        });
+        await dispatchLocalizedOrderEmail({
+          type: 'review_request',
+          order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
+          region: reg,
+          reviewLinks,
+        }).catch(() => {});
+      }
     }
   }
 
@@ -2248,8 +2698,13 @@ app.post('/api/admin/orders/:id/resend-email', requirePermission('manage_orders'
     res.status(404).json({ error: 'Order not found' });
     return;
   }
+  const rawEmailType = req.body?.templateType || req.body?.type;
   const emailType =
-    req.body?.type === 'shipping_tracking' ? 'shipping_tracking' : 'order_confirmation';
+    rawEmailType === 'shipping_tracking'
+      ? 'shipping_tracking'
+      : rawEmailType === 'review_request'
+      ? 'review_request'
+      : 'order_confirmation';
   const reg = getRegionByCode(parseRegion(existing.region_code));
   if (!reg) {
     res.status(400).json({ error: 'Region configuration missing for order' });
@@ -2260,10 +2715,22 @@ app.post('/api/admin/orders/:id/resend-email', requirePermission('manage_orders'
     is_b2b: Boolean(existing.is_b2b),
     items: JSON.parse(String(existing.items_json || '[]')),
   };
+  const reviewLinks =
+    emailType === 'review_request'
+      ? createOrGetReviewInvitesForOrder({
+          orderNumber: String(existing.order_number),
+          regionCode: reg.code,
+          customerEmail: String(existing.customer_email),
+          customerName: String(existing.customer_name),
+          items: hydrated.items,
+          origin: resolveRequestOrigin(req),
+        })
+      : undefined;
   const emailResult = await dispatchLocalizedOrderEmail({
     type: emailType,
     order: hydrated as unknown as Parameters<typeof dispatchLocalizedOrderEmail>[0]['order'],
     region: reg,
+    reviewLinks,
   });
   if (req.authUser) {
     logAudit(req.authUser, 'ORDER_EMAIL_SENT', String(existing.order_number), `${emailType} (${emailResult.status})`);
@@ -3529,6 +3996,186 @@ app.post('/api/admin/tailoring-specs/bulk', requireStaffOrOwner, (req: AuthedReq
   res.json({ ok: true, updated });
 });
 
+// Backend-Editable Collar & Cuff Studio Routes
+app.get('/api/admin/tailoring-options', requireStaffOrOwner, (_req, res) => {
+  res.json({ options: getTailoringOptions(true) });
+});
+
+app.post('/api/admin/tailoring-options', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions to add collar/cuff option.' });
+    return;
+  }
+  const b = req.body || {};
+  const optionType = b.option_type === 'cuff' ? 'cuff' : 'collar';
+  const name = String(b.name || '').trim();
+  const subtitle = String(b.subtitle || '').trim();
+  const detail = String(b.detail || '').trim();
+  const stitchSpec = String(b.stitch_spec || '').trim();
+  const imageUrl = String(b.image_url || '').trim();
+  const isDefault = Boolean(b.is_default);
+  const active = b.active !== false;
+
+  if (!name) {
+    res.status(400).json({ error: 'Option name is required.' });
+    return;
+  }
+
+  try {
+    const id = db.transaction(() => {
+      const maxSort = db
+        .prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM tailoring_options WHERE option_type = ?')
+        .get(optionType) as { m: number };
+      if (isDefault) {
+        db.prepare('UPDATE tailoring_options SET is_default = 0 WHERE option_type = ?').run(optionType);
+      }
+      const info = db
+        .prepare(
+          `INSERT INTO tailoring_options (option_type, name, subtitle, detail, stitch_spec, image_url, sort_order, is_default, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          optionType,
+          name,
+          subtitle,
+          detail,
+          stitchSpec,
+          imageUrl,
+          Number(maxSort.m) + 1,
+          isDefault ? 1 : 0,
+          active ? 1 : 0
+        );
+      return Number(info.lastInsertRowid);
+    })();
+    logAudit(user, 'TAILORING_OPTION_CREATED', `${optionType}:${name}`, `Created option #${id}`);
+    res.status(201).json({ ok: true, id, options: getTailoringOptions(true) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not add option (check duplicate name).' });
+  }
+});
+
+app.patch('/api/admin/tailoring-options/reorder', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions to reorder tailoring options.' });
+    return;
+  }
+  const optionType = req.body?.optionType === 'cuff' ? 'cuff' : 'collar';
+  const orderedIds: number[] = Array.isArray(req.body?.orderedIds)
+    ? req.body.orderedIds.map((v: unknown) => Number(v)).filter((n: number) => Number.isFinite(n) && n > 0)
+    : [];
+  if (orderedIds.length === 0) {
+    res.status(400).json({ error: 'orderedIds array is required.' });
+    return;
+  }
+
+  db.transaction(() => {
+    const stmt = db.prepare('UPDATE tailoring_options SET sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND option_type = ?');
+    orderedIds.forEach((optId, idx) => {
+      stmt.run(idx + 1, optId, optionType);
+    });
+  })();
+
+  logAudit(user, 'TAILORING_OPTIONS_REORDERED', optionType, `Order: ${orderedIds.join(',')}`);
+  res.json({ ok: true, options: getTailoringOptions(true) });
+});
+
+app.post('/api/admin/tailoring-options/sync-products', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions.' });
+    return;
+  }
+  const activeOpts = getTailoringOptions(false);
+  const collarNames = activeOpts.filter((o) => o.option_type === 'collar').map((o) => o.name);
+  const cuffNames = activeOpts.filter((o) => o.option_type === 'cuff').map((o) => o.name);
+  const info = db
+    .prepare('UPDATE products SET collars_json = ?, cuffs_json = ?')
+    .run(JSON.stringify(collarNames), JSON.stringify(cuffNames));
+  logAudit(user, 'TAILORING_OPTIONS_SYNCED', `${info.changes} products`, `${collarNames.length} collars, ${cuffNames.length} cuffs`);
+  res.json({ ok: true, updatedProducts: info.changes });
+});
+
+app.patch('/api/admin/tailoring-options/:id', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions to edit collar/cuff option.' });
+    return;
+  }
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM tailoring_options WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Tailoring option not found.' });
+    return;
+  }
+
+  const b = req.body || {};
+  const nextName = b.name !== undefined ? String(b.name).trim() || String(existing.name) : String(existing.name);
+  const nextSubtitle = b.subtitle !== undefined ? String(b.subtitle).trim() : String(existing.subtitle || '');
+  const nextDetail = b.detail !== undefined ? String(b.detail).trim() : String(existing.detail || '');
+  const nextStitch = b.stitch_spec !== undefined ? String(b.stitch_spec).trim() : String(existing.stitch_spec || '');
+  const nextImage = b.image_url !== undefined ? String(b.image_url).trim() : String(existing.image_url || '');
+  const nextSort = b.sort_order !== undefined ? Number(b.sort_order) : Number(existing.sort_order);
+  const nextActive = b.active !== undefined ? (b.active ? 1 : 0) : Number(existing.active);
+  const nextIsDefault = b.is_default !== undefined ? (b.is_default ? 1 : 0) : Number(existing.is_default);
+
+  try {
+    db.transaction(() => {
+      if (nextIsDefault === 1) {
+        db.prepare('UPDATE tailoring_options SET is_default = 0 WHERE option_type = ? AND id != ?').run(
+          String(existing.option_type),
+          id
+        );
+      }
+      db.prepare(
+        `UPDATE tailoring_options
+         SET name = ?, subtitle = ?, detail = ?, stitch_spec = ?, image_url = ?, sort_order = ?, is_default = ?, active = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(nextName, nextSubtitle, nextDetail, nextStitch, nextImage, nextSort, nextIsDefault, nextActive, id);
+    })();
+    logAudit(user, 'TAILORING_OPTION_UPDATED', `${existing.option_type}:${nextName}`, `Default: ${Boolean(nextIsDefault)}`);
+    res.json({ ok: true, options: getTailoringOptions(true) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update option.' });
+  }
+});
+
+app.delete('/api/admin/tailoring-options/:id', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions.' });
+    return;
+  }
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM tailoring_options WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Option not found.' });
+    return;
+  }
+  const optionType = String(existing.option_type);
+  const countSame = (
+    db.prepare('SELECT COUNT(*) AS c FROM tailoring_options WHERE option_type = ?').get(optionType) as { c: number }
+  ).c;
+  if (countSame <= 1) {
+    res.status(400).json({ error: `At least one ${optionType} option must remain active.` });
+    return;
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM tailoring_options WHERE id = ?').run(id);
+    if (existing.is_default) {
+      db.prepare(
+        `UPDATE tailoring_options SET is_default = 1
+         WHERE id = (SELECT id FROM tailoring_options WHERE option_type = ? ORDER BY active DESC, sort_order ASC, id ASC LIMIT 1)`
+      ).run(optionType);
+    }
+  })();
+
+  logAudit(user, 'TAILORING_OPTION_DELETED', `${optionType}:${existing.name}`, `Removed option #${id}`);
+  res.json({ ok: true, options: getTailoringOptions(true) });
+});
+
 app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
   const orderRows = db.prepare('SELECT * FROM orders').all() as Array<Record<string, unknown>>;
   const byRegionMap = new Map<string, { region_code: RegionCode; currency_code: string; orders: number; paid_revenue: number; total_revenue: number; items_sold: number }>();
@@ -3867,11 +4514,13 @@ app.get('/api/admin/site-settings', requireStaffOrOwner, (req: AuthedRequest, re
     return;
   }
   const ai = getAiSettingsInternal();
+  const origin = resolveRequestOrigin(req);
   res.json({
     topBanner: getTopBannerSettings(),
     promoRules: getPromoRules(),
     bulkDiscount: getBulkDiscountSettings(),
     customerAuth: getCustomerAuthSettings(),
+    googleCallbackUrl: `${origin}/api/auth/google/callback`,
     aiSettings: {
       enabled: Boolean(ai.enabled),
       displayMode: ai.displayMode === 'chatbot' ? 'chatbot' : 'agent',
@@ -4666,11 +5315,32 @@ app.get('/api/admin/database/download', requirePermission('manage_settings'), as
 // ---------------------------------------------------------------------------
 
 function resolveRequestOrigin(req: express.Request): string {
+  const vaultDomain = (getResolvedSecret('PUBLIC_DOMAIN_URL') || '').trim().replace(/\/+$/, '');
+  if (vaultDomain && /^https?:\/\//i.test(vaultDomain)) {
+    return vaultDomain;
+  }
+
+  const forwardedHost = String(req.get('x-forwarded-host') || '').split(',')[0].trim();
+  const rawHost = (forwardedHost || req.get('host') || '').trim();
+  const isLocalHost =
+    !rawHost ||
+    rawHost.startsWith('localhost') ||
+    rawHost.startsWith('127.0.0.1') ||
+    rawHost.startsWith('0.0.0.0');
+
+  if (!isLocalHost) {
+    const proto =
+      String(req.get('x-forwarded-proto') || '').split(',')[0].trim() || req.protocol || 'https';
+    return `${proto}://${rawHost}`;
+  }
+
   const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
   if (configured && configured !== 'MY_APP_URL') return configured;
-  const host = req.get('host') || 'localhost:3000';
-  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
-  return `${proto}://${host}`;
+
+  const fallbackHost = rawHost || 'localhost:3000';
+  const fallbackProto =
+    String(req.get('x-forwarded-proto') || '').split(',')[0].trim() || req.protocol || 'http';
+  return `${fallbackProto}://${fallbackHost}`;
 }
 
 function escapeHtmlAttr(str: string): string {
@@ -4695,19 +5365,28 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
     sku: string;
     slug: string;
     title: string;
+    subtitle?: string;
     description: string;
     fabric_spec: string;
     price: number;
     primary_image: string;
+    gallery?: string[];
     stock_qty: number;
     preorder_allowed: boolean;
+    seo_title?: string;
+    seo_description?: string;
+    seo_keywords?: string;
+    average_rating?: number;
+    review_count?: number;
+    reviews?: Array<{ customer_name: string; rating: number; title: string; comment: string; created_at: string }>;
   } | null = null;
 
   if (parsed.view === 'product' && parsed.slug) {
     const pRow = db
       .prepare(
-        `SELECT p.sku, p.slug, p.fabric_spec, p.primary_image, p.preorder_allowed,
-                pl.title, pl.description, pl.price, pl.stock_qty
+        `SELECT p.id, p.sku, p.slug, p.fabric_spec, p.primary_image, p.gallery_json, p.preorder_allowed,
+                pl.title, pl.subtitle, pl.description, pl.price, pl.stock_qty,
+                pl.seo_title, pl.seo_description, pl.seo_keywords
          FROM products p
          JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
          WHERE p.slug = ? AND p.active = 1
@@ -4715,16 +5394,48 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
       )
       .get(rc, parsed.slug) as Record<string, unknown> | undefined;
     if (pRow) {
+      let gallery: string[] = [];
+      try {
+        gallery = JSON.parse(String(pRow.gallery_json || '[]'));
+      } catch {
+        gallery = [];
+      }
+      const reviewRows = db
+        .prepare(
+          `SELECT customer_name, rating, title, comment, created_at
+           FROM product_reviews
+           WHERE product_id = ?
+           ORDER BY id DESC LIMIT 10`
+        )
+        .all(Number(pRow.id)) as Array<{
+        customer_name: string;
+        rating: number;
+        title: string;
+        comment: string;
+        created_at: string;
+      }>;
+      const statsRow = db
+        .prepare('SELECT COUNT(*) AS c, ROUND(AVG(rating), 1) AS avg_r FROM product_reviews WHERE product_id = ?')
+        .get(Number(pRow.id)) as { c: number; avg_r: number | null };
+
       productRecord = {
         sku: String(pRow.sku),
         slug: String(pRow.slug),
         title: String(pRow.title),
+        subtitle: String(pRow.subtitle || ''),
         description: String(pRow.description),
         fabric_spec: String(pRow.fabric_spec),
         price: Number(pRow.price),
         primary_image: String(pRow.primary_image),
+        gallery,
         stock_qty: Number(pRow.stock_qty),
         preorder_allowed: Boolean(pRow.preorder_allowed),
+        seo_title: String(pRow.seo_title || ''),
+        seo_description: String(pRow.seo_description || ''),
+        seo_keywords: String(pRow.seo_keywords || ''),
+        review_count: Number(statsRow?.c || 0),
+        average_rating: Number(statsRow?.avg_r || 0),
+        reviews: reviewRows,
       };
     }
   }
@@ -4766,6 +5477,13 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
     .map((h) => `<link rel="alternate" hreflang="${escapeHtmlAttr(h.hreflang)}" href="${escapeHtmlAttr(h.href)}" />`)
     .join('\n    ');
 
+  const productOpenGraphTags = seo.productMeta
+    ? `\n    <meta property="product:price:amount" content="${escapeHtmlAttr(String(seo.productMeta.priceAmount))}" />` +
+      `\n    <meta property="product:price:currency" content="${escapeHtmlAttr(seo.productMeta.priceCurrency)}" />` +
+      `\n    <meta property="product:availability" content="${escapeHtmlAttr(seo.productMeta.availability)}" />` +
+      `\n    <meta property="product:retailer_item_id" content="${escapeHtmlAttr(seo.productMeta.retailerItemId)}" />`
+    : '';
+
   let out = html;
   out = out.replace(/<html lang="[^"]*">/, `<html lang="${htmlLang}">`);
   out = out.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtmlAttr(seo.title)}</title>`);
@@ -4773,6 +5491,12 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
     /<meta name="description" content="[^"]*"\s*\/?>/,
     `<meta name="description" content="${escapeHtmlAttr(seo.description)}" />`
   );
+  if (out.includes('<meta name="keywords"')) {
+    out = out.replace(
+      /<meta name="keywords" content="[^"]*"\s*\/?>/,
+      `<meta name="keywords" content="${escapeHtmlAttr(seo.keywords)}" />`
+    );
+  }
   out = out.replace(
     /<meta name="robots" content="[^"]*"\s*\/?>/,
     `<meta name="robots" content="${escapeHtmlAttr(seo.robots)}" />`
@@ -4791,7 +5515,7 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
   );
   out = out.replace(
     /<meta property="og:type" content="[^"]*"\s*\/?>/,
-    `<meta property="og:type" content="${escapeHtmlAttr(seo.ogType)}" />\n    <meta property="og:url" content="${escapeHtmlAttr(seo.canonicalUrl)}" />\n    <meta property="og:image" content="${escapeHtmlAttr(seo.ogImage)}" />${hreflangTags ? `\n    ${hreflangTags}` : ''}`
+    `<meta property="og:type" content="${escapeHtmlAttr(seo.ogType)}" />\n    <meta property="og:site_name" content="${escapeHtmlAttr(seo.ogSiteName)}" />\n    <meta property="og:locale" content="${escapeHtmlAttr(seo.ogLocale)}" />\n    <meta property="og:url" content="${escapeHtmlAttr(seo.canonicalUrl)}" />\n    <meta property="og:image" content="${escapeHtmlAttr(seo.ogImage)}" />\n    <meta property="og:image:alt" content="${escapeHtmlAttr(seo.ogImageAlt)}" />${productOpenGraphTags}${hreflangTags ? `\n    ${hreflangTags}` : ''}`
   );
   out = out.replace(
     /<meta name="twitter:title" content="[^"]*"\s*\/?>/,
@@ -4800,6 +5524,10 @@ function injectSeoIntoHtml(html: string, req: express.Request): string {
   out = out.replace(
     /<meta name="twitter:description" content="[^"]*"\s*\/?>/,
     `<meta name="twitter:description" content="${escapeHtmlAttr(seo.description)}" />`
+  );
+  out = out.replace(
+    /<meta name="twitter:image" content="[^"]*"\s*\/?>/,
+    `<meta name="twitter:image" content="${escapeHtmlAttr(seo.ogImage)}" />`
   );
   out = out.replace(
     /<script id="mn-structured-data" type="application\/ld\+json">[\s\S]*?<\/script>/,
@@ -4818,15 +5546,25 @@ app.get('/sitemap.xml', (req, res) => {
     .prepare('SELECT slug FROM categories WHERE active = 1 ORDER BY sort_order ASC, id ASC')
     .all() as Array<{ slug: string }>;
   const products = db
-    .prepare('SELECT slug FROM products WHERE active = 1 ORDER BY id ASC')
-    .all() as Array<{ slug: string }>;
+    .prepare(
+      `SELECT p.slug, p.primary_image, pl.title
+       FROM products p
+       LEFT JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = 'en'
+       WHERE p.active = 1
+       ORDER BY p.id ASC`
+    )
+    .all() as Array<{ slug: string; primary_image: string; title: string | null }>;
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.send(
     buildSitemapXml({
       origin: resolveRequestOrigin(req),
       regions: ['en', 'no', 'it', 'vn'],
       categories,
-      products,
+      products: products.map((p) => ({
+        slug: p.slug,
+        primary_image: p.primary_image,
+        title: p.title || undefined,
+      })),
     })
   );
 });

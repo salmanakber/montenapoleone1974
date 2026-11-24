@@ -29,7 +29,7 @@ export const EmailsResendPanel: React.FC<{
   });
   const [testTo, setTestTo] = useState('');
   const [testRegion, setTestRegion] = useState<RegionCode>('no');
-  const [testType, setTestType] = useState<'order_confirmation' | 'shipping_tracking'>(
+  const [testType, setTestType] = useState<'order_confirmation' | 'shipping_tracking' | 'review_request'>(
     'order_confirmation'
   );
   const [sending, setSending] = useState(false);
@@ -148,12 +148,15 @@ export const EmailsResendPanel: React.FC<{
             id="resend-test-type"
             value={testType}
             onChange={(e) =>
-              setTestType(e.target.value as 'order_confirmation' | 'shipping_tracking')
+              setTestType(
+                e.target.value as 'order_confirmation' | 'shipping_tracking' | 'review_request'
+              )
             }
             className="w-full px-3 py-2 border border-neutral-300 bg-white"
           >
             <option value="order_confirmation">Order Confirmation</option>
             <option value="shipping_tracking">DHL Shipping Tracking</option>
+            <option value="review_request">Verified Purchaser Review Request</option>
           </select>
         </div>
         <div className="md:col-span-2">
@@ -279,8 +282,9 @@ const GROUP_TITLES: Record<ApiCredentialItem['group'], string> = {
 
 export const ApiVaultAndOnboardingPanel: React.FC<{
   authToken: string;
+  googleCallbackUrl?: string;
   onRefreshSettings: () => void;
-}> = ({ authToken, onRefreshSettings }) => {
+}> = ({ authToken, googleCallbackUrl: serverCallbackUrl, onRefreshSettings }) => {
   const [credentials, setCredentials] = useState<ApiCredentialItem[]>([]);
   const [draftValues, setDraftValues] = useState<Partial<Record<ApiCredentialKey, string>>>({});
   const [saving, setSaving] = useState(false);
@@ -288,6 +292,7 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
   const [verifyResults, setVerifyResults] = useState<Record<string, GatewayVerificationResult>>({});
   const [wixPopupUrl, setWixPopupUrl] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [copiedUri, setCopiedUri] = useState(false);
 
   const loadCredentials = useCallback(async () => {
     const res = await fetch('/api/admin/credentials', {
@@ -407,9 +412,10 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
   ];
 
   const googleCallbackUrl =
-    typeof window !== 'undefined'
+    serverCallbackUrl ||
+    (typeof window !== 'undefined'
       ? `${window.location.origin}/api/auth/google/callback`
-      : '/api/auth/google/callback';
+      : '/api/auth/google/callback');
 
   const onboardingProviders = [
     {
@@ -461,6 +467,34 @@ export const ApiVaultAndOnboardingPanel: React.FC<{
           {feedback}
         </div>
       )}
+
+      {/* Custom Domain Google OAuth Redirect URI Guidance */}
+      <div className="border border-[#142B4E]/25 bg-[#F8FAFC] p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1 min-w-0 flex-1">
+          <div className="font-semibold text-[#142B4E] uppercase tracking-wider text-[11px]">
+            Active Google OAuth Authorized Redirect URI (Server-Resolved)
+          </div>
+          <div className="font-mono-tabular text-[11px] bg-white border border-neutral-200 px-2.5 py-1.5 break-all">
+            {googleCallbackUrl}
+          </div>
+          <p className="text-[11px] text-neutral-600">
+            On a custom DigitalOcean / Nginx server, set <strong className="font-mono-tabular">PUBLIC_DOMAIN_URL</strong> below (e.g. <span className="font-mono-tabular">https://montenapoleone1974.com</span>) so OAuth always uses your live domain instead of a preview host.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof navigator !== 'undefined' && navigator.clipboard) {
+              navigator.clipboard.writeText(googleCallbackUrl).catch(() => {});
+            }
+            setCopiedUri(true);
+            setTimeout(() => setCopiedUri(false), 2000);
+          }}
+          className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider shrink-0 cursor-pointer transition-colors"
+        >
+          {copiedUri ? 'Copied URI' : 'Copy Callback URI'}
+        </button>
+      </div>
 
       {/* Onboarding & Live Gateway Connection Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

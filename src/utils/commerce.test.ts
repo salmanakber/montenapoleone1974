@@ -27,6 +27,7 @@ import {
   parseWooCommerceCsv,
   parseWordPressCategoriesXml,
   productMatchesCategories,
+  resolveOrderedTailoringOptions,
   isTopBannerVisibleOnViewport,
   DEFAULT_TOP_BANNER_SETTINGS,
 } from './commerce.ts';
@@ -677,6 +678,168 @@ test('SIZE_GUIDE_CHARTS and RETURN_FORM_PDFS match exact tailoring measurements 
   assert.equal(getReturnFormPdfForRegion('no').shortLabel, 'Norsk');
   assert.equal(getReturnFormPdfForRegion('it').shortLabel, 'Italiano');
 });
+
+test('resolves backend-ordered collars & cuffs with custom images and default selection', () => {
+  const catalog = [
+    {
+      option_type: 'collar' as const,
+      name: 'Cutaway',
+      subtitle: 'Bold Italian spread',
+      detail: 'Architectural points',
+      stitch_spec: '7.0 cm',
+      image_url: '/uploads/cutaway.jpg',
+      sort_order: 1,
+      is_default: true,
+      active: true,
+    },
+    {
+      option_type: 'collar' as const,
+      name: 'Spread',
+      subtitle: 'Classic wide',
+      detail: 'Timeless balance',
+      stitch_spec: '6.5 cm',
+      image_url: '',
+      sort_order: 2,
+      is_default: false,
+      active: true,
+    },
+    {
+      option_type: 'collar' as const,
+      name: 'Hidden Inactive',
+      subtitle: 'Archived',
+      detail: '',
+      stitch_spec: '',
+      image_url: '',
+      sort_order: 3,
+      is_default: false,
+      active: false,
+    },
+  ];
+
+  const ordered = resolveOrderedTailoringOptions('collar', ['Spread', 'Cutaway', 'Hidden Inactive'], catalog);
+  assert.equal(ordered.length, 2);
+  assert.equal(ordered[0].name, 'Cutaway');
+  assert.equal(ordered[0].isDefault, true);
+  assert.equal(ordered[0].imageUrl, '/uploads/cutaway.jpg');
+  assert.equal(ordered[1].name, 'Spread');
+  assert.equal(ordered[1].isDefault, false);
+});
+
+test('builds rich Product SEO metadata with custom overrides, AggregateRating, Review schema, and Sitemap images', () => {
+  const seo = buildSeoMetadata({
+    view: 'product',
+    region: { code: 'no', name: 'Norway', currency_code: 'NOK', warehouse_name: 'Oslo Warehouse' },
+    product: {
+      sku: 'MN-L3',
+      slug: 'beige-linen-l3',
+      category_slug: 'linen',
+      title: 'BEIGE Linskjorte #L3',
+      description: '100% italiensk lin.',
+      fabric_spec: '100% Tuscan Linen',
+      price: 1699,
+      primary_image: '/uploads/linen-l3.jpg',
+      gallery: ['/uploads/linen-l3.jpg', '/uploads/linen-l3-detail.jpg'],
+      stock_qty: 12,
+      preorder_allowed: true,
+      seo_title: 'Beige Linskjorte fra Treviso – Monte Napoleone 1974',
+      seo_description: 'Kjøp eksklusiv beige linskjorte i 100% toscansk lin med gratis skreddersydd ermelengde og skjortelengde i Norge.',
+      seo_keywords: 'linskjorte norge, beige linskjorte, italiensk skjorte',
+      review_count: 2,
+      average_rating: 4.8,
+      reviews: [
+        {
+          customer_name: 'Henrik Solberg',
+          rating: 5,
+          title: 'Fantastisk passform',
+          comment: 'Sitter perfekt etter gratis ermetilpasning.',
+          created_at: '2026-11-20T10:00:00Z',
+        },
+      ],
+    },
+    origin: 'https://montenapoleone1974.com',
+  });
+
+  assert.match(seo.title, /Beige Linskjorte/);
+  assert.equal(seo.keywords, 'linskjorte norge, beige linskjorte, italiensk skjorte');
+  assert.equal(seo.productMeta?.priceCurrency, 'NOK');
+  assert.equal(seo.productMeta?.retailerItemId, 'MN-L3');
+  const prodLd = seo.jsonLd[1] as {
+    aggregateRating?: { ratingValue: number; reviewCount: number };
+    review?: Array<{ '@type': string; author: { name: string } }>;
+  };
+  assert.equal(prodLd.aggregateRating?.ratingValue, 4.8);
+  assert.equal(prodLd.aggregateRating?.reviewCount, 2);
+  assert.equal(prodLd.review?.[0].author.name, 'Henrik Solberg');
+
+  const xml = buildSitemapXml({
+    origin: 'https://montenapoleone1974.com',
+    regions: ['en', 'no'],
+    categories: [{ slug: 'linen' }],
+    products: [{ slug: 'beige-linen-l3', primary_image: '/uploads/linen-l3.jpg', title: 'BEIGE Linskjorte #L3' }],
+  });
+  assert.match(xml, /<image:image>/);
+  assert.match(xml, /https:\/\/montenapoleone1974\.com\/uploads\/linen-l3\.jpg/);
+});
+
+test('builds localized post-purchase review_request email templates with direct verification links', () => {
+  const order: OrderRecord = {
+    id: 99,
+    order_number: 'MN-2026-99100',
+    region_code: 'no',
+    currency_code: 'NOK',
+    customer_name: 'Astrid Hansen',
+    customer_email: 'astrid@oslo.no',
+    customer_phone: '+47 90000011',
+    shipping_address: 'Bogstadveien 12',
+    shipping_city: 'Oslo',
+    shipping_postal_code: '0355',
+    shipping_country: 'Norway',
+    is_b2b: false,
+    company_name: null,
+    org_number: null,
+    subtotal: 1699,
+    shipping_cost: 0,
+    discount_amount: 0,
+    vat_amount: 340,
+    total: 1699,
+    payment_method: 'vipps',
+    payment_status: 'paid',
+    payment_reference: 'VIPPS99100',
+    shipping_method: 'dhl_economy',
+    dhl_tracking_number: null,
+    dhl_status: 'delivered',
+    order_status: 'delivered',
+    items: [],
+    notes: null,
+    created_at: '2026-11-22T10:00:00Z',
+  };
+
+  const email = buildOrderEmailTemplate({
+    type: 'review_request',
+    order,
+    region: {
+      code: 'no',
+      name: 'Norway',
+      warehouse_name: 'Oslo Warehouse',
+      bank_name: 'DNB',
+      bank_account_display: '1506.88.41920',
+      bank_iban: 'NO9315068841920',
+      bank_bic: 'DNBANOKKXXX',
+    },
+    reviewLinks: [
+      {
+        title: 'BEIGE Linskjorte #L3',
+        sku: 'MN-L3',
+        reviewUrl: 'https://montenapoleone1974.com/no/product/beige-linen-l3?reviewToken=abc123',
+      },
+    ],
+  });
+
+  assert.match(email.subject, /MN-2026-99100/);
+  assert.match(email.html, /reviewToken=abc123/);
+  assert.match(email.html, /BEIGE Linskjorte #L3/);
+});
+
 
 
 

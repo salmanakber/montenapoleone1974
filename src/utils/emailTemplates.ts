@@ -1,17 +1,22 @@
 import type { OrderRecord, RegionCode, RegionConfig } from '../types.ts';
 import { formatRegionalPrice } from './commerce.ts';
 
-export type OrderEmailTemplateType = 'order_confirmation' | 'shipping_tracking';
+export type OrderEmailTemplateType = 'order_confirmation' | 'shipping_tracking' | 'review_request';
 
 interface LocalizedEmailCopy {
   brandTagline: string;
   confirmSubject: (orderNo: string) => string;
   trackingSubject: (orderNo: string, trackingNo: string) => string;
+  reviewSubject: (orderNo: string) => string;
   confirmHeading: string;
   trackingHeading: string;
+  reviewHeading: string;
   greeting: (name: string) => string;
   confirmIntro: (orderNo: string, warehouse: string) => string;
   trackingIntro: (orderNo: string, trackingNo: string) => string;
+  reviewIntro: (orderNo: string) => string;
+  reviewCta: string;
+  reviewFootnote: string;
   trackDhlCta: string;
   shippingTitle: string;
   billingTitle: string;
@@ -32,13 +37,19 @@ const EMAIL_COPY: Record<RegionCode, LocalizedEmailCopy> = {
     brandTagline: 'Sartorial Italian Shirting · Since 1974',
     confirmSubject: (no) => `Monte Napoleone 1974 · Order Confirmation ${no}`,
     trackingSubject: (no, trk) => `Your Order ${no} Has Shipped via DHL (${trk})`,
+    reviewSubject: (no) => `Share Your Fit & Quality Review · Order ${no}`,
     confirmHeading: 'Order Confirmed',
     trackingHeading: 'Your Tailored Order Is On Its Way',
+    reviewHeading: 'Rate Your Monte Napoleone Shirt',
     greeting: (name) => `Dear ${name},`,
     confirmIntro: (no, wh) =>
       `Thank you for your order ${no}. Our master tailors at ${wh} have received your bespoke measurements and specifications.`,
     trackingIntro: (no, trk) =>
       `Good news — your order ${no} has left our atelier and is now in transit with DHL Express (Waybill: ${trk}).`,
+    reviewIntro: (no) =>
+      `Thank you for choosing Monte Napoleone 1974 for order ${no}. Verified buyer reviews are exclusive to our customers — click any shirt below to submit your personal rating (1 verified review per product).`,
+    reviewCta: 'Rate This Shirt →',
+    reviewFootnote: 'Only verified purchasers with this invitation link or signed-in order history can rate a shirt, once per item.',
     trackDhlCta: 'Track DHL Shipment',
     shippingTitle: 'Shipping Address',
     billingTitle: 'Billing Address',
@@ -57,13 +68,19 @@ const EMAIL_COPY: Record<RegionCode, LocalizedEmailCopy> = {
     brandTagline: 'Italiensk skreddersøm · Siden 1974',
     confirmSubject: (no) => `Monte Napoleone 1974 · Ordrebekreftelse ${no}`,
     trackingSubject: (no, trk) => `Din ordre ${no} er sendt med DHL (${trk})`,
+    reviewSubject: (no) => `Vurder passform & kvalitet · Ordre ${no}`,
     confirmHeading: 'Ordrebekreftelse',
     trackingHeading: 'Din skreddersydde ordre er på vei',
+    reviewHeading: 'Gi din vurdering av skjorten',
     greeting: (name) => `Kjære ${name},`,
     confirmIntro: (no, wh) =>
       `Takk for din bestilling ${no}. Vårt atelier (${wh}) har mottatt dine mål og spesifikasjoner.`,
     trackingIntro: (no, trk) =>
       `Gode nyheter — din ordre ${no} er nå sendt fra vårt lager med DHL Express (Sporingsnummer: ${trk}).`,
+    reviewIntro: (no) =>
+      `Takk for at du valgte Monte Napoleone 1974 (ordre ${no}). Kun verifiserte kjøpere kan legge inn omtale — klikk på skjorten under for å gi din vurdering (én gang per produkt).`,
+    reviewCta: 'Vurder denne skjorten →',
+    reviewFootnote: 'Kun kunder som har kjøpt produktet kan gi vurdering, én vurdering per skjorte.',
     trackDhlCta: 'Spor sending hos DHL',
     shippingTitle: 'Leveringsadresse',
     billingTitle: 'Fakturaadresse',
@@ -82,13 +99,19 @@ const EMAIL_COPY: Record<RegionCode, LocalizedEmailCopy> = {
     brandTagline: 'Camiceria Sartoriale Italiana · Dal 1974',
     confirmSubject: (no) => `Monte Napoleone 1974 · Conferma Ordine ${no}`,
     trackingSubject: (no, trk) => `Il tuo ordine ${no} è stato spedito con DHL (${trk})`,
+    reviewSubject: (no) => `Valuta vestibilità e tessuto · Ordine ${no}`,
     confirmHeading: 'Ordine Confermato',
     trackingHeading: 'Il tuo capo sartoriale è in viaggio',
+    reviewHeading: 'Lascia una Recensione Verificata',
     greeting: (name) => `Gentile ${name},`,
     confirmIntro: (no, wh) =>
       `Grazie per il tuo ordine ${no}. I nostri maestri camiciai presso ${wh} hanno preso in carico le tue misure.`,
     trackingIntro: (no, trk) =>
       `Ottime notizie — il tuo ordine ${no} ha lasciato la nostra sartoria ed è affidato a DHL Express (Lettera di vettura: ${trk}).`,
+    reviewIntro: (no) =>
+      `Grazie per aver scelto Monte Napoleone 1974 (ordine ${no}). Le recensioni sono riservate esclusivamente agli acquirenti verificati — seleziona la camicia qui sotto per valutare (una recensione per articolo).`,
+    reviewCta: 'Valuta questa Camicia →',
+    reviewFootnote: 'Solo gli acquirenti verificati possono inviare una recensione, una volta per prodotto.',
     trackDhlCta: 'Traccia spedizione DHL',
     shippingTitle: 'Indirizzo di spedizione',
     billingTitle: 'Indirizzo di fatturazione',
@@ -107,13 +130,19 @@ const EMAIL_COPY: Record<RegionCode, LocalizedEmailCopy> = {
     brandTagline: 'Nghệ thuật may đo sơ mi Ý · Từ 1974',
     confirmSubject: (no) => `Monte Napoleone 1974 · Xác nhận đơn hàng ${no}`,
     trackingSubject: (no, trk) => `Đơn hàng ${no} đã được gửi qua DHL (${trk})`,
+    reviewSubject: (no) => `Đánh giá áo sơ mi đã mua · Đơn ${no}`,
     confirmHeading: 'Xác nhận đơn hàng',
     trackingHeading: 'Đơn hàng may đo của bạn đang trên đường giao',
+    reviewHeading: 'Đánh giá sản phẩm đã mua',
     greeting: (name) => `Kính gửi ${name},`,
     confirmIntro: (no, wh) =>
       `Cảm ơn quý khách đã đặt hàng (${no}). Xưởng may đo tại ${wh} đã tiếp nhận số đo và yêu cầu chi tiết của quý khách.`,
     trackingIntro: (no, trk) =>
       `Tin vui — đơn hàng ${no} đã rời xưởng và đang được vận chuyển qua DHL Express (Mã vận đơn: ${trk}).`,
+    reviewIntro: (no) =>
+      `Cảm ơn quý khách đã tin chọn Monte Napoleone 1974 (đơn ${no}). Chỉ khách hàng đã mua mới có thể gửi đánh giá (tối đa 1 lần cho mỗi sản phẩm). Vui lòng nhấn vào sản phẩm bên dưới để đánh giá.`,
+    reviewCta: 'Đánh giá sản phẩm →',
+    reviewFootnote: 'Chỉ khách hàng đã mua mới được phép đánh giá và mỗi khách hàng chỉ đánh giá một lần cho mỗi sản phẩm.',
     trackDhlCta: 'Theo dõi vận đơn DHL',
     shippingTitle: 'Địa chỉ giao hàng',
     billingTitle: 'Địa chỉ thanh toán',
@@ -138,6 +167,13 @@ function escHtml(value: string | null | undefined): string {
     .replace(/"/g, '&quot;');
 }
 
+export interface ReviewEmailLinkItem {
+  title: string;
+  sku: string;
+  image?: string;
+  reviewUrl: string;
+}
+
 export function buildOrderEmailTemplate(params: {
   type: OrderEmailTemplateType;
   order: OrderRecord;
@@ -146,6 +182,7 @@ export function buildOrderEmailTemplate(params: {
     'code' | 'name' | 'warehouse_name' | 'bank_name' | 'bank_account_display' | 'bank_iban' | 'bank_bic'
   >;
   trackingUrl?: string;
+  reviewLinks?: ReviewEmailLinkItem[];
 }): { subject: string; html: string; text: string } {
   const { type, order, region } = params;
   const copy = EMAIL_COPY[order.region_code] || EMAIL_COPY.en;
@@ -157,13 +194,22 @@ export function buildOrderEmailTemplate(params: {
     )}`;
 
   const subject =
-    type === 'shipping_tracking'
+    type === 'review_request'
+      ? copy.reviewSubject(order.order_number)
+      : type === 'shipping_tracking'
       ? copy.trackingSubject(order.order_number, trackingNo)
       : copy.confirmSubject(order.order_number);
 
-  const heading = type === 'shipping_tracking' ? copy.trackingHeading : copy.confirmHeading;
+  const heading =
+    type === 'review_request'
+      ? copy.reviewHeading
+      : type === 'shipping_tracking'
+      ? copy.trackingHeading
+      : copy.confirmHeading;
   const intro =
-    type === 'shipping_tracking'
+    type === 'review_request'
+      ? copy.reviewIntro(order.order_number)
+      : type === 'shipping_tracking'
       ? copy.trackingIntro(order.order_number, trackingNo)
       : copy.confirmIntro(order.order_number, region.warehouse_name);
 
@@ -220,6 +266,28 @@ export function buildOrderEmailTemplate(params: {
       </div>`
       : '';
 
+  const reviewBlocksHtml =
+    type === 'review_request' && params.reviewLinks && params.reviewLinks.length > 0
+      ? `
+      <div style="margin:20px 0;space-y:10px;">
+        ${params.reviewLinks
+          .map(
+            (rl) => `
+          <div style="padding:14px 16px;border:1px solid #E5E7EB;background:#FAFAFA;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#142B4E;">${escHtml(rl.title)}</div>
+              <div style="font-size:11px;color:#6B7280;margin-top:2px;">SKU ${escHtml(rl.sku)}</div>
+            </div>
+            <a href="${escHtml(rl.reviewUrl)}" style="display:inline-block;padding:10px 18px;background:#142B4E;color:#ffffff;text-decoration:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">
+              ${escHtml(copy.reviewCta)}
+            </a>
+          </div>`
+          )
+          .join('')}
+        <p style="font-size:11px;color:#64748B;margin-top:8px;">${escHtml(copy.reviewFootnote)}</p>
+      </div>`
+      : '';
+
   const trackingCtaHtml =
     type === 'shipping_tracking'
       ? `
@@ -249,6 +317,7 @@ export function buildOrderEmailTemplate(params: {
       <p style="font-size:14px;line-height:1.6;margin:0 0 10px;">${escHtml(copy.greeting(order.customer_name))}</p>
       <p style="font-size:14px;line-height:1.6;color:#374151;margin:0 0 18px;">${escHtml(intro)}</p>
 
+      ${reviewBlocksHtml}
       ${trackingCtaHtml}
 
       <div style="display:table;width:100%;border-collapse:separate;border-spacing:0;margin:18px 0;background:#FAFAFA;border:1px solid #E5E7EB;">

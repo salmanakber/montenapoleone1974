@@ -10,7 +10,11 @@ import type {
   RegionConfig,
 } from '../src/types.ts';
 import { calculateDhlShippingCost, generateBankReference } from '../src/utils/commerce.ts';
-import { buildOrderEmailTemplate, type OrderEmailTemplateType } from '../src/utils/emailTemplates.ts';
+import {
+  buildOrderEmailTemplate,
+  type OrderEmailTemplateType,
+  type ReviewEmailLinkItem,
+} from '../src/utils/emailTemplates.ts';
 import { db } from './db.ts';
 
 export const API_CREDENTIAL_CATALOG: Array<{
@@ -40,6 +44,7 @@ export const API_CREDENTIAL_CATALOG: Array<{
   { key: 'DHL_ACCOUNT_NUMBER', label: 'DHL Shipper Account Number', group: 'logistics', secret: false, placeholder: '123456789' },
   { key: 'GOOGLE_CLIENT_ID', label: 'Google / Gmail OAuth Client ID', group: 'auth', secret: false, placeholder: '1234567890-xxxx.apps.googleusercontent.com' },
   { key: 'GOOGLE_CLIENT_SECRET', label: 'Google / Gmail OAuth Client Secret', group: 'auth', secret: true, placeholder: 'GOCSPX-xxxxxxxxxxxxxxxxxxxx' },
+  { key: 'PUBLIC_DOMAIN_URL', label: 'Public Production Domain URL (for OAuth & SEO)', group: 'auth', secret: false, placeholder: 'https://montenapoleone1974.com' },
   { key: 'GEOIP_API_KEY', label: 'GeoIP Lookup Token (ipinfo.io)', group: 'analytics', secret: true, placeholder: 'ipinfo token for live visitor globe' },
   { key: 'GEMINI_API_KEY', label: 'Gemini AI API Key Override', group: 'ai', secret: true, placeholder: 'AIza...' },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', group: 'ai', secret: true, placeholder: 'sk-...' },
@@ -364,6 +369,7 @@ export async function dispatchLocalizedOrderEmail(params: {
   type: OrderEmailTemplateType;
   order: OrderRecord;
   region: RegionConfig;
+  reviewLinks?: ReviewEmailLinkItem[];
 }): Promise<{
   status: 'sent' | 'sandbox_logged' | 'error';
   providerId: string | null;
@@ -374,6 +380,7 @@ export async function dispatchLocalizedOrderEmail(params: {
     type: params.type,
     order: params.order,
     region: params.region,
+    reviewLinks: params.reviewLinks,
   });
   const apiKey = getResolvedSecret('RESEND_API_KEY');
   const fromEmail =
@@ -506,6 +513,17 @@ export async function sendResendTestEmail(params: {
     type: params.templateType,
     order: sampleOrder,
     region: params.region,
+    reviewLinks:
+      params.templateType === 'review_request'
+        ? [
+            {
+              title: 'BEIGE Linen Shirt #L3',
+              sku: 'MN-L3',
+              image: '/src/assets/images/shirt_beige_linen_1795248293982.jpg',
+              reviewUrl: `https://montenapoleone1974.com/${params.region.code}/product/beige-linen-l3?reviewToken=sample-preview`,
+            },
+          ]
+        : undefined,
   });
 
   const apiKey = getResolvedSecret('RESEND_API_KEY');
