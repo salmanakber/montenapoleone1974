@@ -27,6 +27,7 @@ import {
   DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_HOME_PAGE_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
+  resolveHomeFeaturedProducts,
   DEFAULT_TAILORING_SURCHARGE,
   DEFAULT_TOP_BANNER_SETTINGS,
   resolveOrderedTailoringOptions,
@@ -827,7 +828,7 @@ export default function App() {
             copy={copy}
             heroSlides={heroSlides}
             homePage={homePage}
-            featuredProducts={products.filter((p) => p.is_featured)}
+            featuredProducts={resolveHomeFeaturedProducts(products, homePage)}
             onNavigateCatalog={(category = 'all') => navigate('catalog', { category })}
             onNavigateB2B={() => navigate('b2b')}
             onNavigateAbout={() => navigate('about')}

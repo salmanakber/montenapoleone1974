@@ -2546,6 +2546,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <HomePageSettingsAdminPanel
                     authToken={authToken}
                     homePage={homePage}
+                    products={products}
                     onRefresh={loadAdminData}
                     onRefreshStorefront={onRefreshStorefront}
                     onPickImage={(cb) => {

@@ -15,6 +15,7 @@ import type {
   BulkDiscountSettings,
   HeroSlideRecord,
   HomePageSettings,
+  Product,
   PromotionPopupSettings,
   TopBannerSettings,
   TopBannerVisibility,
@@ -89,7 +90,14 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
 
   const handleCreateSlide = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitleEn.trim()) return;
+    if (!newImage.trim()) {
+      setFeedback('Pick a banner image before creating a slide.');
+      return;
+    }
+    if (newShowText && !newTitleEn.trim()) {
+      setFeedback('Add a headline, or turn off “Show Text”.');
+      return;
+    }
     setBusyId('new');
     setFeedback(null);
     try {
@@ -107,9 +115,9 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
           target_value: 'all',
           show_text: newShowText,
           show_button: newShowButton,
-          title_en: newTitleEn.trim(),
+          title_en: newTitleEn.trim() || `Slide ${drafts.length + 1}`,
           subtitle_en: newSubtitleEn.trim(),
-          cta_en: newCtaEn.trim(),
+          cta_en: newCtaEn.trim() || 'Explore Collection',
         }),
       });
       if (!res.ok) {
@@ -118,7 +126,7 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
       }
       setNewTitleEn('');
       setNewSubtitleEn('');
-      setFeedback('Created new hero banner slide.');
+      setFeedback(`Created hero slide #${drafts.length + 1}. Add as many as you need.`);
       onRefresh();
       onRefreshStorefront();
     } finally {
@@ -149,7 +157,10 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
           <span>Home Page · Hero Slider (EN / NO / IT / VN)</span>
         </h1>
         <p className="text-xs text-neutral-500 mt-0.5">
-          Hero banners plus main-page sections (All Men’s Shirts, editorial cards, size guide, advice & inspiration). Edit copy per language below.
+          Unlimited hero banners — add as many slides as you need. Main-page sections (shirts, editorial, guide) are edited below.
+        </p>
+        <p className="text-[11px] text-[#142B4E] mt-1 font-medium">
+          {drafts.length} slide{drafts.length === 1 ? '' : 's'} configured
         </p>
       </div>
 
@@ -161,6 +172,11 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
 
       {/* Existing Slides */}
       <div className="space-y-4">
+        {drafts.length === 0 && (
+          <div className="border border-dashed border-neutral-300 bg-[#FAFAFA] px-4 py-8 text-center text-xs text-neutral-500">
+            No hero slides yet. Use “Add New Hero Slide” below — there is no limit.
+          </div>
+        )}
         {drafts.map((slide) => (
           <div key={slide.id} className="border border-neutral-200 bg-white p-5 space-y-4 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
@@ -312,7 +328,7 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
               <button
                 type="button"
                 onClick={() => handleDeleteSlide(slide.id)}
-                disabled={busyId === slide.id || drafts.length <= 1}
+                disabled={busyId === slide.id}
                 className="px-3 py-1.5 border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40 inline-flex items-center gap-1 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -339,11 +355,10 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
       >
         <div className="font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-1.5">
           <Plus className="w-4 h-4" />
-          <span>Add New Hero Slide</span>
+          <span>Add New Hero Slide (unlimited)</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <input
-            required
             value={newTitleEn}
             onChange={(e) => setNewTitleEn(e.target.value)}
             placeholder="Headline (e.g. THE MILANESE POPLIN EDIT)"
@@ -419,6 +434,7 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
 interface HomePageSettingsAdminPanelProps {
   authToken: string;
   homePage: HomePageSettings;
+  products?: Product[];
   onRefresh: () => void;
   onRefreshStorefront: () => void;
   onPickImage: (cb: (url: string) => void) => void;
@@ -478,21 +494,62 @@ const LocFields: React.FC<{
 export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProps> = ({
   authToken,
   homePage,
+  products = [],
   onRefresh,
   onRefreshStorefront,
   onPickImage,
 }) => {
-  const [draft, setDraft] = useState<HomePageSettings>(homePage || DEFAULT_HOME_PAGE_SETTINGS);
+  const [draft, setDraft] = useState<HomePageSettings>({
+    ...DEFAULT_HOME_PAGE_SETTINGS,
+    ...(homePage || {}),
+  });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [shirtQuery, setShirtQuery] = useState('');
 
   useEffect(() => {
-    setDraft(homePage || DEFAULT_HOME_PAGE_SETTINGS);
+    setDraft({ ...DEFAULT_HOME_PAGE_SETTINGS, ...(homePage || {}) });
   }, [homePage]);
 
   const setField = (field: keyof HomePageSettings, value: string) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
   };
+
+  const selectedIds = Array.isArray(draft.featuredProductIds) ? draft.featuredProductIds : [];
+
+  const toggleShirt = (id: number) => {
+    setDraft((prev) => {
+      const cur = Array.isArray(prev.featuredProductIds) ? [...prev.featuredProductIds] : [];
+      const idx = cur.indexOf(id);
+      if (idx >= 0) cur.splice(idx, 1);
+      else cur.push(id);
+      return { ...prev, featuredProductIds: cur };
+    });
+  };
+
+  const moveShirt = (id: number, dir: -1 | 1) => {
+    setDraft((prev) => {
+      const cur = Array.isArray(prev.featuredProductIds) ? [...prev.featuredProductIds] : [];
+      const idx = cur.indexOf(id);
+      if (idx < 0) return prev;
+      const next = idx + dir;
+      if (next < 0 || next >= cur.length) return prev;
+      const tmp = cur[idx];
+      cur[idx] = cur[next];
+      cur[next] = tmp;
+      return { ...prev, featuredProductIds: cur };
+    });
+  };
+
+  const filteredProducts = products.filter((p) => {
+    const q = shirtQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      p.title.toLowerCase().includes(q) ||
+      p.sku.toLowerCase().includes(q) ||
+      p.slug.toLowerCase().includes(q)
+    );
+  });
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -602,10 +659,157 @@ export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProp
 
       <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Layout toggles
+        </h3>
+        <div className="flex flex-wrap gap-4">
+          {(
+            [
+              ['showEditorialCards', 'Editorial cards'],
+              ['showFeaturedProducts', 'All Men’s Shirts strip'],
+              ['showGuideInspiration', 'Guide + Inspiration'],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="inline-flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(draft[key])}
+                onChange={(e) => setDraft((prev) => ({ ...prev, [key]: e.target.checked }))}
+                className="accent-[#142B4E]"
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
           All Men’s Shirts strip
         </h3>
         <LocFields label="Section title" field="featuredTitle_en" draft={draft} onChange={setField} />
         <LocFields label="CTA label" field="featuredCta_en" draft={draft} onChange={setField} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-[10px] uppercase text-neutral-500">How many shirts to show (1–24)</span>
+            <input
+              type="number"
+              min={1}
+              max={24}
+              value={draft.featuredLimit ?? 8}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  featuredLimit: Math.max(1, Math.min(24, Number(e.target.value) || 8)),
+                }))
+              }
+              className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 text-xs font-mono-tabular"
+            />
+          </label>
+          <div className="text-[11px] text-neutral-500 self-end pb-1">
+            {selectedIds.length > 0
+              ? `${selectedIds.length} shirt${selectedIds.length === 1 ? '' : 's'} selected (order = display order).`
+              : 'No selection yet — home falls back to featured flags, then newest shirts.'}
+          </div>
+        </div>
+
+        {selectedIds.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500">Selected order</div>
+            <div className="flex flex-wrap gap-2">
+              {selectedIds.map((id, index) => {
+                const p = products.find((x) => x.id === id);
+                return (
+                  <div
+                    key={id}
+                    className="inline-flex items-center gap-1.5 border border-neutral-200 bg-white px-2 py-1"
+                  >
+                    <span className="font-mono-tabular text-neutral-400">{index + 1}.</span>
+                    <span className="max-w-[140px] truncate">{p?.title || `#${id}`}</span>
+                    <button
+                      type="button"
+                      onClick={() => moveShirt(id, -1)}
+                      className="px-1 text-neutral-500 hover:text-[#142B4E] cursor-pointer"
+                      aria-label="Move up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveShirt(id, 1)}
+                      className="px-1 text-neutral-500 hover:text-[#142B4E] cursor-pointer"
+                      aria-label="Move down"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleShirt(id)}
+                      className="px-1 text-red-600 cursor-pointer"
+                      aria-label="Remove"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraft((prev) => ({ ...prev, featuredProductIds: [] }))}
+              className="text-[11px] text-neutral-500 hover:text-red-700 underline cursor-pointer"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+              Choose shirts for home page
+            </div>
+            <input
+              value={shirtQuery}
+              onChange={(e) => setShirtQuery(e.target.value)}
+              placeholder="Search title / SKU…"
+              className="px-2.5 py-1.5 border border-neutral-300 text-xs w-full sm:w-56"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto border border-neutral-200 bg-white divide-y divide-neutral-100">
+            {filteredProducts.length === 0 ? (
+              <div className="px-3 py-6 text-center text-neutral-500">No products match.</div>
+            ) : (
+              filteredProducts.slice(0, 80).map((p) => {
+                const checked = selectedIds.includes(p.id);
+                return (
+                  <label
+                    key={p.id}
+                    className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[#F7F5F2]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleShirt(p.id)}
+                      className="accent-[#142B4E]"
+                    />
+                    <img
+                      src={p.primary_image}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      className="w-9 h-11 object-cover bg-[#EDE8E1] shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium text-[#1A1A1A]">{p.title}</div>
+                      <div className="text-[10px] text-neutral-500 font-mono-tabular">
+                        {p.sku} · {p.category_slug}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">

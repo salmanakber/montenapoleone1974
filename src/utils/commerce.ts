@@ -30,6 +30,11 @@ export const DEFAULT_HOME_PAGE_SETTINGS: HomePageSettings = {
   featuredCta_no: 'Se Kolleksjonen',
   featuredCta_it: 'Scopri la Collezione',
   featuredCta_vn: 'Khám phá Bộ sưu tập',
+  featuredProductIds: [],
+  featuredLimit: 8,
+  showEditorialCards: true,
+  showFeaturedProducts: true,
+  showGuideInspiration: true,
 
   casualTitle_en: 'CASUAL LINEN SHIRTS',
   casualTitle_no: 'CASUAL LIN-SKJORTER',
@@ -101,6 +106,25 @@ export const DEFAULT_HOME_PAGE_SETTINGS: HomePageSettings = {
   inspirationTargetType: 'view',
   inspirationTargetValue: 'about',
 };
+
+/** Resolve shirts for the home strip: curated IDs → is_featured → first products. */
+export function resolveHomeFeaturedProducts(
+  products: Product[],
+  settings: HomePageSettings = DEFAULT_HOME_PAGE_SETTINGS
+): Product[] {
+  const limit = Math.max(1, Math.min(24, Number(settings.featuredLimit) || 8));
+  const ids = Array.isArray(settings.featuredProductIds)
+    ? settings.featuredProductIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  if (ids.length > 0) {
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const picked = ids.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
+    if (picked.length > 0) return picked.slice(0, limit);
+  }
+  const flagged = products.filter((p) => p.is_featured);
+  if (flagged.length > 0) return flagged.slice(0, limit);
+  return products.slice(0, limit);
+}
 
 export const DEFAULT_TOP_BANNER_SETTINGS: TopBannerSettings = {
   enabled: true,

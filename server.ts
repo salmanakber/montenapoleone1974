@@ -264,7 +264,28 @@ function getTopBannerSettings(): TopBannerSettings {
 }
 
 function getHomePageSettings(): HomePageSettings {
-  return getSiteSettingJson<HomePageSettings>('home_page', DEFAULT_HOME_PAGE_SETTINGS);
+  const raw = getSiteSettingJson<Partial<HomePageSettings>>('home_page', DEFAULT_HOME_PAGE_SETTINGS);
+  const ids = Array.isArray(raw.featuredProductIds)
+    ? raw.featuredProductIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    : DEFAULT_HOME_PAGE_SETTINGS.featuredProductIds;
+  return {
+    ...DEFAULT_HOME_PAGE_SETTINGS,
+    ...raw,
+    featuredProductIds: ids,
+    featuredLimit: Math.max(1, Math.min(24, Number(raw.featuredLimit ?? DEFAULT_HOME_PAGE_SETTINGS.featuredLimit) || 8)),
+    showEditorialCards:
+      raw.showEditorialCards !== undefined
+        ? Boolean(raw.showEditorialCards)
+        : DEFAULT_HOME_PAGE_SETTINGS.showEditorialCards,
+    showFeaturedProducts:
+      raw.showFeaturedProducts !== undefined
+        ? Boolean(raw.showFeaturedProducts)
+        : DEFAULT_HOME_PAGE_SETTINGS.showFeaturedProducts,
+    showGuideInspiration:
+      raw.showGuideInspiration !== undefined
+        ? Boolean(raw.showGuideInspiration)
+        : DEFAULT_HOME_PAGE_SETTINGS.showGuideInspiration,
+  };
 }
 
 function getCustomerAuthSettings(): CustomerAuthSettings {
@@ -6090,6 +6111,9 @@ app.patch('/api/admin/site-settings/:key', requirePermission('manage_settings'),
     const str = (v: unknown, fallback: string) => String(v ?? fallback).trim() || fallback;
     const targetType = (v: unknown, fallback: 'category' | 'view'): 'category' | 'view' =>
       v === 'view' || v === 'category' ? v : fallback;
+    const featuredIds = Array.isArray(body.featuredProductIds)
+      ? body.featuredProductIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
+      : cur.featuredProductIds;
     const updated: HomePageSettings = {
       ...cur,
       featuredTitle_en: str(body.featuredTitle_en, cur.featuredTitle_en),
@@ -6100,6 +6124,17 @@ app.patch('/api/admin/site-settings/:key', requirePermission('manage_settings'),
       featuredCta_no: str(body.featuredCta_no, cur.featuredCta_no),
       featuredCta_it: str(body.featuredCta_it, cur.featuredCta_it),
       featuredCta_vn: str(body.featuredCta_vn, cur.featuredCta_vn),
+      featuredProductIds: featuredIds,
+      featuredLimit: Math.max(
+        1,
+        Math.min(24, Number(body.featuredLimit ?? cur.featuredLimit) || cur.featuredLimit)
+      ),
+      showEditorialCards:
+        body.showEditorialCards !== undefined ? Boolean(body.showEditorialCards) : cur.showEditorialCards,
+      showFeaturedProducts:
+        body.showFeaturedProducts !== undefined ? Boolean(body.showFeaturedProducts) : cur.showFeaturedProducts,
+      showGuideInspiration:
+        body.showGuideInspiration !== undefined ? Boolean(body.showGuideInspiration) : cur.showGuideInspiration,
       casualTitle_en: str(body.casualTitle_en, cur.casualTitle_en),
       casualTitle_no: str(body.casualTitle_no, cur.casualTitle_no),
       casualTitle_it: str(body.casualTitle_it, cur.casualTitle_it),

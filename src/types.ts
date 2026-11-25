@@ -567,6 +567,13 @@ export interface HomePageSettings {
   featuredCta_no: string;
   featuredCta_it: string;
   featuredCta_vn: string;
+  /** Explicit shirt IDs to show in the home “All Men’s Shirts” strip (ordered). Empty = fallback. */
+  featuredProductIds: number[];
+  /** Max shirts to show on the home strip (1–24). */
+  featuredLimit: number;
+  showEditorialCards: boolean;
+  showFeaturedProducts: boolean;
+  showGuideInspiration: boolean;
 
   casualTitle_en: string;
   casualTitle_no: string;
