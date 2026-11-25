@@ -51,6 +51,10 @@ interface B2BViewProps {
   wishlistIds: number[];
   initialProductSlug?: string | null;
   onClearInitialProduct?: () => void;
+  /** Notify parent when B2B single-product page is open (for lifting agent / promo chrome). */
+  onActiveProductChange?: (open: boolean) => void;
+  /** Push a saved colour batch into the shopping bag. */
+  onAddBatchToBag?: (product: Product, batch: B2BQuotationItem) => void;
   onSwitchToB2C?: (slug: string) => void;
   onToggleWishlist: (productId: number) => void;
   onOpenSizeGuide: () => void;
@@ -66,6 +70,8 @@ export const B2BView: React.FC<B2BViewProps> = ({
   wishlistIds,
   initialProductSlug,
   onClearInitialProduct,
+  onActiveProductChange,
+  onAddBatchToBag,
   onSwitchToB2C,
   onToggleWishlist,
   onOpenSizeGuide,
@@ -108,6 +114,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
 
   // Configured batches accumulated via "SAVE & ADD NEW COLOUR"
   const [batches, setBatches] = useState<B2BQuotationItem[]>([]);
+  const [lastSavedLabel, setLastSavedLabel] = useState<string | null>(null);
 
   // Active Shirt Configurator State
   const [sizeBreakdown, setSizeBreakdown] = useState<Record<string, number>>({
@@ -179,6 +186,10 @@ export const B2BView: React.FC<B2BViewProps> = ({
   const [generalNotes, setGeneralNotes] = useState('');
   const [submittedId, setSubmittedId] = useState<{ id: number; qty: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onActiveProductChange?.(Boolean(activeProduct) && !showCheckoutSummary && !submittedId);
+  }, [activeProduct, showCheckoutSummary, submittedId, onActiveProductChange]);
 
   const getCategoryName = (cat: CategoryRecord): string => {
     if (region.code === 'no') return cat.name_no;
@@ -273,17 +284,28 @@ export const B2BView: React.FC<B2BViewProps> = ({
 
   const handleSaveAndAddAnother = () => {
     if (!activeProduct) return;
+    if (moqSummary.totalPieces <= 0) {
+      setError('Add at least one size quantity before saving this colour.');
+      return;
+    }
     setError(null);
-    const batch = buildCurrentBatch(activeProduct);
+    const product = activeProduct;
+    const batch = buildCurrentBatch(product);
     setBatches((prev) => [...prev, batch]);
+    onAddBatchToBag?.(product, batch);
+    setLastSavedLabel(`${product.title} · ${batch.totalPieces} pcs`);
     setSupplierNotes('');
+    // Keep size/fit defaults for the next colour; return to catalog to pick it
     setActiveProduct(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDoneChoosing = () => {
     if (activeProduct && moqSummary.totalPieces > 0) {
-      const batch = buildCurrentBatch(activeProduct);
+      const product = activeProduct;
+      const batch = buildCurrentBatch(product);
       setBatches((prev) => [...prev, batch]);
+      onAddBatchToBag?.(product, batch);
       setActiveProduct(null);
     }
     setShowCheckoutSummary(true);
@@ -338,7 +360,11 @@ export const B2BView: React.FC<B2BViewProps> = ({
   }, [activeProduct, moqSummary.totalPieces, region.code]);
 
   return (
-    <main className="pt-20 pb-20 max-w-[1660px] mx-auto px-2 sm:px-4 min-h-[75vh]">
+    <main
+      className={`pt-20 max-w-[1660px] mx-auto px-2 sm:px-4 min-h-[75vh] ${
+        activeProduct ? 'pb-36 lg:pb-32' : 'pb-20'
+      }`}
+    >
       {/* Smooth Scroll Progress Indicator */}
       <motion.div
         style={{ scaleX: smoothProgress, transformOrigin: '0% 50%' }}
@@ -382,6 +408,27 @@ export const B2BView: React.FC<B2BViewProps> = ({
           )}
         </div>
       </div>
+
+      {lastSavedLabel && !activeProduct && !showCheckoutSummary && !submittedId && (
+        <div className="mb-4 px-4 py-3 border border-[#4F8A47]/35 bg-[#F3F8F3] text-xs text-[#2F5D34] flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Saved to bag: <strong className="font-semibold">{lastSavedLabel}</strong>
+            {batches.length > 0 && (
+              <span className="text-neutral-600">
+                {' '}
+                · {batches.length} colour(s) in quotation · pick another colour below
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => setLastSavedLabel(null)}
+            className="text-[11px] uppercase tracking-wider underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Confirmation State */}
       {submittedId && (
@@ -890,6 +937,11 @@ export const B2BView: React.FC<B2BViewProps> = ({
               </div>
 
               {/* SAVE & ADD NEW COLOUR + I'M DONE CHOOSING */}
+              {error && (
+                <div className="text-xs text-red-600 border border-red-200 bg-red-50 px-3 py-2">
+                  {error}
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 <button
                   type="button"
@@ -909,9 +961,12 @@ export const B2BView: React.FC<B2BViewProps> = ({
             </div>
           </div>
 
-          {/* Sticky Scroll Batch Dock for B2B Single Product */}
+          {/* Sticky Scroll Batch Dock for B2B Single Product (below agent / 10% off chrome) */}
           {showStickyB2BBar && (
-            <div className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-black/15 shadow-lg px-4 sm:px-8 py-2.5">
+            <div
+              data-testid="b2b-sticky-product-bar"
+              className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-black/15 shadow-lg px-4 sm:px-8 py-2.5"
+            >
               <div className="max-w-[1660px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-3 min-w-0">
                   <img
@@ -924,6 +979,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     <div className="font-semibold uppercase truncate">{activeProduct.title}</div>
                     <div className="text-[11px] font-mono-tabular text-neutral-600">
                       {moqSummary.totalPieces} pcs · {tierInfo.tierLabel} · {bodyFit}
+                      {batches.length > 0 && ` · ${batches.length} colour(s) saved`}
                     </div>
                   </div>
                 </div>

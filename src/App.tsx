@@ -5,6 +5,7 @@ import type {
   AiAgentAction,
   AiPublicConfig,
   AuthUser,
+  B2BQuotationItem,
   BespokeTailoring,
   BulkDiscountSettings,
   CartItem,
@@ -27,6 +28,7 @@ import {
   DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_HOME_PAGE_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
+  estimateB2BUnitRate,
   resolveHomeFeaturedProducts,
   DEFAULT_TAILORING_SURCHARGE,
   DEFAULT_TOP_BANNER_SETTINGS,
@@ -153,6 +155,8 @@ export default function App() {
   const [b2bProductSlug, setB2bProductSlug] = useState<string | null>(
     initialRoute.view === 'b2b' ? initialRoute.slug || null : null
   );
+  /** True while B2B single-product configurator is open (lifts agent / 10% off above sticky bar). */
+  const [b2bPdpOpen, setB2bPdpOpen] = useState(false);
   const [infoPage, setInfoPage] = useState<InfoPageSlug>(() => {
     if (initialRoute.view === 'info') {
       return resolveInfoPageSlug(initialRoute.infoPage || initialRoute.slug) || 'returns';
@@ -681,6 +685,7 @@ export default function App() {
     } else if (view !== 'product') {
       setReviewToken(null);
     }
+    if (view !== 'b2b') setB2bPdpOpen(false);
     setActiveView(view);
     pushBrowserUrl(
       regionCode,
@@ -744,6 +749,73 @@ export default function App() {
           tailoring: enrichedTailoring,
         },
       ];
+    });
+    setDrawerState({ open: true, mode: 'bag' });
+  };
+
+  /** Push a B2B colour batch into the shopping bag (one line per size with qty > 0). */
+  const handleAddB2BBatchToBag = (product: Product, batch: B2BQuotationItem) => {
+    const sizeEntries = Object.entries(batch.sizeBreakdown).filter(([, qty]) => Number(qty) > 0);
+    if (sizeEntries.length === 0) return;
+
+    setCart((prev) => {
+      let next = [...prev];
+      for (const [size, rawQty] of sizeEntries) {
+        const qty = Math.max(1, Math.floor(Number(rawQty)));
+        const variantResolved = resolveVariantPriceAndStock(
+          product,
+          regionCode,
+          batch.fit,
+          size
+        );
+        const unitPrice = estimateB2BUnitRate(
+          variantResolved.price,
+          batch.totalPieces,
+          regionCode
+        );
+        const cartKey = [
+          'b2b',
+          product.id,
+          batch.fit,
+          size,
+          batch.collar,
+          batch.cuff,
+          batch.notes || '',
+        ].join('-');
+        const existingIdx = next.findIndex((i) => i.cartKey === cartKey);
+        if (existingIdx >= 0) {
+          next = next.map((i, idx) =>
+            idx === existingIdx ? { ...i, quantity: i.quantity + qty, unitPrice } : i
+          );
+        } else {
+          next.push({
+            cartKey,
+            productId: product.id,
+            slug: product.slug,
+            sku: variantResolved.variantSku,
+            title: product.title,
+            image: product.primary_image || batch.image,
+            unitPrice,
+            quantity: qty,
+            stockQty: variantResolved.stockQty,
+            preorderAllowed: product.preorder_allowed,
+            tailoring: {
+              fit: batch.fit,
+              size,
+              collar: batch.collar,
+              cuff: batch.cuff,
+              sleeveAdjustmentCm: 0,
+              lengthAdjustmentCm: 0,
+              waistAdjustmentCm: 0,
+              chestAdjustmentCm: 0,
+              bottomHemAdjustmentCm: 0,
+              shoulderAdjustmentCm: 0,
+              monogram: batch.notes ? `B2B: ${batch.notes}` : 'B2B MOQ',
+            },
+          });
+        }
+      }
+      return next;
     });
     setDrawerState({ open: true, mode: 'bag' });
   };
@@ -943,8 +1015,11 @@ export default function App() {
             wishlistIds={wishlistIds}
             initialProductSlug={b2bProductSlug}
             onClearInitialProduct={() => setB2bProductSlug(null)}
+            onActiveProductChange={setB2bPdpOpen}
+            onAddBatchToBag={handleAddB2BBatchToBag}
             onSwitchToB2C={(slug) => {
               setB2bProductSlug(null);
+              setB2bPdpOpen(false);
               navigate('product', { slug });
             }}
             onToggleWishlist={handleToggleWishlist}
@@ -1059,13 +1134,16 @@ export default function App() {
             regionCode={regionCode}
             copy={copy}
             promoRules={promoRules}
-            isProductPage={activeView === 'product'}
+            isProductPage={activeView === 'product' || (activeView === 'b2b' && b2bPdpOpen)}
             offerAlreadyUsed={promoClaimedOrUsed}
             onCodeUnlocked={(code) => setActivePromoCode(code)}
             onOfferClaimed={markPromoClaimedOrUsed}
           />
 
-          {activeView !== 'product' && activeView !== 'checkout' && activeView !== 'account' && (
+          {activeView !== 'product' &&
+            !(activeView === 'b2b' && b2bPdpOpen) &&
+            activeView !== 'checkout' &&
+            activeView !== 'account' && (
             <GmailLoginCornerPopup
               regionCode={regionCode}
               customerAuthConfig={customerAuthConfig}
@@ -1082,12 +1160,18 @@ export default function App() {
             hasFloatingPromoLeft={
               promoRules.popupEnabled && promoRules.showFloatingButton && !promoClaimedOrUsed
             }
-            isProductPage={activeView === 'product'}
+            isProductPage={activeView === 'product' || (activeView === 'b2b' && b2bPdpOpen)}
             cartCount={cartCount}
             cartSubtotal={cartSubtotal}
             firstOrderEligible={!promoClaimedOrUsed}
             activePromoCode={activePromoCode}
-            currentProductSlug={activeView === 'product' ? activeProduct?.slug || selectedSlug : null}
+            currentProductSlug={
+              activeView === 'product'
+                ? activeProduct?.slug || selectedSlug
+                : activeView === 'b2b'
+                  ? b2bProductSlug
+                  : null
+            }
             onExecuteAction={handleExecuteAiAction}
             onOpenProduct={(slug) => navigate('product', { slug })}
             onQuickAddToBag={handleQuickAddToBag}
