@@ -1652,6 +1652,86 @@ function seedInitialData(): void {
     })
   );
 
+  // Homepage editorial sections — seed only if missing; admin can override later
+  upsertSetting.run(
+    'home_page',
+    JSON.stringify({
+      featuredTitle_en: "All Men's Shirts",
+      featuredTitle_no: 'Alle Herreskjorter',
+      featuredTitle_it: 'Tutte le Camicie',
+      featuredTitle_vn: 'Tất cả Áo Sơ Mi',
+      featuredCta_en: 'Explore Collection',
+      featuredCta_no: 'Se Kolleksjonen',
+      featuredCta_it: 'Scopri la Collezione',
+      featuredCta_vn: 'Khám phá Bộ sưu tập',
+      casualTitle_en: 'CASUAL LINEN SHIRTS',
+      casualTitle_no: 'CASUAL LIN-SKJORTER',
+      casualTitle_it: 'CAMICIE IN LINO CASUAL',
+      casualTitle_vn: 'ÁO SƠ MI LINEN THƯỜNG NGÀY',
+      casualDesc_en:
+        'Our most breathable casual shirts for warm climates. Tailored from 100% natural European linen with complimentary custom sleeve and body length.',
+      casualDesc_no:
+        'Våre mest pustende casual-skjorter i 100% europeisk lin. Kostnadsfri justering av erme- og skjortelengde.',
+      casualDesc_it:
+        'Le nostre camicie più traspiranti per la primavera e l’estate in 100% lino naturale. Offriamo regolazione sartoriale gratuita di maniche e lunghezza.',
+      casualDesc_vn:
+        'Dòng áo linen 100% tự nhiên thoáng khí tối ưu cho khí hậu nhiệt đới. Miễn phí điều chỉnh chiều dài tay và thân áo theo số đo.',
+      casualImage: '/src/assets/images/editorial_casual_linen_1795248294319.jpg',
+      casualTargetType: 'category',
+      casualTargetValue: 'linen',
+      b2bTitle_en: 'CORPORATE AGREEMENT',
+      b2bTitle_no: 'BEDRIFTSAVTALE',
+      b2bTitle_it: 'ACCORDI AZIENDALI B2B',
+      b2bTitle_vn: 'HỢP ĐỒNG ĐỒNG PHỤC B2B',
+      b2bDesc_en:
+        'Elevate your corporate identity with embroidered uniform shirts. Tailored B2B agreements built for hospitality, aviation, and executive teams.',
+      b2bDesc_no:
+        'Styrk ditt bedriftsimage med skjorteuniform med brodert logo. Skreddersydde bedriftsavtaler for selskaper som bruker skjorter daglig.',
+      b2bDesc_it:
+        'Rafforza l’immagine aziendale con camicie uniformi con logo ricamato. Soluzioni su misura per hotel, compagnie e team direzionali.',
+      b2bDesc_vn:
+        'Nâng tầm hình ảnh doanh nghiệp với áo sơ mi đồng phục thêu logo riêng. Giải pháp chuyên biệt cho khách sạn, hàng không và khối văn phòng.',
+      b2bImage: '/src/assets/images/editorial_corporate_b2b_1795248294517.jpg',
+      b2bTargetType: 'view',
+      b2bTargetValue: 'b2b',
+      businessTitle_en: 'BUSINESS SHIRTS',
+      businessTitle_no: 'BUSINESS SKJORTER',
+      businessTitle_it: 'CAMICIE BUSINESS',
+      businessTitle_vn: 'ÁO SƠ MI CÔNG SỞ CAO CẤP',
+      businessDesc_en:
+        'Our signature wrinkle-resistant 100/2-ply cotton dress shirts. Tightly woven in Treviso with complimentary bespoke sleeve and shirt length.',
+      businessDesc_no:
+        'Vår strykefrie signaturskjorte tettvevet i 100/2-ply kvalitet. Vi tilbyr kostnadsfritt og eksklusivt skreddersydd erme- og skjortelengde.',
+      businessDesc_it:
+        'La nostra iconica camicia bianca no-stiro in tessuto doppio ritorto 100/2-ply di Treviso, con sartoria gratuita su misura.',
+      businessDesc_vn:
+        'Áo sơ mi trắng chống nhăn trứ danh dệt mật độ cao Two-Ply 100/2 từ Ý, tặng kèm dịch vụ cắt chỉnh chiều dài tay áo chuẩn xác.',
+      businessImage: '/src/assets/images/editorial_business_twoply_1795248294929.jpg',
+      businessTargetType: 'category',
+      businessTargetValue: 'business',
+      guideTitle_en: 'GUIDE: HOW TO MEASURE YOUR SHIRT.',
+      guideTitle_no: 'GUIDE: SLIK MÅLER DU DIN SKJORTE RIKTIG.',
+      guideTitle_it: 'GUIDA: COME MISURARE LA TUA CAMICIA.',
+      guideTitle_vn: 'HƯỚNG DẪN: CÁCH ĐO ÁO SƠ MI CHUẨN XÁC.',
+      guideSub_en: 'Precision sizing & fabric weave overview',
+      guideSub_no: 'Oversikt over skjortestoffer og passform',
+      guideSub_it: 'Guida alle taglie e ai tessuti pregiati',
+      guideSub_vn: 'Tìm hiểu chất liệu vải & bảng thông số đo',
+      guideImage: '/src/assets/images/editorial_tailoring_guide_1795248294030.jpg',
+      inspirationTitle_en: 'ADVICE & INSPIRATION',
+      inspirationTitle_no: 'RÅD & INSPIRASJON',
+      inspirationTitle_it: 'CONSIGLI & ISPIRAZIONE',
+      inspirationTitle_vn: 'TƯ VẤN & CẢM HỨNG',
+      inspirationSub_en: 'Italian heritage tailoring since 1974',
+      inspirationSub_no: 'Italiensk håndverk fra Treviso siden 1974',
+      inspirationSub_it: 'Arte camiciaia dal 1974 a Treviso',
+      inspirationSub_vn: 'Di sản may đo Ý từ năm 1974',
+      inspirationImage: '/src/assets/images/hero_linen_coastal_1795248294948.jpg',
+      inspirationTargetType: 'view',
+      inspirationTargetValue: 'about',
+    })
+  );
+
   const existingVisitors = db.prepare('SELECT COUNT(*) AS count FROM visitor_sessions').get() as { count: number };
   if (existingVisitors.count === 0) {
     const insVis = db.prepare(`

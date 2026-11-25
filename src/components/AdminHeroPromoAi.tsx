@@ -14,11 +14,12 @@ import type {
   AiAdminSettings,
   BulkDiscountSettings,
   HeroSlideRecord,
+  HomePageSettings,
   PromotionPopupSettings,
   TopBannerSettings,
   TopBannerVisibility,
 } from '../types.ts';
-import { DEFAULT_TOP_BANNER_SETTINGS } from '../utils/commerce.ts';
+import { DEFAULT_HOME_PAGE_SETTINGS, DEFAULT_TOP_BANNER_SETTINGS } from '../utils/commerce.ts';
 
 // ---------------------------------------------------------------------------
 // 1. HERO SLIDER MANAGER PANEL
@@ -145,10 +146,10 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
       <div className="border-b border-neutral-200 pb-3">
         <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#142B4E]" />
-          <span>Hero Slider & Banner Controls (EN / NO / IT / VN)</span>
+          <span>Home Page · Hero Slider (EN / NO / IT / VN)</span>
         </h1>
         <p className="text-xs text-neutral-500 mt-0.5">
-          Manage homepage hero banners, localized copy, destination links, and toggle visibility of the text overlay and CTA button per slide.
+          Hero banners plus main-page sections (All Men’s Shirts, editorial cards, size guide, advice & inspiration). Edit copy per language below.
         </p>
       </div>
 
@@ -408,6 +409,264 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
         </div>
       </form>
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// 1b. HOME / MAIN PAGE SECTION SETTINGS
+// ---------------------------------------------------------------------------
+
+interface HomePageSettingsAdminPanelProps {
+  authToken: string;
+  homePage: HomePageSettings;
+  onRefresh: () => void;
+  onRefreshStorefront: () => void;
+  onPickImage: (cb: (url: string) => void) => void;
+}
+
+const LocFields: React.FC<{
+  label: string;
+  field: keyof HomePageSettings;
+  draft: HomePageSettings;
+  multiline?: boolean;
+  onChange: (field: keyof HomePageSettings, value: string) => void;
+}> = ({ label, field, draft, multiline, onChange }) => {
+  const langs = [
+    { code: 'en', key: `${String(field).replace(/_en$|_no$|_it$|_vn$/, '')}_en` as keyof HomePageSettings },
+    { code: 'no', key: `${String(field).replace(/_en$|_no$|_it$|_vn$/, '')}_no` as keyof HomePageSettings },
+    { code: 'it', key: `${String(field).replace(/_en$|_no$|_it$|_vn$/, '')}_it` as keyof HomePageSettings },
+    { code: 'vn', key: `${String(field).replace(/_en$|_no$|_it$|_vn$/, '')}_vn` as keyof HomePageSettings },
+  ];
+  // field is expected like "casualTitle_en" — derive base
+  const base = String(field).replace(/_(en|no|it|vn)$/, '');
+  const rows = (['en', 'no', 'it', 'vn'] as const).map((code) => {
+    const key = `${base}_${code}` as keyof HomePageSettings;
+    return { code, key };
+  });
+  void langs;
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{label}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {rows.map(({ code, key }) =>
+          multiline ? (
+            <label key={code} className="block">
+              <span className="text-[10px] text-neutral-400 uppercase">{code}</span>
+              <textarea
+                rows={3}
+                value={String(draft[key] || '')}
+                onChange={(e) => onChange(key, e.target.value)}
+                className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 text-xs outline-none focus:border-[#142B4E]"
+              />
+            </label>
+          ) : (
+            <label key={code} className="block">
+              <span className="text-[10px] text-neutral-400 uppercase">{code}</span>
+              <input
+                value={String(draft[key] || '')}
+                onChange={(e) => onChange(key, e.target.value)}
+                className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 text-xs outline-none focus:border-[#142B4E]"
+              />
+            </label>
+          )
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProps> = ({
+  authToken,
+  homePage,
+  onRefresh,
+  onRefreshStorefront,
+  onPickImage,
+}) => {
+  const [draft, setDraft] = useState<HomePageSettings>(homePage || DEFAULT_HOME_PAGE_SETTINGS);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(homePage || DEFAULT_HOME_PAGE_SETTINGS);
+  }, [homePage]);
+
+  const setField = (field: keyof HomePageSettings, value: string) => {
+    setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/site-settings/home_page', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(draft),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFeedback(data.error || 'Failed to save homepage settings.');
+        return;
+      }
+      setFeedback('Home / main page settings saved for EN · NO · IT · VN.');
+      if (data.homePage) setDraft(data.homePage);
+      onRefresh();
+      onRefreshStorefront();
+    } catch {
+      setFeedback('Network error saving homepage settings.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ImageRow: React.FC<{
+    label: string;
+    field: keyof HomePageSettings;
+  }> = ({ label, field }) => (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-1">{label}</div>
+      <div className="flex gap-2 items-start">
+        <img
+          src={String(draft[field] || '')}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="w-24 h-16 object-cover border border-black/10 bg-[#E6E6E6] shrink-0"
+        />
+        <div className="flex-1 flex gap-1.5">
+          <input
+            value={String(draft[field] || '')}
+            onChange={(e) => setField(field, e.target.value)}
+            className="flex-1 px-2.5 py-1.5 border border-neutral-300 font-mono-tabular text-[11px]"
+          />
+          <button
+            type="button"
+            onClick={() => onPickImage((url) => setField(field, url))}
+            className="px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white inline-flex items-center gap-1 cursor-pointer"
+          >
+            <ImageIcon className="w-3.5 h-3.5" />
+            Pick
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const TargetRow: React.FC<{
+    typeField: keyof HomePageSettings;
+    valueField: keyof HomePageSettings;
+  }> = ({ typeField, valueField }) => (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="block">
+        <span className="text-[10px] text-neutral-500 uppercase">Link type</span>
+        <select
+          value={String(draft[typeField] || 'category')}
+          onChange={(e) => setField(typeField, e.target.value)}
+          className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-xs"
+        >
+          <option value="category">Catalog category</option>
+          <option value="view">Page view (b2b / about)</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-[10px] text-neutral-500 uppercase">Target</span>
+        <input
+          value={String(draft[valueField] || '')}
+          onChange={(e) => setField(valueField, e.target.value)}
+          placeholder="linen / business / b2b / about"
+          className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 text-xs font-mono-tabular"
+        />
+      </label>
+    </div>
+  );
+
+  return (
+    <form onSubmit={save} className="border border-neutral-200 bg-white p-5 space-y-6 text-xs">
+      <div className="border-b border-neutral-100 pb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[#142B4E]">
+          Main Page Sections
+        </h2>
+        <p className="text-[11px] text-neutral-500 mt-0.5">
+          Edit All Men’s Shirts, Casual / B2B / Business cards, Size Guide, and Advice & Inspiration — each with EN / NO / IT / VN copy and images.
+        </p>
+      </div>
+
+      {feedback && (
+        <div className="px-3 py-2 border border-[#4F8A47]/40 bg-[#4F8A47]/10 text-[#2E5A28] font-medium">
+          {feedback}
+        </div>
+      )}
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          All Men’s Shirts strip
+        </h3>
+        <LocFields label="Section title" field="featuredTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="CTA label" field="featuredCta_en" draft={draft} onChange={setField} />
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Editorial card · Casual Linen
+        </h3>
+        <LocFields label="Title" field="casualTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="Description" field="casualDesc_en" draft={draft} multiline onChange={setField} />
+        <ImageRow label="Image" field="casualImage" />
+        <TargetRow typeField="casualTargetType" valueField="casualTargetValue" />
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Editorial card · Corporate / B2B
+        </h3>
+        <LocFields label="Title" field="b2bTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="Description" field="b2bDesc_en" draft={draft} multiline onChange={setField} />
+        <ImageRow label="Image" field="b2bImage" />
+        <TargetRow typeField="b2bTargetType" valueField="b2bTargetValue" />
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Editorial card · Business Shirts
+        </h3>
+        <LocFields label="Title" field="businessTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="Description" field="businessDesc_en" draft={draft} multiline onChange={setField} />
+        <ImageRow label="Image" field="businessImage" />
+        <TargetRow typeField="businessTargetType" valueField="businessTargetValue" />
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Guide: How to measure your shirt
+        </h3>
+        <LocFields label="Title" field="guideTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="Subtitle / badge" field="guideSub_en" draft={draft} onChange={setField} />
+        <ImageRow label="Image" field="guideImage" />
+      </section>
+
+      <section className="space-y-3 border border-neutral-100 p-4 bg-[#FAFAFA]">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+          Advice & Inspiration
+        </h3>
+        <LocFields label="Title" field="inspirationTitle_en" draft={draft} onChange={setField} />
+        <LocFields label="Subtitle / badge" field="inspirationSub_en" draft={draft} onChange={setField} />
+        <ImageRow label="Image" field="inspirationImage" />
+        <TargetRow typeField="inspirationTargetType" valueField="inspirationTargetValue" />
+      </section>
+
+      <div className="flex justify-end">
+        <button
+          type="submit"
+          disabled={busy}
+          className="px-5 py-2.5 bg-[#142B4E] text-white uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : 'Save Home Page Settings'}
+        </button>
+      </div>
+    </form>
   );
 };
 

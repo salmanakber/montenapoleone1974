@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ChevronLeft, ChevronRight, Ruler } from 'lucide-react';
-import type { HeroSlideRecord, Product, RegionConfig } from '../types.ts';
+import type { HeroSlideRecord, HomePageSettings, Product, RegionCode, RegionConfig } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
-import { formatRegionalPrice } from '../utils/commerce.ts';
+import { DEFAULT_HOME_PAGE_SETTINGS, formatRegionalPrice } from '../utils/commerce.ts';
 
 interface HeroAndHomeProps {
   region: RegionConfig;
   copy: RegionCopy;
   heroSlides?: HeroSlideRecord[];
+  homePage?: HomePageSettings;
   featuredProducts: Product[];
   onNavigateCatalog: (category?: string) => void;
   onNavigateB2B: () => void;
@@ -17,10 +18,21 @@ interface HeroAndHomeProps {
   onOpenSizeGuide: () => void;
 }
 
+function pickHome(
+  settings: HomePageSettings,
+  base: string,
+  region: RegionCode
+): string {
+  const key = `${base}_${region}` as keyof HomePageSettings;
+  const enKey = `${base}_en` as keyof HomePageSettings;
+  return String(settings[key] || settings[enKey] || '');
+}
+
 export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   region,
   copy,
   heroSlides = [],
+  homePage = DEFAULT_HOME_PAGE_SETTINGS,
   featuredProducts,
   onNavigateCatalog,
   onNavigateB2B,
@@ -29,6 +41,7 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   onOpenSizeGuide,
 }) => {
   const [slideIndex, setSlideIndex] = useState(0);
+  const hp = { ...DEFAULT_HOME_PAGE_SETTINGS, ...homePage };
 
   const pickLoc = (
     s: HeroSlideRecord,
@@ -36,6 +49,16 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   ): string => {
     const key = `${prefix}_${region.code}` as keyof HeroSlideRecord;
     return String(s[key] || s[`${prefix}_en` as keyof HeroSlideRecord] || '');
+  };
+
+  const runTarget = (type: 'category' | 'view', value: string) => {
+    if (type === 'view') {
+      if (value === 'b2b') onNavigateB2B();
+      else if (value === 'about' && onNavigateAbout) onNavigateAbout();
+      else onNavigateCatalog('all');
+    } else {
+      onNavigateCatalog(value || 'all');
+    }
   };
 
   const slides =
@@ -84,9 +107,21 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   const safeIdx = slideIndex >= slides.length ? 0 : slideIndex;
   const activeSlide = slides[safeIdx];
 
+  const featuredTitle = pickHome(hp, 'featuredTitle', region.code) || copy.nav.allShirts;
+  const featuredCta = pickHome(hp, 'featuredCta', region.code) || copy.hero.slide1Cta;
+  const casualTitle = pickHome(hp, 'casualTitle', region.code) || copy.home.casualTitle;
+  const casualDesc = pickHome(hp, 'casualDesc', region.code) || copy.home.casualDesc;
+  const b2bTitle = pickHome(hp, 'b2bTitle', region.code) || copy.home.b2bTitle;
+  const b2bDesc = pickHome(hp, 'b2bDesc', region.code) || copy.home.b2bDesc;
+  const businessTitle = pickHome(hp, 'businessTitle', region.code) || copy.home.businessTitle;
+  const businessDesc = pickHome(hp, 'businessDesc', region.code) || copy.home.businessDesc;
+  const guideTitle = pickHome(hp, 'guideTitle', region.code) || copy.home.guideTitle;
+  const guideSub = pickHome(hp, 'guideSub', region.code) || copy.home.guideSub;
+  const inspirationTitle = pickHome(hp, 'inspirationTitle', region.code) || copy.home.inspirationTitle;
+  const inspirationSub = pickHome(hp, 'inspirationSub', region.code) || copy.home.inspirationSub;
+
   return (
     <div>
-      {/* 1. Taller Full-Bleed Campaign Hero Slider (Backend-editable slides & text/button visibility) */}
       <section className="relative w-full h-[100svh] min-h-[100vh] overflow-hidden bg-[#8D826E]">
         <img
           src={activeSlide.image}
@@ -128,7 +163,6 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
           </div>
         )}
 
-        {/* Carousel Prev/Next Controls */}
         {slides.length > 1 && (
           <>
             <button
@@ -165,10 +199,8 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
         )}
       </section>
 
-      {/* 2. Three-Column Editorial Showcase (Wider canvas & larger visuals) */}
       <section className="max-w-[1660px] mx-auto px-2 sm:px-4 py-7 sm:py-10">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-3">
-          {/* Card 1: Casual Linen */}
           <motion.article
             initial={{ opacity: 0, y: 18 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -178,27 +210,26 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
           >
             <button
               type="button"
-              onClick={() => onNavigateCatalog('linen')}
+              onClick={() => runTarget(hp.casualTargetType, hp.casualTargetValue)}
               className="relative aspect-[3/4.2] w-full overflow-hidden bg-[#E6E6E6] text-left cursor-pointer"
             >
               <img
-                src="/src/assets/images/editorial_casual_linen_1795248294319.jpg"
-                alt={copy.home.casualTitle}
+                src={hp.casualImage}
+                alt={casualTitle}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
               />
               <div className="absolute inset-x-0 top-0 p-5 bg-gradient-to-b from-black/50 to-transparent">
                 <h2 className="text-sm font-medium tracking-[0.12em] uppercase text-white">
-                  {copy.home.casualTitle}
+                  {casualTitle}
                 </h2>
               </div>
             </button>
             <p className="mt-2 text-xs sm:text-[13px] leading-relaxed text-neutral-600">
-              {copy.home.casualDesc}
+              {casualDesc}
             </p>
           </motion.article>
 
-          {/* Card 2: Corporate Agreement B2B */}
           <motion.article
             initial={{ opacity: 0, y: 18 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -208,27 +239,26 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
           >
             <button
               type="button"
-              onClick={onNavigateB2B}
+              onClick={() => runTarget(hp.b2bTargetType, hp.b2bTargetValue)}
               className="relative aspect-[3/4.2] w-full overflow-hidden bg-[#E6E6E6] text-left cursor-pointer"
             >
               <img
-                src="/src/assets/images/editorial_corporate_b2b_1795248294517.jpg"
-                alt={copy.home.b2bTitle}
+                src={hp.b2bImage}
+                alt={b2bTitle}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
               />
               <div className="absolute inset-x-0 top-0 p-5 bg-gradient-to-b from-black/50 to-transparent">
                 <h2 className="text-sm font-medium tracking-[0.12em] uppercase text-white">
-                  {copy.home.b2bTitle}
+                  {b2bTitle}
                 </h2>
               </div>
             </button>
             <p className="mt-2 text-xs sm:text-[13px] leading-relaxed text-neutral-600">
-              {copy.home.b2bDesc}
+              {b2bDesc}
             </p>
           </motion.article>
 
-          {/* Card 3: Business Shirts */}
           <motion.article
             initial={{ opacity: 0, y: 18 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -238,34 +268,33 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
           >
             <button
               type="button"
-              onClick={() => onNavigateCatalog('business')}
+              onClick={() => runTarget(hp.businessTargetType, hp.businessTargetValue)}
               className="relative aspect-[3/4.2] w-full overflow-hidden bg-[#E6E6E6] text-left cursor-pointer"
             >
               <img
-                src="/src/assets/images/editorial_business_twoply_1795248294929.jpg"
-                alt={copy.home.businessTitle}
+                src={hp.businessImage}
+                alt={businessTitle}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
               />
               <div className="absolute inset-x-0 top-0 p-5 bg-gradient-to-b from-black/50 to-transparent">
                 <h2 className="text-sm font-medium tracking-[0.12em] uppercase text-white">
-                  {copy.home.businessTitle}
+                  {businessTitle}
                 </h2>
               </div>
             </button>
             <p className="mt-2 text-xs sm:text-[13px] leading-relaxed text-neutral-600">
-              {copy.home.businessDesc}
+              {businessDesc}
             </p>
           </motion.article>
         </div>
       </section>
 
-      {/* 3. Featured Regional Collection — Taller Product Images & Tighter Gutters */}
       <section className="max-w-[1660px] mx-auto px-2 sm:px-4 pb-10">
         <div className="flex items-end justify-between border-b border-black/10 pb-2 mb-3">
           <div>
             <h2 className="text-sm sm:text-base font-medium uppercase tracking-[0.12em] text-[#1A1A1A]">
-              {copy.nav.allShirts}
+              {featuredTitle}
             </h2>
             <p className="text-xs text-neutral-500 mt-0.5">
               {region.name} ({region.currency_code}) · {region.warehouse_name}
@@ -276,7 +305,7 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
             onClick={() => onNavigateCatalog('all')}
             className="text-xs uppercase tracking-wider text-[#142B4E] hover:underline underline-offset-4 font-medium cursor-pointer"
           >
-            {copy.hero.slide1Cta} →
+            {featuredCta} →
           </button>
         </div>
 
@@ -323,13 +352,12 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
         </div>
       </section>
 
-      {/* 4. Two-Column Guide & Heritage Split */}
       <section className="max-w-[1660px] mx-auto px-2 sm:px-4 pb-12">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-3">
           <div>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-xs sm:text-sm uppercase tracking-[0.12em] font-medium text-[#1A1A1A]">
-                {copy.home.guideTitle}
+                {guideTitle}
               </h2>
             </div>
             <button
@@ -338,14 +366,14 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
               className="relative aspect-[16/10] w-full overflow-hidden bg-[#E6E6E6] group cursor-pointer block text-left"
             >
               <img
-                src="/src/assets/images/editorial_tailoring_guide_1795248294030.jpg"
-                alt={copy.home.guideTitle}
+                src={hp.guideImage}
+                alt={guideTitle}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-500"
               />
               <span className="absolute bottom-4 left-4 bg-white/95 text-[#1A1A1A] px-3.5 py-2 text-xs uppercase tracking-wider inline-flex items-center gap-2">
                 <Ruler className="w-3.5 h-3.5" />
-                {copy.home.guideSub}
+                {guideSub}
               </span>
             </button>
           </div>
@@ -353,22 +381,22 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-xs sm:text-sm uppercase tracking-[0.12em] font-medium text-[#1A1A1A]">
-                {copy.home.inspirationTitle}
+                {inspirationTitle}
               </h2>
             </div>
             <button
               type="button"
-              onClick={() => (onNavigateAbout ? onNavigateAbout() : onNavigateCatalog('all'))}
+              onClick={() => runTarget(hp.inspirationTargetType, hp.inspirationTargetValue)}
               className="relative aspect-[16/10] w-full overflow-hidden bg-[#E6E6E6] group cursor-pointer block text-left"
             >
               <img
-                src="/src/assets/images/hero_linen_coastal_1795248294948.jpg"
-                alt={copy.home.inspirationTitle}
+                src={hp.inspirationImage}
+                alt={inspirationTitle}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-500"
               />
               <span className="absolute bottom-4 left-4 bg-white/95 text-[#1A1A1A] px-3.5 py-2 text-xs uppercase tracking-wider">
-                {copy.home.inspirationSub}
+                {inspirationSub}
               </span>
             </button>
           </div>

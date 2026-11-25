@@ -11,6 +11,7 @@ import type {
   CategoryRecord,
   CustomerAuthPublicConfig,
   HeroSlideRecord,
+  HomePageSettings,
   MenuItemRecord,
   Product,
   PromotionPopupSettings,
@@ -24,6 +25,7 @@ import {
   calculateTailoringSurcharge,
   DEFAULT_BULK_DISCOUNT_SETTINGS,
   DEFAULT_CUSTOMER_AUTH_SETTINGS,
+  DEFAULT_HOME_PAGE_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_TAILORING_SURCHARGE,
   DEFAULT_TOP_BANNER_SETTINGS,
@@ -123,6 +125,7 @@ export default function App() {
   const [menuItems, setMenuItems] = useState<MenuItemRecord[]>([]);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRecord[]>([]);
   const [topBanner, setTopBanner] = useState<TopBannerSettings>(DEFAULT_TOP_BANNER_SETTINGS);
+  const [homePage, setHomePage] = useState<HomePageSettings>(DEFAULT_HOME_PAGE_SETTINGS);
   const [promoRules, setPromoRules] = useState<PromotionPopupSettings>(DEFAULT_PROMO_POPUP_SETTINGS);
   const [bulkDiscount, setBulkDiscount] = useState<BulkDiscountSettings>(DEFAULT_BULK_DISCOUNT_SETTINGS);
   const [aiConfig, setAiConfig] = useState<AiPublicConfig>(DEFAULT_AI_CONFIG);
@@ -266,6 +269,7 @@ export default function App() {
       if (Array.isArray(data.menuItems)) setMenuItems(data.menuItems);
       if (Array.isArray(data.heroSlides)) setHeroSlides(data.heroSlides);
       if (data.topBanner) setTopBanner(data.topBanner);
+      if (data.homePage) setHomePage(data.homePage);
       if (data.promoRules) setPromoRules(data.promoRules);
       if (data.bulkDiscount) setBulkDiscount(data.bulkDiscount);
       if (data.aiConfig) setAiConfig(data.aiConfig);
@@ -822,6 +826,7 @@ export default function App() {
             region={activeRegion}
             copy={copy}
             heroSlides={heroSlides}
+            homePage={homePage}
             featuredProducts={products.filter((p) => p.is_featured)}
             onNavigateCatalog={(category = 'all') => navigate('catalog', { category })}
             onNavigateB2B={() => navigate('b2b')}

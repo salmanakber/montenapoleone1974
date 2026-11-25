@@ -65,6 +65,7 @@ import type {
   CustomerAuthPublicConfig,
   CustomerAuthSettings,
   HeroSlideRecord,
+  HomePageSettings,
   PaymentMethod,
   PromotionPopupSettings,
   RegionCode,
@@ -86,6 +87,7 @@ import {
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_STAFF_PERMISSIONS,
   DEFAULT_TAILORING_SURCHARGE,
+  DEFAULT_HOME_PAGE_SETTINGS,
   DEFAULT_TOP_BANNER_SETTINGS,
   estimateB2BUnitRate,
   generateBankReference,
@@ -259,6 +261,10 @@ function getPublicAiConfig(): AiPublicConfig {
 
 function getTopBannerSettings(): TopBannerSettings {
   return getSiteSettingJson<TopBannerSettings>('top_banner', DEFAULT_TOP_BANNER_SETTINGS);
+}
+
+function getHomePageSettings(): HomePageSettings {
+  return getSiteSettingJson<HomePageSettings>('home_page', DEFAULT_HOME_PAGE_SETTINGS);
 }
 
 function getCustomerAuthSettings(): CustomerAuthSettings {
@@ -854,6 +860,7 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     menuItems,
     heroSlides,
     topBanner: getTopBannerSettings(),
+    homePage: getHomePageSettings(),
     promoRules: getPromoRules(),
     bulkDiscount: getBulkDiscountSettings(),
     aiConfig: getPublicAiConfig(),
@@ -5903,6 +5910,7 @@ app.get('/api/admin/site-settings', requireStaffOrOwner, (req: AuthedRequest, re
   const origin = resolveRequestOrigin(req);
   res.json({
     topBanner: getTopBannerSettings(),
+    homePage: getHomePageSettings(),
     promoRules: getPromoRules(),
     bulkDiscount: getBulkDiscountSettings(),
     customerAuth: getCustomerAuthSettings(),
@@ -6074,6 +6082,84 @@ app.patch('/api/admin/site-settings/:key', requirePermission('manage_settings'),
     ).run(JSON.stringify(updated));
     logAudit(req.authUser!, 'TOP_BANNER_UPDATED', updated.visibility, `enabled=${updated.enabled}`);
     res.json({ ok: true, topBanner: updated });
+    return;
+  }
+
+  if (key === 'home_page') {
+    const cur = getHomePageSettings();
+    const str = (v: unknown, fallback: string) => String(v ?? fallback).trim() || fallback;
+    const targetType = (v: unknown, fallback: 'category' | 'view'): 'category' | 'view' =>
+      v === 'view' || v === 'category' ? v : fallback;
+    const updated: HomePageSettings = {
+      ...cur,
+      featuredTitle_en: str(body.featuredTitle_en, cur.featuredTitle_en),
+      featuredTitle_no: str(body.featuredTitle_no, cur.featuredTitle_no),
+      featuredTitle_it: str(body.featuredTitle_it, cur.featuredTitle_it),
+      featuredTitle_vn: str(body.featuredTitle_vn, cur.featuredTitle_vn),
+      featuredCta_en: str(body.featuredCta_en, cur.featuredCta_en),
+      featuredCta_no: str(body.featuredCta_no, cur.featuredCta_no),
+      featuredCta_it: str(body.featuredCta_it, cur.featuredCta_it),
+      featuredCta_vn: str(body.featuredCta_vn, cur.featuredCta_vn),
+      casualTitle_en: str(body.casualTitle_en, cur.casualTitle_en),
+      casualTitle_no: str(body.casualTitle_no, cur.casualTitle_no),
+      casualTitle_it: str(body.casualTitle_it, cur.casualTitle_it),
+      casualTitle_vn: str(body.casualTitle_vn, cur.casualTitle_vn),
+      casualDesc_en: str(body.casualDesc_en, cur.casualDesc_en),
+      casualDesc_no: str(body.casualDesc_no, cur.casualDesc_no),
+      casualDesc_it: str(body.casualDesc_it, cur.casualDesc_it),
+      casualDesc_vn: str(body.casualDesc_vn, cur.casualDesc_vn),
+      casualImage: str(body.casualImage, cur.casualImage),
+      casualTargetType: targetType(body.casualTargetType, cur.casualTargetType),
+      casualTargetValue: str(body.casualTargetValue, cur.casualTargetValue),
+      b2bTitle_en: str(body.b2bTitle_en, cur.b2bTitle_en),
+      b2bTitle_no: str(body.b2bTitle_no, cur.b2bTitle_no),
+      b2bTitle_it: str(body.b2bTitle_it, cur.b2bTitle_it),
+      b2bTitle_vn: str(body.b2bTitle_vn, cur.b2bTitle_vn),
+      b2bDesc_en: str(body.b2bDesc_en, cur.b2bDesc_en),
+      b2bDesc_no: str(body.b2bDesc_no, cur.b2bDesc_no),
+      b2bDesc_it: str(body.b2bDesc_it, cur.b2bDesc_it),
+      b2bDesc_vn: str(body.b2bDesc_vn, cur.b2bDesc_vn),
+      b2bImage: str(body.b2bImage, cur.b2bImage),
+      b2bTargetType: targetType(body.b2bTargetType, cur.b2bTargetType),
+      b2bTargetValue: str(body.b2bTargetValue, cur.b2bTargetValue),
+      businessTitle_en: str(body.businessTitle_en, cur.businessTitle_en),
+      businessTitle_no: str(body.businessTitle_no, cur.businessTitle_no),
+      businessTitle_it: str(body.businessTitle_it, cur.businessTitle_it),
+      businessTitle_vn: str(body.businessTitle_vn, cur.businessTitle_vn),
+      businessDesc_en: str(body.businessDesc_en, cur.businessDesc_en),
+      businessDesc_no: str(body.businessDesc_no, cur.businessDesc_no),
+      businessDesc_it: str(body.businessDesc_it, cur.businessDesc_it),
+      businessDesc_vn: str(body.businessDesc_vn, cur.businessDesc_vn),
+      businessImage: str(body.businessImage, cur.businessImage),
+      businessTargetType: targetType(body.businessTargetType, cur.businessTargetType),
+      businessTargetValue: str(body.businessTargetValue, cur.businessTargetValue),
+      guideTitle_en: str(body.guideTitle_en, cur.guideTitle_en),
+      guideTitle_no: str(body.guideTitle_no, cur.guideTitle_no),
+      guideTitle_it: str(body.guideTitle_it, cur.guideTitle_it),
+      guideTitle_vn: str(body.guideTitle_vn, cur.guideTitle_vn),
+      guideSub_en: str(body.guideSub_en, cur.guideSub_en),
+      guideSub_no: str(body.guideSub_no, cur.guideSub_no),
+      guideSub_it: str(body.guideSub_it, cur.guideSub_it),
+      guideSub_vn: str(body.guideSub_vn, cur.guideSub_vn),
+      guideImage: str(body.guideImage, cur.guideImage),
+      inspirationTitle_en: str(body.inspirationTitle_en, cur.inspirationTitle_en),
+      inspirationTitle_no: str(body.inspirationTitle_no, cur.inspirationTitle_no),
+      inspirationTitle_it: str(body.inspirationTitle_it, cur.inspirationTitle_it),
+      inspirationTitle_vn: str(body.inspirationTitle_vn, cur.inspirationTitle_vn),
+      inspirationSub_en: str(body.inspirationSub_en, cur.inspirationSub_en),
+      inspirationSub_no: str(body.inspirationSub_no, cur.inspirationSub_no),
+      inspirationSub_it: str(body.inspirationSub_it, cur.inspirationSub_it),
+      inspirationSub_vn: str(body.inspirationSub_vn, cur.inspirationSub_vn),
+      inspirationImage: str(body.inspirationImage, cur.inspirationImage),
+      inspirationTargetType: targetType(body.inspirationTargetType, cur.inspirationTargetType),
+      inspirationTargetValue: str(body.inspirationTargetValue, cur.inspirationTargetValue),
+    };
+    db.prepare(
+      `INSERT INTO site_settings (key, value_json, updated_at) VALUES ('home_page', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = datetime('now')`
+    ).run(JSON.stringify(updated));
+    logAudit(req.authUser!, 'HOME_PAGE_UPDATED', 'home_page', 'Homepage section copy & imagery saved');
+    res.json({ ok: true, homePage: updated });
     return;
   }
 

@@ -557,6 +557,76 @@ export interface TopBannerSettings {
   textColor: string;
 }
 
+/** Editable homepage sections below the hero slider (admin Home / Main page settings). */
+export interface HomePageSettings {
+  featuredTitle_en: string;
+  featuredTitle_no: string;
+  featuredTitle_it: string;
+  featuredTitle_vn: string;
+  featuredCta_en: string;
+  featuredCta_no: string;
+  featuredCta_it: string;
+  featuredCta_vn: string;
+
+  casualTitle_en: string;
+  casualTitle_no: string;
+  casualTitle_it: string;
+  casualTitle_vn: string;
+  casualDesc_en: string;
+  casualDesc_no: string;
+  casualDesc_it: string;
+  casualDesc_vn: string;
+  casualImage: string;
+  casualTargetType: 'category' | 'view';
+  casualTargetValue: string;
+
+  b2bTitle_en: string;
+  b2bTitle_no: string;
+  b2bTitle_it: string;
+  b2bTitle_vn: string;
+  b2bDesc_en: string;
+  b2bDesc_no: string;
+  b2bDesc_it: string;
+  b2bDesc_vn: string;
+  b2bImage: string;
+  b2bTargetType: 'category' | 'view';
+  b2bTargetValue: string;
+
+  businessTitle_en: string;
+  businessTitle_no: string;
+  businessTitle_it: string;
+  businessTitle_vn: string;
+  businessDesc_en: string;
+  businessDesc_no: string;
+  businessDesc_it: string;
+  businessDesc_vn: string;
+  businessImage: string;
+  businessTargetType: 'category' | 'view';
+  businessTargetValue: string;
+
+  guideTitle_en: string;
+  guideTitle_no: string;
+  guideTitle_it: string;
+  guideTitle_vn: string;
+  guideSub_en: string;
+  guideSub_no: string;
+  guideSub_it: string;
+  guideSub_vn: string;
+  guideImage: string;
+
+  inspirationTitle_en: string;
+  inspirationTitle_no: string;
+  inspirationTitle_it: string;
+  inspirationTitle_vn: string;
+  inspirationSub_en: string;
+  inspirationSub_no: string;
+  inspirationSub_it: string;
+  inspirationSub_vn: string;
+  inspirationImage: string;
+  inspirationTargetType: 'category' | 'view';
+  inspirationTargetValue: string;
+}
+
 export interface AiPublicConfig {
   enabled: boolean;
   displayMode: 'agent' | 'chatbot';

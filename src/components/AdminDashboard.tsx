@@ -49,6 +49,7 @@ import type {
   CsvImportRow,
   CustomerAuthSettings,
   HeroSlideRecord,
+  HomePageSettings,
   MediaAsset,
   NewsletterSubscriber,
   OrderRecord,
@@ -71,6 +72,7 @@ import {
   DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
   DEFAULT_STAFF_PERMISSIONS,
+  DEFAULT_HOME_PAGE_SETTINGS,
   DEFAULT_TOP_BANNER_SETTINGS,
   formatRegionalPrice,
   hasPermission,
@@ -94,6 +96,7 @@ import { DatabaseInspectorPanel, MenuManagerPanel } from './AdminMenuAndDatabase
 import {
   AiSettingsAdminPanel,
   HeroSliderAdminPanel,
+  HomePageSettingsAdminPanel,
   PromotionsAndBulkAdminPanel,
 } from './AdminHeroPromoAi.tsx';
 import { AdminCategoriesPanel } from './AdminCategoriesPanel.tsx';
@@ -186,6 +189,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [heroSlides, setHeroSlides] = useState<HeroSlideRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [topBanner, setTopBanner] = useState<TopBannerSettings>(DEFAULT_TOP_BANNER_SETTINGS);
+  const [homePage, setHomePage] = useState<HomePageSettings>(DEFAULT_HOME_PAGE_SETTINGS);
   const [promoRules, setPromoRules] = useState<PromotionPopupSettings>(DEFAULT_PROMO_POPUP_SETTINGS);
   const [bulkDiscount, setBulkDiscount] = useState<BulkDiscountSettings>(DEFAULT_BULK_DISCOUNT_SETTINGS);
   const [customerAuth, setCustomerAuth] = useState<CustomerAuthSettings>(DEFAULT_CUSTOMER_AUTH_SETTINGS);
@@ -428,6 +432,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => {
             if (d?.topBanner) setTopBanner(d.topBanner);
+            if (d?.homePage) setHomePage(d.homePage);
             if (d?.promoRules) setPromoRules(d.promoRules);
             if (d?.bulkDiscount) setBulkDiscount(d.bulkDiscount);
             if (d?.customerAuth) setCustomerAuth(d.customerAuth);
@@ -1415,7 +1420,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     },
     {
       id: 'hero',
-      label: 'Hero Slider',
+      label: 'Home / Hero',
       icon: <Layers className="w-4 h-4" />,
       visible:
         hasPermission(authUser, 'manage_products') || hasPermission(authUser, 'manage_settings'),
@@ -2526,16 +2531,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             authToken &&
             (hasPermission(authUser, 'manage_products') ||
               hasPermission(authUser, 'manage_settings')) && (
-              <HeroSliderAdminPanel
-                authToken={authToken}
-                slides={heroSlides}
-                onRefresh={loadAdminData}
-                onRefreshStorefront={onRefreshStorefront}
-                onPickImage={(cb) => {
-                  setTailoringPickerCb(() => cb);
-                  setMediaPickerTarget('hero');
-                }}
-              />
+              <div className="space-y-8">
+                <HeroSliderAdminPanel
+                  authToken={authToken}
+                  slides={heroSlides}
+                  onRefresh={loadAdminData}
+                  onRefreshStorefront={onRefreshStorefront}
+                  onPickImage={(cb) => {
+                    setTailoringPickerCb(() => cb);
+                    setMediaPickerTarget('hero');
+                  }}
+                />
+                {hasPermission(authUser, 'manage_settings') && (
+                  <HomePageSettingsAdminPanel
+                    authToken={authToken}
+                    homePage={homePage}
+                    onRefresh={loadAdminData}
+                    onRefreshStorefront={onRefreshStorefront}
+                    onPickImage={(cb) => {
+                      setTailoringPickerCb(() => cb);
+                      setMediaPickerTarget('hero');
+                    }}
+                  />
+                )}
+              </div>
             )}
 
           {/* PROMOTIONS (TOP BANNER + 10% FIRST-ORDER MAILCHIMP POPUP) & BULK DISCOUNTS */}
