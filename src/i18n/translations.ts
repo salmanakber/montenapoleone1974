@@ -149,6 +149,16 @@ export interface RegionCopy {
     dhlShipping: string;
     includedVat: string;
     totalLabel: string;
+    retailGroupLabel: string;
+    b2bGroupLabel: string;
+    b2bGroupHint: string;
+    b2bBadge: string;
+    mixedCartNote: string;
+    checkoutRetailCta: string;
+    checkoutB2bCta: string;
+    b2bCheckoutTitle: string;
+    b2bCompanyRequired: string;
+    pcsLabel: string;
   };
   footer: {
     aboutHeading: string;
@@ -369,6 +379,16 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       dhlShipping: 'DHL Shipping',
       includedVat: 'Included VAT',
       totalLabel: 'Total',
+      retailGroupLabel: 'Retail (B2C)',
+      b2bGroupLabel: 'B2B Group Order',
+      b2bGroupHint: 'Corporate MOQ order — routed to the B2B order portal',
+      b2bBadge: 'B2B',
+      mixedCartNote: 'Your bag has retail and B2B items. Checkout each group separately so they reach the right destination.',
+      checkoutRetailCta: 'Checkout Retail Items',
+      checkoutB2bCta: 'Checkout B2B Group Order',
+      b2bCheckoutTitle: 'B2B Group Order Checkout',
+      b2bCompanyRequired: 'Company name is required for B2B orders.',
+      pcsLabel: 'pcs',
     },
     footer: {
       aboutHeading: 'About Us',
@@ -700,6 +720,16 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       dhlShipping: 'DHL Frakt',
       includedVat: 'Inkludert MVA',
       totalLabel: 'Totalt',
+      retailGroupLabel: 'Detalj (B2C)',
+      b2bGroupLabel: 'B2B Gruppeordre',
+      b2bGroupHint: 'Bedriftsordre med MOQ — sendes til B2B-ordreportalen',
+      b2bBadge: 'B2B',
+      mixedCartNote: 'Handleposen har både detalj- og B2B-varer. Fullfør hver gruppe separat slik at de går til riktig sted.',
+      checkoutRetailCta: 'Checkout detaljvarer',
+      checkoutB2bCta: 'Checkout B2B gruppeordre',
+      b2bCheckoutTitle: 'Checkout for B2B gruppeordre',
+      b2bCompanyRequired: 'Firmanavn er påkrevd for B2B-ordrer.',
+      pcsLabel: 'stk',
     },
     footer: {
       aboutHeading: 'Om oss',
@@ -1004,6 +1034,16 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       dhlShipping: 'Spedizione DHL',
       includedVat: 'IVA Inclusa',
       totalLabel: 'Totale',
+      retailGroupLabel: 'Retail (B2C)',
+      b2bGroupLabel: 'Ordine Gruppo B2B',
+      b2bGroupHint: 'Ordine aziendale MOQ — inviato al portale ordini B2B',
+      b2bBadge: 'B2B',
+      mixedCartNote: 'La borsa contiene articoli retail e B2B. Completa il checkout di ogni gruppo separatamente.',
+      checkoutRetailCta: 'Checkout articoli retail',
+      checkoutB2bCta: 'Checkout ordine gruppo B2B',
+      b2bCheckoutTitle: 'Checkout ordine gruppo B2B',
+      b2bCompanyRequired: 'Il nome azienda è obbligatorio per gli ordini B2B.',
+      pcsLabel: 'pz',
     },
     footer: {
       aboutHeading: 'Chi Siamo',
@@ -1276,6 +1316,16 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       dhlShipping: 'Phí vận chuyển DHL',
       includedVat: 'Thuế VAT đã bao gồm',
       totalLabel: 'Tổng thanh toán',
+      retailGroupLabel: 'Bán lẻ (B2C)',
+      b2bGroupLabel: 'Đơn nhóm B2B',
+      b2bGroupHint: 'Đơn doanh nghiệp MOQ — chuyển tới cổng đơn hàng B2B',
+      b2bBadge: 'B2B',
+      mixedCartNote: 'Giỏ hàng có cả sản phẩm bán lẻ và B2B. Thanh toán từng nhóm riêng để đến đúng đích.',
+      checkoutRetailCta: 'Thanh toán đơn bán lẻ',
+      checkoutB2bCta: 'Thanh toán đơn nhóm B2B',
+      b2bCheckoutTitle: 'Thanh toán đơn nhóm B2B',
+      b2bCompanyRequired: 'Tên công ty bắt buộc cho đơn B2B.',
+      pcsLabel: 'sp',
     },
     footer: {
       aboutHeading: 'Về chúng tôi',

@@ -46,7 +46,7 @@ import { CatalogView } from './components/CatalogView.tsx';
 import { ProductDetailView } from './components/ProductDetailView.tsx';
 import { AboutUsView } from './components/AboutUsView.tsx';
 import { InfoPagesView } from './components/InfoPagesView.tsx';
-import { CartDrawer } from './components/CartDrawer.tsx';
+import { CartDrawer, resolveCartChannel } from './components/CartDrawer.tsx';
 import { CheckoutView } from './components/CheckoutView.tsx';
 import { AccountView, B2BView } from './components/B2BAndAccountView.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
@@ -177,11 +177,16 @@ export default function App() {
       const raw = window.localStorage.getItem('mn_cart_v1');
       if (!raw) return [];
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as CartItem[]) : [];
+      if (!Array.isArray(parsed)) return [];
+      return (parsed as CartItem[]).map((item) => ({
+        ...item,
+        channel: resolveCartChannel(item),
+      }));
     } catch {
       return [];
     }
   });
+  const [checkoutChannel, setCheckoutChannel] = useState<'b2c' | 'b2b'>('b2c');
   const [wishlistIds, setWishlistIds] = useState<number[]>([]);
   const [drawerState, setDrawerState] = useState<{ open: boolean; mode: 'bag' | 'wishlist' }>({
     open: false,
@@ -746,6 +751,7 @@ export default function App() {
           quantity: 1,
           stockQty: variantResolved.stockQty,
           preorderAllowed: product.preorder_allowed,
+          channel: 'b2c',
           tailoring: enrichedTailoring,
         },
       ];
@@ -757,6 +763,7 @@ export default function App() {
   const handleAddB2BBatchToBag = (product: Product, batch: B2BQuotationItem) => {
     const sizeEntries = Object.entries(batch.sizeBreakdown).filter(([, qty]) => Number(qty) > 0);
     if (sizeEntries.length === 0) return;
+    const b2bGroupKey = `${product.id}|${batch.fit}|${batch.collar}|${batch.cuff}`;
 
     setCart((prev) => {
       let next = [...prev];
@@ -785,7 +792,9 @@ export default function App() {
         const existingIdx = next.findIndex((i) => i.cartKey === cartKey);
         if (existingIdx >= 0) {
           next = next.map((i, idx) =>
-            idx === existingIdx ? { ...i, quantity: i.quantity + qty, unitPrice } : i
+            idx === existingIdx
+              ? { ...i, quantity: i.quantity + qty, unitPrice, channel: 'b2b', b2bGroupKey }
+              : i
           );
         } else {
           next.push({
@@ -799,6 +808,8 @@ export default function App() {
             quantity: qty,
             stockQty: variantResolved.stockQty,
             preorderAllowed: product.preorder_allowed,
+            channel: 'b2b',
+            b2bGroupKey,
             tailoring: {
               fit: batch.fit,
               size,
@@ -819,6 +830,11 @@ export default function App() {
     });
     setDrawerState({ open: true, mode: 'bag' });
   };
+
+  const checkoutItems = useMemo(
+    () => cart.filter((item) => resolveCartChannel(item) === checkoutChannel),
+    [cart, checkoutChannel]
+  );
 
   const handleToggleWishlist = (productId: number) => {
     setWishlistIds((prev) =>
@@ -1030,17 +1046,24 @@ export default function App() {
           <CheckoutView
             region={activeRegion}
             copy={copy}
-            items={cart}
+            items={checkoutItems}
+            forceB2B={checkoutChannel === 'b2b'}
             promoRules={promoRules}
             bulkDiscount={bulkDiscount}
-            initialDiscountCode={activePromoCode}
+            initialDiscountCode={checkoutChannel === 'b2b' ? '' : activePromoCode}
             cartSessionId={getVisitorSessionId()}
             authEmail={authUser?.email || null}
-            onClearCart={() => setCart([])}
-            onBackToShop={() => navigate('catalog', { category: 'all' })}
+            onClearCart={() =>
+              setCart((prev) =>
+                prev.filter((item) => resolveCartChannel(item) !== checkoutChannel)
+              )
+            }
+            onBackToShop={() =>
+              navigate(checkoutChannel === 'b2b' ? 'b2b' : 'catalog', { category: 'all' })
+            }
             onRefreshStorefront={() => fetchStorefront(regionCode)}
             onOrderCompleted={(usedCode) => {
-              if (usedCode) {
+              if (usedCode && checkoutChannel === 'b2c') {
                 markPromoClaimedOrUsed();
               }
             }}
@@ -1113,7 +1136,14 @@ export default function App() {
           )
         }
         onRemoveItem={(key) => setCart((prev) => prev.filter((i) => i.cartKey !== key))}
-        onCheckout={() => navigate('checkout')}
+        onCheckoutRetail={() => {
+          setCheckoutChannel('b2c');
+          navigate('checkout');
+        }}
+        onCheckoutB2B={() => {
+          setCheckoutChannel('b2b');
+          navigate('checkout');
+        }}
         onOpenProduct={(slug) => navigate('product', { slug })}
         onToggleWishlist={handleToggleWishlist}
       />

@@ -303,6 +303,8 @@ export interface BespokeTailoring {
   monogram?: string;
 }
 
+export type CartChannel = 'b2c' | 'b2b';
+
 export interface CartItem {
   cartKey: string;
   productId: number;
@@ -314,6 +316,10 @@ export interface CartItem {
   quantity: number;
   stockQty: number;
   preorderAllowed: boolean;
+  /** Retail bag vs corporate B2B group order — routes to different checkout destinations. */
+  channel?: CartChannel;
+  /** Groups size lines from the same B2B colour configuration. */
+  b2bGroupKey?: string;
   tailoring: BespokeTailoring;
 }
 

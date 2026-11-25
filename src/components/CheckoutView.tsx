@@ -23,6 +23,8 @@ interface CheckoutViewProps {
   region: RegionConfig;
   copy: RegionCopy;
   items: CartItem[];
+  /** When true, this checkout is the B2B group-order lane (is_b2b order portal). */
+  forceB2B?: boolean;
   promoRules?: PromotionPopupSettings;
   bulkDiscount?: BulkDiscountSettings;
   initialDiscountCode?: string;
@@ -38,6 +40,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   region,
   copy,
   items,
+  forceB2B = false,
   promoRules = DEFAULT_PROMO_POPUP_SETTINGS,
   bulkDiscount = DEFAULT_BULK_DISCOUNT_SETTINGS,
   initialDiscountCode = '',
@@ -67,10 +70,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [billingCountry, setBillingCountry] = useState(region.name);
   const [vippsPrefillLoading, setVippsPrefillLoading] = useState(false);
   const [vippsPrefillMsg, setVippsPrefillMsg] = useState<string | null>(null);
-  const [isB2B, setIsB2B] = useState(false);
+  const [isB2B, setIsB2B] = useState(forceB2B);
   const [companyName, setCompanyName] = useState('');
   const [orgNumber, setOrgNumber] = useState('');
   const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if (forceB2B) setIsB2B(true);
+  }, [forceB2B]);
 
   const [discountInput, setDiscountInput] = useState(initialDiscountCode);
   const [appliedDiscount, setAppliedDiscount] = useState(initialDiscountCode);
@@ -161,10 +168,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     items,
     region,
     shippingMethod,
-    discountCode: appliedDiscount,
-    promoSettings: promoRules,
-    bulkSettings: bulkDiscount,
-    isFirstOrder,
+    discountCode: forceB2B ? '' : appliedDiscount,
+    promoSettings: forceB2B ? { ...promoRules, popupEnabled: false } : promoRules,
+    bulkSettings: forceB2B ? { ...bulkDiscount, enabled: false } : bulkDiscount,
+    isFirstOrder: forceB2B ? false : isFirstOrder,
   });
 
   useEffect(() => {
@@ -264,6 +271,15 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    if (items.length === 0) {
+      setErrorMsg(copy.checkout.emptyBag);
+      return;
+    }
+    const submitAsB2B = forceB2B || isB2B;
+    if (submitAsB2B && !companyName.trim()) {
+      setErrorMsg(copy.checkout.b2bCompanyRequired);
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch('/api/checkout/orders', {
@@ -286,17 +302,20 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
           billingCity,
           billingPostalCode,
           billingCountry,
-          isB2B,
+          isB2B: submitAsB2B,
           companyName,
           orgNumber,
-          notes,
-          discountCode: appliedDiscount,
+          notes: submitAsB2B
+            ? [`[B2B Group Order]`, notes].filter(Boolean).join(' ').trim() || '[B2B Group Order]'
+            : notes,
+          discountCode: submitAsB2B ? '' : appliedDiscount,
           shippingMethod,
           paymentMethod,
           cartSessionId: cartSessionId || undefined,
           items: items.map((i) => ({
             productId: i.productId,
             quantity: i.quantity,
+            channel: i.channel || (submitAsB2B ? 'b2b' : 'b2c'),
             tailoring: i.tailoring,
           })),
         }),
@@ -498,15 +517,38 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     );
   }
 
+  if (items.length === 0) {
+    return (
+      <main className="pt-24 pb-20 max-w-[720px] mx-auto px-4 sm:px-8 text-center space-y-4">
+        <p className="text-sm text-neutral-600">{copy.checkout.emptyBag}</p>
+        <button
+          type="button"
+          onClick={onBackToShop}
+          className="px-6 py-3 bg-[#142B4E] text-white text-xs uppercase tracking-wider cursor-pointer"
+        >
+          {forceB2B ? copy.b2b.portalTitle : copy.nav.allShirts}
+        </button>
+      </main>
+    );
+  }
+
   return (
     <main className="pt-24 pb-20 max-w-[1280px] mx-auto px-4 sm:px-8">
       <div className="border-b border-black/10 pb-4 mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg sm:text-xl font-medium uppercase tracking-wide">
-            {copy.checkout.checkoutTitle}
+          <h1 className="text-lg sm:text-xl font-medium uppercase tracking-wide inline-flex items-center gap-2 flex-wrap">
+            {forceB2B ? copy.checkout.b2bCheckoutTitle : copy.checkout.checkoutTitle}
+            {forceB2B && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm bg-[#142B4E] text-white text-[10px] tracking-wider font-semibold">
+                <Building2 className="w-3 h-3" />
+                {copy.checkout.b2bBadge}
+              </span>
+            )}
           </h1>
           <p className="text-xs text-neutral-500 mt-1">
-            Dispatching from {region.warehouse_name} · Currency: {region.currency_code}
+            {forceB2B
+              ? copy.checkout.b2bGroupHint
+              : `Dispatching from ${region.warehouse_name} · Currency: ${region.currency_code}`}
           </p>
         </div>
         <button
@@ -744,21 +786,29 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
               )}
             </div>
 
-            <label className="inline-flex items-center gap-2 text-xs text-neutral-700 pt-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isB2B}
-                onChange={(e) => setIsB2B(e.target.checked)}
-                className="accent-[#142B4E]"
-              />
-              <Building2 className="w-3.5 h-3.5" />
-              <span>Order on behalf of a Company (B2B Invoice / VAT ID)</span>
-            </label>
+            {forceB2B ? (
+              <div className="pt-1 px-3 py-2.5 border border-[#142B4E]/25 bg-[#F4F7FB] text-xs text-[#142B4E] inline-flex items-center gap-2">
+                <Building2 className="w-3.5 h-3.5" />
+                <span className="font-semibold uppercase tracking-wider">{copy.checkout.b2bGroupLabel}</span>
+              </div>
+            ) : (
+              <label className="inline-flex items-center gap-2 text-xs text-neutral-700 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isB2B}
+                  onChange={(e) => setIsB2B(e.target.checked)}
+                  className="accent-[#142B4E]"
+                />
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Order on behalf of a Company (B2B Invoice / VAT ID)</span>
+              </label>
+            )}
 
-            {isB2B && (
+            {(forceB2B || isB2B) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                 <input
-                  placeholder="Company Name"
+                  required={forceB2B}
+                  placeholder="Company Name *"
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
                   className="px-3 py-2 text-xs border border-black/15 focus:border-[#142B4E] outline-none"
@@ -924,8 +974,13 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         {/* Right Column: Order Summary */}
         <aside className="lg:col-span-5">
           <div className="border border-black/15 bg-[#FAFAFA] p-6 space-y-5 lg:sticky lg:top-24">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.12em]">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] inline-flex items-center gap-2">
               {copy.checkout.orderSummary}
+              {forceB2B && (
+                <span className="px-1.5 py-0.5 rounded-sm bg-[#142B4E] text-white text-[9px] tracking-wider">
+                  {copy.checkout.b2bBadge}
+                </span>
+              )}
             </h2>
 
             <div className="divide-y divide-black/10 max-h-72 overflow-y-auto">
@@ -938,7 +993,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                     className="w-14 h-16 object-cover bg-[#E6E6E6]"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium uppercase truncate">{item.title}</div>
+                    <div className="text-xs font-medium uppercase truncate inline-flex items-center gap-1.5">
+                      {forceB2B && (
+                        <span className="px-1 py-0.5 rounded-sm bg-[#142B4E] text-white text-[8px] tracking-wider">
+                          {copy.checkout.b2bBadge}
+                        </span>
+                      )}
+                      <span className="truncate">{item.title}</span>
+                    </div>
                     <div className="text-[11px] text-neutral-500">
                       {item.tailoring.fit} · {item.tailoring.size} · Qty {item.quantity}
                     </div>

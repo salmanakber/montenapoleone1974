@@ -1179,11 +1179,15 @@ app.post('/api/checkout/orders', async (req, res) => {
   const isB2B = Boolean(body.isB2B);
   const companyName = isB2B ? String(body.companyName || '').trim() || null : null;
   const orgNumber = isB2B ? String(body.orgNumber || '').trim() || null : null;
-  const discountCode = String(body.discountCode || '').trim();
+  const discountCode = isB2B ? '' : String(body.discountCode || '').trim();
   const notes = String(body.notes || '').trim() || null;
 
   if (!customerName || !customerEmail || !shippingAddress || !shippingCity || !shippingPostalCode) {
     res.status(400).json({ error: 'Please complete all required customer and shipping fields.' });
+    return;
+  }
+  if (isB2B && !companyName) {
+    res.status(400).json({ error: 'Company name is required for B2B group orders.' });
     return;
   }
 
@@ -1192,6 +1196,13 @@ app.post('/api/checkout/orders', async (req, res) => {
     res.status(400).json({ error: 'Shopping bag is empty.' });
     return;
   }
+  const b2bOrderPieces = isB2B
+    ? rawItems.reduce(
+        (sum: number, item: { quantity?: number }) =>
+          sum + Math.max(0, Math.floor(Number(item?.quantity || 0))),
+        0
+      )
+    : 0;
 
   const shippingMethod: ShippingMethod =
     body.shippingMethod === 'dhl_express' ? 'dhl_express' : 'dhl_economy';
@@ -1221,7 +1232,8 @@ app.post('/api/checkout/orders', async (req, res) => {
 
     for (const item of rawItems) {
       const productId = Number(item.productId);
-      const qty = Math.max(1, Math.min(50, Math.floor(Number(item.quantity || 1))));
+      const maxQty = isB2B ? 500 : 50;
+      const qty = Math.max(1, Math.min(maxQty, Math.floor(Number(item.quantity || 1))));
 
       const row = db
         .prepare(
@@ -1247,7 +1259,8 @@ app.post('/api/checkout/orders', async (req, res) => {
         throw new Error(`Product ID ${productId} is unavailable in ${region.name}.`);
       }
 
-      if (row.stock_qty < qty && !row.preorder_allowed) {
+      // B2B group orders are often produced to order — allow beyond on-hand when MOQ channel
+      if (!isB2B && row.stock_qty < qty && !row.preorder_allowed) {
         throw new Error(
           `Insufficient stock for "${row.title}" in ${region.warehouse_name} (${row.stock_qty} remaining).`
         );
@@ -1264,7 +1277,11 @@ app.post('/api/checkout/orders', async (req, res) => {
         chestAdjustmentCm: Number(item.tailoring?.chestAdjustmentCm || 0),
         bottomHemAdjustmentCm: Number(item.tailoring?.bottomHemAdjustmentCm || 0),
         shoulderAdjustmentCm: Number(item.tailoring?.shoulderAdjustmentCm || 0),
-        monogram: item.tailoring?.monogram ? String(item.tailoring.monogram).slice(0, 6) : undefined,
+        monogram: item.tailoring?.monogram
+          ? String(item.tailoring.monogram).slice(0, isB2B ? 40 : 6)
+          : isB2B
+            ? 'B2B MOQ'
+            : undefined,
       };
 
       const variantRow = db
@@ -1275,10 +1292,13 @@ app.post('/api/checkout/orders', async (req, res) => {
 
       const variantStockCol = `stock_${regionCode}`;
       const variantPriceCol = `price_${regionCode}`;
-      const effectiveBasePrice =
+      let effectiveBasePrice =
         variantRow && typeof variantRow[variantPriceCol] === 'number' && Number(variantRow[variantPriceCol]) > 0
           ? Number(variantRow[variantPriceCol])
           : Number(row.price);
+      if (isB2B) {
+        effectiveBasePrice = estimateB2BUnitRate(effectiveBasePrice, b2bOrderPieces, regionCode);
+      }
 
       const tailoringFee = calculateTailoringSurcharge(tailoring, regionCode);
       tailoring.tailoringSurcharge = tailoringFee;
