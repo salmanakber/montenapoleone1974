@@ -292,12 +292,15 @@ export function buildSeoMetadata(params: {
 
   const orgSchema: Record<string, unknown> = {
     '@context': 'https://schema.org',
-    '@type': 'ClothingStore',
+    '@type': ['ClothingStore', 'Organization'],
     name: 'Monte Napoleone 1974',
     url: baseOrigin,
     logo: `${baseOrigin}/assets/aistudio/logo__2__1ee1df15.png`,
+    image: `${baseOrigin}/assets/aistudio/logo__2__1ee1df15.png`,
     foundingDate: '1974',
     email: 'monte@montenapoleone1974.com',
+    telephone: '+47 22 00 00 00',
+    priceRange: '$$$',
     address: {
       '@type': 'PostalAddress',
       streetAddress: 'Maridalsveien 87',
@@ -305,10 +308,32 @@ export function buildSeoMetadata(params: {
       postalCode: '0461',
       addressCountry: 'NO',
     },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: 59.9435,
+      longitude: 10.7522,
+    },
+    areaServed: ['NO', 'IT', 'VN', 'US', 'EU'],
     sameAs: [
       'https://www.facebook.com/MonteNapoleoneShirts',
       'https://www.instagram.com/montenapoleoneshirts/',
     ],
+  };
+
+  const websiteSchema: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: 'Monte Napoleone 1974',
+    url: baseOrigin,
+    inLanguage: ['en', 'nb-NO', 'it-IT', 'vi-VN'],
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: {
+        '@type': 'EntryPoint',
+        urlTemplate: `${baseOrigin}${buildStorefrontPath({ regionCode: rc, view: 'catalog' })}?q={search_term_string}`,
+      },
+      'query-input': 'required name=search_term_string',
+    },
   };
 
   if (params.view === 'admin') {
@@ -468,7 +493,7 @@ export function buildSeoMetadata(params: {
         retailerItemId: p.sku,
       },
       hreflangs,
-      jsonLd: [orgSchema, productSchema, breadcrumbSchema],
+      jsonLd: [orgSchema, websiteSchema, productSchema, breadcrumbSchema],
     };
   }
 
@@ -515,7 +540,7 @@ export function buildSeoMetadata(params: {
       ogImageAlt: `${catName} – Monte Napoleone 1974`,
       robots: 'index, follow, max-image-preview:large',
       hreflangs,
-      jsonLd: [orgSchema, collectionSchema],
+      jsonLd: [orgSchema, websiteSchema, collectionSchema],
     };
   }
 
@@ -544,7 +569,7 @@ export function buildSeoMetadata(params: {
       ogImageAlt: 'Monte Napoleone 1974 Corporate B2B Tailoring',
       robots: 'index, follow, max-image-preview:large',
       hreflangs,
-      jsonLd: [orgSchema],
+      jsonLd: [orgSchema, websiteSchema],
     };
   }
 
@@ -568,7 +593,7 @@ export function buildSeoMetadata(params: {
       ogImageAlt: 'Monte Napoleone 1974 Heritage Treviso Atelier',
       robots: 'index, follow, max-image-preview:large',
       hreflangs,
-      jsonLd: [orgSchema],
+      jsonLd: [orgSchema, websiteSchema],
     };
   }
 
@@ -597,7 +622,7 @@ export function buildSeoMetadata(params: {
     ogImageAlt: 'Monte Napoleone 1974 Bespoke Italian Shirts',
     robots: params.view === 'checkout' || params.view === 'account' ? 'noindex, follow' : 'index, follow, max-image-preview:large',
     hreflangs,
-    jsonLd: [orgSchema],
+    jsonLd: [orgSchema, websiteSchema],
   };
 }
 
@@ -607,8 +632,12 @@ export function buildRobotsTxt(origin: string): string {
     'User-agent: *',
     'Allow: /',
     'Disallow: /admin',
+    'Disallow: /*/admin',
     'Disallow: /api/',
     'Disallow: /checkout',
+    'Disallow: /*/checkout',
+    'Disallow: /account',
+    'Disallow: /*/account',
     '',
     `Sitemap: ${baseOrigin}/sitemap.xml`,
   ].join('\n');
@@ -686,11 +715,18 @@ export function buildSitemapXml(params: {
         ? prod.primary_image
         : `${baseOrigin}${prod.primary_image.startsWith('/') ? prod.primary_image : `/${prod.primary_image}`}`
       : undefined;
+    const altPaths = {
+      en: `${baseOrigin}${buildStorefrontPath({ regionCode: 'en', view: 'product', slug: prod.slug })}`,
+      no: `${baseOrigin}${buildStorefrontPath({ regionCode: 'no', view: 'product', slug: prod.slug })}`,
+      it: `${baseOrigin}${buildStorefrontPath({ regionCode: 'it', view: 'product', slug: prod.slug })}`,
+      vn: `${baseOrigin}${buildStorefrontPath({ regionCode: 'vn', view: 'product', slug: prod.slug })}`,
+    } as Record<RegionCode, string>;
     for (const rc of params.regions) {
       urls.push({
         loc: `${baseOrigin}${buildStorefrontPath({ regionCode: rc, view: 'product', slug: prod.slug })}`,
         changefreq: 'weekly',
         priority: '0.9',
+        altPaths,
         imageLoc: imgUrl,
         imageTitle: prod.title || prod.slug,
       });

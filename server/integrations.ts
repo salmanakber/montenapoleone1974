@@ -245,8 +245,9 @@ export function initializePaymentSession(params: {
   region: RegionConfig;
   total: number;
 }): PaymentInitResult {
-  const { method, orderNumber, region } = params;
+  const { method, orderNumber, region, total } = params;
   const status = getGatewayConfigurationStatus();
+  const amountLabel = `${total.toFixed(2)} ${region.currency_code}`;
 
   if (method === 'bank_transfer') {
     const kidRef = generateBankReference(region.bank_reference_prefix, orderNumber);
@@ -261,31 +262,43 @@ export function initializePaymentSession(params: {
 
   if (method === 'vipps') {
     const ref = `VIPPS-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const live = status.vipps.configured;
     return {
       paymentStatus: 'pending',
       paymentReference: ref,
+      instructions: live
+        ? `Vipps payment ${ref} for ${amountLabel} is ready. Complete payment in the Vipps app, then confirm on this page.`
+        : `Sandbox Vipps reference ${ref} for ${amountLabel}. Add VIPPS_* keys in Admin API Vault for live MobilePay.`,
       redirectActionRequired: true,
-      providerMode: status.vipps.configured ? 'live' : 'sandbox',
+      providerMode: live ? 'live' : 'sandbox',
     };
   }
 
   if (method === 'paypal') {
     const ref = `PP-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const live = status.paypal.configured;
     return {
       paymentStatus: 'pending',
       paymentReference: ref,
+      instructions: live
+        ? `PayPal order ${ref} for ${amountLabel}. Complete PayPal checkout, then confirm payment.`
+        : `Sandbox PayPal reference ${ref} for ${amountLabel}. Add PAYPAL_CLIENT_ID / SECRET in Admin API Vault for live capture.`,
       redirectActionRequired: true,
-      providerMode: status.paypal.configured ? 'live' : 'sandbox',
+      providerMode: live ? 'live' : 'sandbox',
     };
   }
 
   // Stripe
   const ref = `STRP-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  const live = status.stripe.configured;
   return {
     paymentStatus: 'pending',
     paymentReference: ref,
+    instructions: live
+      ? `Stripe payment ${ref} for ${amountLabel}. Complete card payment, then confirm on this page.`
+      : `Sandbox Stripe reference ${ref} for ${amountLabel}. Add STRIPE_SECRET_KEY in Admin API Vault for live charges.`,
     redirectActionRequired: true,
-    providerMode: status.stripe.configured ? 'live' : 'sandbox',
+    providerMode: live ? (getResolvedSecret('STRIPE_SECRET_KEY').startsWith('sk_live_') ? 'live' : 'sandbox') : 'sandbox',
   };
 }
 
@@ -1025,63 +1038,139 @@ export async function exchangeGoogleOAuthCode(
   }
 }
 
+export type VippsAddressProfile = {
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  name: string;
+  email: string;
+  phone: string;
+  shippingAddress: string;
+  shippingCity: string;
+  shippingPostalCode: string;
+  shippingCountry: string;
+  billingAddress: string;
+  billingCity: string;
+  billingPostalCode: string;
+  billingCountry: string;
+  billingSameAsShipping: boolean;
+  addressSource: 'vipps' | 'manual_fallback';
+};
+
 export async function fetchVippsExpressShippingProfile(phoneInput?: string): Promise<{
   mode: 'live' | 'sandbox';
-  profile: {
-    customerName: string;
-    customerEmail: string;
-    customerPhone: string;
-    name: string;
-    email: string;
-    phone: string;
-    shippingAddress: string;
-    shippingCity: string;
-    shippingPostalCode: string;
-    shippingCountry: string;
-  };
+  profile: VippsAddressProfile | null;
   detail: string;
+  useManualAddress: boolean;
 }> {
   const vippsConfigured = getGatewayConfigurationStatus().vipps.configured;
-  const cleanPhone = (phoneInput || '+47 920 44 180').trim();
+  const cleanPhone = (phoneInput || '').trim();
 
+  // Vipps only exposes shipping/billing after checkout login — never invent addresses.
+  // Prefer last Vipps order for this phone; otherwise fall back to the manual form.
   if (vippsConfigured) {
-    // Attempt live Vipps access token verification before returning merchant-bound shipping prefill
     const check = await verifyProviderOnboarding('vipps');
     if (check.ok) {
+      try {
+        const prior = db
+          .prepare(
+            `SELECT customer_name, customer_email, customer_phone,
+                    shipping_address, shipping_city, shipping_postal_code, shipping_country,
+                    billing_address, billing_city, billing_postal_code, billing_country
+             FROM orders
+             WHERE payment_method = 'vipps'
+               AND (? = '' OR replace(customer_phone, ' ', '') LIKE '%' || replace(?, ' ', '') || '%')
+               AND shipping_address IS NOT NULL AND length(trim(shipping_address)) > 3
+             ORDER BY id DESC LIMIT 1`
+          )
+          .get(cleanPhone, cleanPhone) as
+          | {
+              customer_name: string;
+              customer_email: string;
+              customer_phone: string;
+              shipping_address: string;
+              shipping_city: string;
+              shipping_postal_code: string;
+              shipping_country: string;
+              billing_address: string | null;
+              billing_city: string | null;
+              billing_postal_code: string | null;
+              billing_country: string | null;
+            }
+          | undefined;
+
+        if (prior) {
+          const billingAddress = (prior.billing_address || prior.shipping_address || '').trim();
+          const billingCity = (prior.billing_city || prior.shipping_city || '').trim();
+          const billingPostal = (prior.billing_postal_code || prior.shipping_postal_code || '').trim();
+          const billingCountry = (prior.billing_country || prior.shipping_country || 'Norway').trim();
+          const same =
+            billingAddress === prior.shipping_address &&
+            billingCity === prior.shipping_city &&
+            billingPostal === prior.shipping_postal_code;
+          return {
+            mode: 'live',
+            useManualAddress: false,
+            profile: {
+              customerName: prior.customer_name,
+              customerEmail: prior.customer_email,
+              customerPhone: cleanPhone || prior.customer_phone,
+              name: prior.customer_name,
+              email: prior.customer_email,
+              phone: cleanPhone || prior.customer_phone,
+              shippingAddress: prior.shipping_address,
+              shippingCity: prior.shipping_city,
+              shippingPostalCode: prior.shipping_postal_code,
+              shippingCountry: prior.shipping_country || 'Norway',
+              billingAddress,
+              billingCity,
+              billingPostalCode: billingPostal,
+              billingCountry,
+              billingSameAsShipping: same,
+              addressSource: 'vipps',
+            },
+            detail:
+              'Vipps credentials verified — shipping & billing restored from your last Vipps order. Edit fields if needed.',
+          };
+        }
+      } catch {
+        // fall through to manual
+      }
+
       return {
         mode: 'live',
-        profile: {
-          customerName: 'Henrik Solberg',
-          customerEmail: 'henrik.solberg@oslo-sartorial.no',
-          customerPhone: cleanPhone,
-          name: 'Henrik Solberg',
-          email: 'henrik.solberg@oslo-sartorial.no',
-          phone: cleanPhone,
-          shippingAddress: 'Bogstadveien 28',
-          shippingCity: 'Oslo',
-          shippingPostalCode: '0355',
-          shippingCountry: 'Norway',
-        },
-        detail: 'Vipps Checkout merchant credentials verified — address populated from Vipps profile scope.',
+        profile: null,
+        useManualAddress: true,
+        detail:
+          'Vipps is connected. Enter your delivery & billing address below — Vipps confirms payment after you place the order.',
       };
     }
   }
 
+  const demo: VippsAddressProfile = {
+    customerName: 'Ingrid Haugen',
+    customerEmail: 'ingrid.haugen@nordic-atelier.no',
+    customerPhone: cleanPhone || '+47 912 34 567',
+    name: 'Ingrid Haugen',
+    email: 'ingrid.haugen@nordic-atelier.no',
+    phone: cleanPhone || '+47 912 34 567',
+    shippingAddress: 'Bygdøy Allé 42B',
+    shippingCity: 'Oslo',
+    shippingPostalCode: '0265',
+    shippingCountry: 'Norway',
+    billingAddress: 'Bygdøy Allé 42B',
+    billingCity: 'Oslo',
+    billingPostalCode: '0265',
+    billingCountry: 'Norway',
+    billingSameAsShipping: true,
+    addressSource: 'vipps',
+  };
   return {
     mode: 'sandbox',
-    profile: {
-      customerName: 'Ingrid Haugen',
-      customerEmail: 'ingrid.haugen@nordic-atelier.no',
-      customerPhone: cleanPhone,
-      name: 'Ingrid Haugen',
-      email: 'ingrid.haugen@nordic-atelier.no',
-      phone: cleanPhone,
-      shippingAddress: 'Bygdøy Allé 42B',
-      shippingCity: 'Oslo',
-      shippingPostalCode: '0265',
-      shippingCountry: 'Norway',
-    },
-    detail: 'Sandbox Vipps MobilePay address scope simulated (set VIPPS_* keys in Admin API Vault for live Vipps Checkout).',
+    profile: demo,
+    useManualAddress: false,
+    detail:
+      'Sandbox Vipps address demo loaded. Configure VIPPS_* keys in Admin API Vault for live checkout; otherwise use the manual address form.',
   };
 }
 

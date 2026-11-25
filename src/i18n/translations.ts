@@ -78,6 +78,30 @@ export interface RegionCopy {
     showMoreMeasurements: string;
     showFewerMeasurements: string;
     cuffShowcaseCaption: string;
+    orderModeSwitcherAria: string;
+    b2cRetailOnePc: string;
+    b2bCorporateMoq20: string;
+    b2cRetailShort: string;
+    b2bMoq20Short: string;
+    b2bQuoteCta: string;
+    quickJumpFitSize: string;
+    quickJumpCollar: string;
+    quickJumpCuff: string;
+    pleaseComplete: string;
+    skuLabel: string;
+    defaultBadge: string;
+    atelierSpec: string;
+    basePattern: string;
+    tailoringDone: string;
+    tailoringReset: string;
+    cuffMonogramLabel: string;
+    cuffMonogramPlaceholder: string;
+    customerReviews: string;
+    verifiedReviewsTitle: string;
+    reviewSingular: string;
+    reviewPlural: string;
+    verifiedLabel: string;
+    noRatingsYet: string;
   };
   b2b: {
     portalTitle: string;
@@ -92,6 +116,13 @@ export interface RegionCopy {
     saveAddColour: string;
     doneChoosing: string;
     allCategoriesTab: string;
+    backToShirtCatalog: string;
+    sectionSizesQty: string;
+    sectionFitCollarCuff: string;
+    sectionEmbroideryNotes: string;
+    supplierNotesPlaceholder: string;
+    saveAddColourSticky: string;
+    belowMoqSuffix: string;
   };
   checkout: {
     bagTitle: string;
@@ -267,6 +298,30 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       showMoreMeasurements: 'Show more measurements',
       showFewerMeasurements: 'Show fewer measurements',
       cuffShowcaseCaption: 'Cuff Atelier Showcase',
+      orderModeSwitcherAria: 'Order mode switcher',
+      b2cRetailOnePc: 'B2C Retail (1 pc)',
+      b2bCorporateMoq20: 'B2B Corporate (MOQ 20)',
+      b2cRetailShort: 'B2C Retail',
+      b2bMoq20Short: 'B2B (MOQ 20)',
+      b2bQuoteCta: 'B2B Quote',
+      quickJumpFitSize: 'Fit & Size',
+      quickJumpCollar: 'Collar',
+      quickJumpCuff: 'Cuff',
+      pleaseComplete: 'Please complete',
+      skuLabel: 'SKU',
+      defaultBadge: 'Default',
+      atelierSpec: 'Atelier Spec',
+      basePattern: 'Base pattern:',
+      tailoringDone: 'Done',
+      tailoringReset: 'Reset',
+      cuffMonogramLabel: 'Optional Cuff Monogram (max 4 initials)',
+      cuffMonogramPlaceholder: 'e.g. M.N.',
+      customerReviews: 'Customer reviews',
+      verifiedReviewsTitle: 'Verified Customer Reviews',
+      reviewSingular: 'review',
+      reviewPlural: 'reviews',
+      verifiedLabel: 'verified',
+      noRatingsYet: 'No ratings yet',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -281,6 +336,13 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       saveAddColour: 'SAVE & ADD NEW COLOUR',
       doneChoosing: "I'M DONE CHOOSING",
       allCategoriesTab: 'All Shirts',
+      backToShirtCatalog: 'Back to B2B Shirt Catalog',
+      sectionSizesQty: '1. Sizes & Qty',
+      sectionFitCollarCuff: '2. Fit, Collar & Cuff',
+      sectionEmbroideryNotes: '3. Embroidery & Notes',
+      supplierNotesPlaceholder: 'Logo placement, thread color...',
+      saveAddColourSticky: '+ Save & Add Colour',
+      belowMoqSuffix: '({n} below 20 MOQ)',
     },
     checkout: {
       bagTitle: 'Your Shopping Bag',
@@ -567,6 +629,30 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       showMoreMeasurements: 'Vis flere mål',
       showFewerMeasurements: 'Vis færre mål',
       cuffShowcaseCaption: 'Mansjett-galleri',
+      orderModeSwitcherAria: 'Bestillingsmodus',
+      b2cRetailOnePc: 'B2C Privat (1 stk)',
+      b2bCorporateMoq20: 'B2B Bedrift (MOQ 20)',
+      b2cRetailShort: 'B2C Privat',
+      b2bMoq20Short: 'B2B (MOQ 20)',
+      b2bQuoteCta: 'B2B-tilbud',
+      quickJumpFitSize: 'Passform og størrelse',
+      quickJumpCollar: 'Krage',
+      quickJumpCuff: 'Mansjett',
+      pleaseComplete: 'Vennligst fullfør',
+      skuLabel: 'SKU',
+      defaultBadge: 'Standard',
+      atelierSpec: 'Atelier-spesifikasjon',
+      basePattern: 'Grunnmønster:',
+      tailoringDone: 'Ferdig',
+      tailoringReset: 'Nullstill',
+      cuffMonogramLabel: 'Valgfri mansjettmonogram (maks 4 bokstaver)',
+      cuffMonogramPlaceholder: 'f.eks. M.N.',
+      customerReviews: 'Kundeanmeldelser',
+      verifiedReviewsTitle: 'Verifiserte kundeanmeldelser',
+      reviewSingular: 'anmeldelse',
+      reviewPlural: 'anmeldelser',
+      verifiedLabel: 'verifisert',
+      noRatingsYet: 'Ingen vurderinger ennå',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -581,6 +667,13 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       saveAddColour: 'LAGRE & LEGG TIL NY FARGE',
       doneChoosing: 'JEG ER FERDIG MED Å VELGE',
       allCategoriesTab: 'Alle',
+      backToShirtCatalog: 'Tilbake til B2B-skjortekatalog',
+      sectionSizesQty: '1. Størrelser og antall',
+      sectionFitCollarCuff: '2. Passform, krage og mansjett',
+      sectionEmbroideryNotes: '3. Broderi og notater',
+      supplierNotesPlaceholder: 'Logoplassering, trådfarge...',
+      saveAddColourSticky: '+ Lagre og legg til farge',
+      belowMoqSuffix: '({n} under MOQ 20)',
     },
     checkout: {
       bagTitle: 'Din Handlepose',
@@ -840,6 +933,30 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       showMoreMeasurements: 'Mostra altre misure',
       showFewerMeasurements: 'Mostra meno misure',
       cuffShowcaseCaption: 'Dettagli Polsino',
+      orderModeSwitcherAria: 'Modalità ordine',
+      b2cRetailOnePc: 'B2C Retail (1 pz)',
+      b2bCorporateMoq20: 'B2B Corporate (MOQ 20)',
+      b2cRetailShort: 'B2C Retail',
+      b2bMoq20Short: 'B2B (MOQ 20)',
+      b2bQuoteCta: 'Preventivo B2B',
+      quickJumpFitSize: 'Vestibilità e taglia',
+      quickJumpCollar: 'Colletto',
+      quickJumpCuff: 'Polsino',
+      pleaseComplete: 'Completare',
+      skuLabel: 'SKU',
+      defaultBadge: 'Predefinito',
+      atelierSpec: 'Specifica atelier',
+      basePattern: 'Modello base:',
+      tailoringDone: 'Fine',
+      tailoringReset: 'Reimposta',
+      cuffMonogramLabel: 'Monogramma polsino (max 4 iniziali)',
+      cuffMonogramPlaceholder: 'es. M.N.',
+      customerReviews: 'Recensioni clienti',
+      verifiedReviewsTitle: 'Recensioni verificate',
+      reviewSingular: 'recensione',
+      reviewPlural: 'recensioni',
+      verifiedLabel: 'verificata',
+      noRatingsYet: 'Nessuna valutazione ancora',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -854,6 +971,13 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       saveAddColour: 'SALVA E AGGIUNGI COLORE',
       doneChoosing: 'HO TERMINATO LA SCELTA',
       allCategoriesTab: 'Tutte',
+      backToShirtCatalog: 'Torna al catalogo camicie B2B',
+      sectionSizesQty: '1. Taglie e quantità',
+      sectionFitCollarCuff: '2. Vestibilità, colletto e polsino',
+      sectionEmbroideryNotes: '3. Ricamo e note',
+      supplierNotesPlaceholder: 'Posizione logo, colore filo...',
+      saveAddColourSticky: '+ Salva e aggiungi colore',
+      belowMoqSuffix: '({n} sotto MOQ 20)',
     },
     checkout: {
       bagTitle: 'La Tua Borsa',
@@ -1081,6 +1205,30 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       showMoreMeasurements: 'Xem thêm thông số đo',
       showFewerMeasurements: 'Thu gọn thông số đo',
       cuffShowcaseCaption: 'Chi tiết Măng sét',
+      orderModeSwitcherAria: 'Chế độ đặt hàng',
+      b2cRetailOnePc: 'B2C Lẻ (1 áo)',
+      b2bCorporateMoq20: 'B2B Doanh nghiệp (MOQ 20)',
+      b2cRetailShort: 'B2C Lẻ',
+      b2bMoq20Short: 'B2B (MOQ 20)',
+      b2bQuoteCta: 'Báo giá B2B',
+      quickJumpFitSize: 'Phom & kích cỡ',
+      quickJumpCollar: 'Cổ áo',
+      quickJumpCuff: 'Măng sét',
+      pleaseComplete: 'Vui lòng hoàn tất',
+      skuLabel: 'SKU',
+      defaultBadge: 'Mặc định',
+      atelierSpec: 'Thông số xưởng',
+      basePattern: 'Kiểu gốc:',
+      tailoringDone: 'Xong',
+      tailoringReset: 'Đặt lại',
+      cuffMonogramLabel: 'Thêu chữ cái măng sét (tối đa 4 ký tự)',
+      cuffMonogramPlaceholder: 'vd. M.N.',
+      customerReviews: 'Đánh giá khách hàng',
+      verifiedReviewsTitle: 'Đánh giá đã xác minh',
+      reviewSingular: 'đánh giá',
+      reviewPlural: 'đánh giá',
+      verifiedLabel: 'đã xác minh',
+      noRatingsYet: 'Chưa có đánh giá',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -1095,6 +1243,13 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       saveAddColour: 'LƯU & THÊM MÀU KHÁC',
       doneChoosing: 'HOÀN TẤT CHỌN MẪU',
       allCategoriesTab: 'Tất cả',
+      backToShirtCatalog: 'Quay lại danh mục áo B2B',
+      sectionSizesQty: '1. Size & số lượng',
+      sectionFitCollarCuff: '2. Phom, cổ & măng sét',
+      sectionEmbroideryNotes: '3. Thêu & ghi chú',
+      supplierNotesPlaceholder: 'Vị trí logo, màu chỉ...',
+      saveAddColourSticky: '+ Lưu & thêm màu',
+      belowMoqSuffix: '({n} dưới MOQ 20)',
     },
     checkout: {
       bagTitle: 'Giỏ hàng của bạn',

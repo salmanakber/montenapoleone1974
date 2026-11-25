@@ -113,24 +113,45 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       const res = await fetch('/api/payments/vipps/checkout-prefill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: customerPhone || '+47 912 34 567' }),
+        body: JSON.stringify({ phone: customerPhone || '' }),
       });
       const data = await res.json();
-      if (res.ok && data.profile) {
-        setCustomerName(data.profile.customerName || '');
-        setCustomerEmail(data.profile.customerEmail || '');
-        setCustomerPhone(data.profile.customerPhone || '');
+      if (!res.ok) {
+        setVippsPrefillMsg(data.error || 'Could not load Vipps profile.');
+        return;
+      }
+      if (availableMethods.includes('vipps')) setPaymentMethod('vipps');
+
+      if (data.profile) {
+        setCustomerName(data.profile.customerName || customerName);
+        setCustomerEmail(data.profile.customerEmail || customerEmail);
+        setCustomerPhone(data.profile.customerPhone || customerPhone);
         setShippingAddress(data.profile.shippingAddress || '');
         setShippingCity(data.profile.shippingCity || '');
         setShippingPostalCode(data.profile.shippingPostalCode || '');
         setShippingCountry(data.profile.shippingCountry || region.name);
-        if (availableMethods.includes('vipps')) setPaymentMethod('vipps');
-        setVippsPrefillMsg(`Shipping details prefilled via Vipps (${data.mode === 'live' ? 'Live' : 'Sandbox'}).`);
+        const same = data.profile.billingSameAsShipping !== false;
+        setBillingSameAsShipping(same);
+        if (!same) {
+          setBillingAddress(data.profile.billingAddress || data.profile.shippingAddress || '');
+          setBillingCity(data.profile.billingCity || data.profile.shippingCity || '');
+          setBillingPostalCode(data.profile.billingPostalCode || data.profile.shippingPostalCode || '');
+          setBillingCountry(data.profile.billingCountry || data.profile.shippingCountry || region.name);
+        }
+        setVippsPrefillMsg(
+          data.detail ||
+            `Shipping & billing prefilled via Vipps (${data.mode === 'live' ? 'Live' : 'Sandbox'}).`
+        );
       } else {
-        setVippsPrefillMsg(data.error || 'Could not load Vipps profile.');
+        // Live Vipps connected but no stored address — keep / show manual form
+        setBillingSameAsShipping(true);
+        setVippsPrefillMsg(
+          data.detail ||
+            'Vipps is ready. Please enter your delivery address manually — billing defaults to the same address.'
+        );
       }
     } catch {
-      setVippsPrefillMsg('Network error loading Vipps profile.');
+      setVippsPrefillMsg('Network error loading Vipps profile. Please enter your address manually.');
     } finally {
       setVippsPrefillLoading(false);
     }

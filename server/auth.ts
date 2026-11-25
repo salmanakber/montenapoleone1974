@@ -59,7 +59,11 @@ export function mapUserRow(row: RawUserRow): AuthUser {
 
 export function createSession(userId: number): string {
   const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+  // SQLite datetime('now') format — avoid ISO "T" which breaks lexicographic compare
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/, '');
   db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(
     token,
     userId,
@@ -74,10 +78,20 @@ export function getUserByToken(token: string | undefined): AuthUser | null {
     .prepare(
       `SELECT u.* FROM sessions s
        JOIN users u ON u.id = s.user_id
-       WHERE s.token = ? AND s.expires_at > datetime('now') AND u.active = 1`
+       WHERE s.token = ? AND datetime(replace(s.expires_at, 'T', ' ')) > datetime('now') AND u.active = 1`
     )
     .get(token) as RawUserRow | undefined;
   return row ? mapUserRow(row) : null;
+}
+
+/** Extend session expiry on successful authenticated requests (sliding 14-day window). */
+export function touchSession(token: string | undefined): void {
+  if (!token) return;
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/, '');
+  db.prepare('UPDATE sessions SET expires_at = ? WHERE token = ?').run(expiresAt, token);
 }
 
 export function extractBearerToken(req: Request): string | undefined {
@@ -97,6 +111,7 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
+  touchSession(token);
   req.authUser = user;
   next();
 }

@@ -171,9 +171,65 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [infoModal, setInfoModal] = useState<'size_guide' | 'return_form' | null>(null);
 
-  // Auth token strictly in React memory (never localStorage)
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  // Persist staff/customer session so admin does not drop on refresh
+  const AUTH_STORAGE_KEY = 'mn_auth_session_v1';
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { token?: string };
+      return parsed.token || null;
+    } catch {
+      return null;
+    }
+  });
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { user?: AuthUser };
+      return parsed.user || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const persistAuth = useCallback((token: string | null, user: AuthUser | null) => {
+    setAuthToken(token);
+    setAuthUser(user);
+    try {
+      if (token && user) {
+        window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user }));
+      } else {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    } catch {
+      // ignore quota / private mode
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) return;
+    let cancelled = false;
+    fetch('/api/auth/status', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.user) {
+          persistAuth(authToken, data.user as AuthUser);
+        } else {
+          persistAuth(null, null);
+        }
+      })
+      .catch(() => {
+        // keep cached session offline; next admin call will revalidate
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, persistAuth]);
 
   const getVisitorSessionId = useCallback(() => {
     try {
@@ -345,8 +401,7 @@ export default function App() {
           }
         | undefined;
       if (payload?.type === 'MN_GOOGLE_AUTH_SUCCESS' && payload.token && payload.user) {
-        setAuthToken(payload.token);
-        setAuthUser(payload.user);
+        persistAuth(payload.token, payload.user);
         if (payload.discountCode) {
           setActivePromoCode(payload.discountCode);
           markPromoClaimedOrUsed();
@@ -355,7 +410,7 @@ export default function App() {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [markPromoClaimedOrUsed]);
+  }, [markPromoClaimedOrUsed, persistAuth]);
 
   const pushBrowserUrl = useCallback(
     (
@@ -481,9 +536,12 @@ export default function App() {
         setMetaTag('property', 'product:availability', seo.productMeta.availability);
         setMetaTag('property', 'product:retailer_item_id', seo.productMeta.retailerItemId);
       }
+      setMetaTag('name', 'twitter:card', 'summary_large_image');
       setMetaTag('name', 'twitter:title', seo.title);
       setMetaTag('name', 'twitter:description', seo.description);
       setMetaTag('name', 'twitter:image', seo.ogImage);
+      setMetaTag('property', 'og:image:width', '1200');
+      setMetaTag('property', 'og:image:height', '630');
 
       let canonicalEl = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
       if (!canonicalEl) {
@@ -813,8 +871,7 @@ export default function App() {
             authUser={authUser}
             customerAuthConfig={customerAuthConfig}
             onAuthChange={(token, user) => {
-              setAuthToken(token);
-              setAuthUser(user);
+              persistAuth(token, user);
             }}
             onPromoUnlocked={(code) => {
               setActivePromoCode(code);
@@ -834,8 +891,7 @@ export default function App() {
               pushBrowserUrl(regionCode, 'admin', selectedCategory, null, tab);
             }}
             onAuthChange={(token, user) => {
-              setAuthToken(token);
-              setAuthUser(user);
+              persistAuth(token, user);
             }}
             onRefreshStorefront={() => fetchStorefront(regionCode)}
             onBackToStorefront={() => navigate('home')}

@@ -572,7 +572,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
                 className="inline-flex items-center gap-1.5 text-xs text-[#142B4E] hover:underline font-medium cursor-pointer"
               >
                 <ChevronLeft className="w-4 h-4" />
-                <span>Back to B2B Shirt Catalog</span>
+                <span>{copy.b2b.backToShirtCatalog}</span>
               </button>
               {/* Quick Scroll Section Pills */}
               <div className="hidden md:flex items-center gap-1.5 text-[11px]">
@@ -581,21 +581,21 @@ export const B2BView: React.FC<B2BViewProps> = ({
                   onClick={() => scrollToRef(qtySectionRef)}
                   className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 cursor-pointer"
                 >
-                  1. Sizes & Qty
+                  {copy.b2b.sectionSizesQty}
                 </button>
                 <button
                   type="button"
                   onClick={() => scrollToRef(specSectionRef)}
                   className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 cursor-pointer"
                 >
-                  2. Fit, Collar & Cuff
+                  {copy.b2b.sectionFitCollarCuff}
                 </button>
                 <button
                   type="button"
                   onClick={() => scrollToRef(notesSectionRef)}
                   className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 cursor-pointer"
                 >
-                  3. Embroidery & Notes
+                  {copy.b2b.sectionEmbroideryNotes}
                 </button>
               </div>
             </div>
@@ -604,7 +604,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
               {onSwitchToB2C && (
                 <div
                   role="group"
-                  aria-label="Order mode switcher"
+                  aria-label={copy.pdp.orderModeSwitcherAria}
                   className="grid grid-cols-2 p-0.5 bg-[#F3F4F6] border border-black/10 rounded-lg text-[11px]"
                 >
                   <button
@@ -613,14 +613,14 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     className="py-1 px-2.5 text-[#142B4E] hover:bg-white font-semibold uppercase tracking-wider rounded-md inline-flex items-center justify-center gap-1 cursor-pointer"
                   >
                     <ShoppingBag className="w-3 h-3" />
-                    <span>B2C Retail</span>
+                    <span>{copy.pdp.b2cRetailShort}</span>
                   </button>
                   <button
                     type="button"
                     className="py-1 px-2.5 bg-[#142B4E] text-white font-semibold uppercase tracking-wider rounded-md inline-flex items-center justify-center gap-1 cursor-default"
                   >
                     <Building2 className="w-3 h-3" />
-                    <span>B2B (MOQ 20)</span>
+                    <span>{copy.pdp.b2bMoq20Short}</span>
                   </button>
                 </div>
               )}
@@ -656,13 +656,13 @@ export const B2BView: React.FC<B2BViewProps> = ({
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true, amount: 0.1 }}
                   transition={{ duration: 0.4, delay: (idx % 2) * 0.06 }}
-                  className="aspect-[4/4.65] bg-[#E6E6E6] overflow-hidden"
+                  className="aspect-[3/4] min-h-[260px] bg-[#E8E6E2] overflow-hidden"
                 >
                   <img
                     src={imgUrl}
                     alt={`${activeProduct.title} ${idx + 1}`}
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover hover:scale-[1.03] transition-transform duration-300"
+                    className="w-full h-full object-contain object-center hover:scale-[1.02] transition-transform duration-300"
                   />
                 </motion.div>
               ))}
@@ -708,7 +708,8 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     }`}
                   >
                     {copy.b2b.totalPieces}: {moqSummary.totalPieces} pcs
-                    {!moqSummary.meetsMoq && ` (${moqSummary.remainingForMoq} below 20 MOQ)`}
+                    {!moqSummary.meetsMoq &&
+                      ` ${copy.b2b.belowMoqSuffix.replace('{n}', String(moqSummary.remainingForMoq))}`}
                   </span>
                 </div>
 
@@ -878,7 +879,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
                   rows={2}
                   value={supplierNotes}
                   onChange={(e) => setSupplierNotes(e.target.value)}
-                  placeholder="Logo placement, thread color, custom labels or packaging..."
+                  placeholder={copy.b2b.supplierNotesPlaceholder}
                   className="w-full px-3 py-2 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
                 />
               </div>
@@ -927,7 +928,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     onClick={handleSaveAndAddAnother}
                     className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] text-[11px] uppercase tracking-wider font-semibold cursor-pointer"
                   >
-                    + Save & Add Colour
+                    {copy.b2b.saveAddColourSticky}
                   </button>
                   <button
                     type="button"

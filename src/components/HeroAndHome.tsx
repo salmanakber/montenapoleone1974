@@ -87,12 +87,12 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   return (
     <div>
       {/* 1. Taller Full-Bleed Campaign Hero Slider (Backend-editable slides & text/button visibility) */}
-      <section className="relative w-full h-[92vh] min-h-[640px] max-h-[960px] overflow-hidden bg-[#8D826E]">
+      <section className="relative w-full h-[100svh] min-h-[100vh] overflow-hidden bg-[#8D826E]">
         <img
           src={activeSlide.image}
           alt={activeSlide.title || 'Monte Napoleone 1974 Campaign'}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover object-center transition-opacity duration-500"
+          className="absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-500"
         />
         <div
           className={`absolute inset-0 ${

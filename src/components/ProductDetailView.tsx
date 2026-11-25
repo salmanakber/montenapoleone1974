@@ -542,8 +542,8 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           <span className="hidden sm:inline text-neutral-300">·</span>
           <span className="hidden sm:inline font-medium text-neutral-700">{region.dhl_eta_days}</span>
         </div>
-        <span className="hidden sm:inline text-[11px] font-mono-tabular text-neutral-500 shrink-0">
-          SKU {variantInfo.variantSku} · {product.warehouse_location}
+          <span className="hidden sm:inline text-[11px] font-mono-tabular text-neutral-500 shrink-0">
+          {copy.pdp.skuLabel} {variantInfo.variantSku} · {product.warehouse_location}
         </span>
       </div>
 
@@ -661,12 +661,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             )}
           </div>
 
-          {/* DESKTOP ONLY (>= md): Compact Viewport-Fit 2x2 Sticky Parallax Gallery */}
+          {/* DESKTOP: taller portrait tiles so shirts are not cropped oddly */}
           <div
             data-testid="desktop-pdp-gallery"
-            className="hidden md:grid md:grid-cols-2 gap-2"
+            className="hidden md:grid md:grid-cols-2 gap-3"
           >
-            <motion.div style={{ y: yColLeft }} className="space-y-2">
+            <motion.div style={{ y: yColLeft }} className="space-y-3">
               {gallery
                 .map((imgUrl, idx) => ({ imgUrl, idx }))
                 .filter((_, pos) => pos % 2 === 0)
@@ -679,13 +679,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       setLightboxZoomed(false);
                     }}
                     aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className="group relative aspect-square bg-[#E6E6E6] overflow-hidden cursor-zoom-in text-left block w-full"
+                    className="group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden cursor-zoom-in text-left block w-full"
                   >
                     <img
                       src={imgUrl}
                       alt={`${product.title} view ${idx + 1}`}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      className="w-full h-full object-contain object-center transition-transform duration-500 group-hover:scale-[1.02]"
                     />
                     <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
                       <ZoomIn className="w-3.5 h-3.5" />
@@ -694,7 +694,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 ))}
             </motion.div>
 
-            <motion.div style={{ y: yColRight }} className="space-y-2">
+            <motion.div style={{ y: yColRight }} className="space-y-3">
               {gallery
                 .map((imgUrl, idx) => ({ imgUrl, idx }))
                 .filter((_, pos) => pos % 2 === 1)
@@ -707,13 +707,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       setLightboxZoomed(false);
                     }}
                     aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className="group relative aspect-square bg-[#E6E6E6] overflow-hidden cursor-zoom-in text-left block w-full"
+                    className="group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden cursor-zoom-in text-left block w-full"
                   >
                     <img
                       src={imgUrl}
                       alt={`${product.title} view ${idx + 1}`}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      className="w-full h-full object-contain object-center transition-transform duration-500 group-hover:scale-[1.02]"
                     />
                     <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
                       <ZoomIn className="w-3.5 h-3.5" />
@@ -730,7 +730,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {onSwitchToB2B && (
             <div
               role="group"
-              aria-label="Order mode switcher"
+              aria-label={copy.pdp.orderModeSwitcherAria}
               className="grid grid-cols-2 p-1 bg-[#F3F4F6] border border-black/10 rounded-lg text-[11px]"
             >
               <button
@@ -738,7 +738,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 className="py-1.5 px-2.5 bg-[#142B4E] text-white font-semibold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 cursor-default"
               >
                 <ShoppingBag className="w-3.5 h-3.5" />
-                <span>B2C Retail (1 pc)</span>
+                <span>{copy.pdp.b2cRetailOnePc}</span>
               </button>
               <button
                 type="button"
@@ -746,7 +746,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 className="py-1.5 px-2.5 text-[#142B4E] hover:bg-white font-semibold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Building2 className="w-3.5 h-3.5" />
-                <span>B2B Corporate (MOQ 20)</span>
+                <span>{copy.pdp.b2bCorporateMoq20}</span>
               </button>
             </div>
           )}
@@ -782,12 +782,16 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       {reviewsData.averageRating.toFixed(1)}
                     </span>
                     <span className="text-neutral-500 group-hover:underline">
-                      ({reviewsData.reviewCount} verified{' '}
-                      {reviewsData.reviewCount === 1 ? 'review' : 'reviews'})
+                      ({reviewsData.reviewCount} {copy.pdp.verifiedLabel}{' '}
+                      {reviewsData.reviewCount === 1
+                        ? copy.pdp.reviewSingular
+                        : copy.pdp.reviewPlural})
                     </span>
                   </>
                 ) : (
-                  <span className="text-neutral-500 group-hover:underline">Customer reviews</span>
+                  <span className="text-neutral-500 group-hover:underline">
+                    {copy.pdp.customerReviews}
+                  </span>
                 )}
               </button>
             </div>
@@ -812,7 +816,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               onClick={() => scrollToSection(fitSectionRef)}
               className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 transition-colors cursor-pointer"
             >
-              Fit & Size
+              {copy.pdp.quickJumpFitSize}
             </button>
             <button
               type="button"
@@ -822,7 +826,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               }}
               className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 transition-colors cursor-pointer"
             >
-              Collar
+              {copy.pdp.quickJumpCollar}
             </button>
             <button
               type="button"
@@ -832,7 +836,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               }}
               className="px-2 py-1 bg-[#F5F5F5] hover:bg-[#142B4E] hover:text-white border border-black/10 transition-colors cursor-pointer"
             >
-              Cuff
+              {copy.pdp.quickJumpCuff}
             </button>
             <button
               type="button"
@@ -893,7 +897,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
           {/* Return Form & Size Guide Pill Buttons */}
           <div className="flex items-center justify-between gap-2 pt-0.5">
-            <span className="text-xs text-neutral-500">Please complete</span>
+            <span className="text-xs text-neutral-500">{copy.pdp.pleaseComplete}</span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -994,7 +998,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           </span>
                           {c.isDefault && (
                             <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
-                              Default
+                              {copy.pdp.defaultBadge}
                             </span>
                           )}
                         </div>
@@ -1068,7 +1072,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                             </span>
                             {cf.isDefault && (
                               <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
-                                Default
+                                {copy.pdp.defaultBadge}
                               </span>
                             )}
                           </div>
@@ -1105,7 +1109,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           )}
                         </div>
                         <div className="min-w-0">
-                          <div className="font-semibold text-[#142B4E]">{cuff} — Atelier Spec</div>
+                          <div className="font-semibold text-[#142B4E]">
+                            {cuff} — {copy.pdp.atelierSpec}
+                          </div>
                           {detailText && (
                             <div className="text-neutral-600 leading-snug mt-0.5">{detailText}</div>
                           )}
@@ -1143,7 +1149,8 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   {/* Live active fit/size context banner */}
                   <div className="px-4 py-2 bg-[#FAFAFA] flex items-center justify-between text-[11px] text-neutral-600">
                     <span>
-                      Base pattern: <strong className="text-[#1A1A1A]">{fit} · {size}</strong>
+                      {copy.pdp.basePattern}{' '}
+                      <strong className="text-[#1A1A1A]">{fit} · {size}</strong>
                     </span>
                     <button
                       type="button"
@@ -1199,7 +1206,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                             aria-label={`${copy.pdp.change} ${zone.label}`}
                             className="text-xs font-medium text-[#1D63DC] hover:underline shrink-0 cursor-pointer"
                           >
-                            {isEditing ? 'Done' : copy.pdp.change}
+                            {isEditing ? copy.pdp.tailoringDone : copy.pdp.change}
                           </button>
                         </div>
 
@@ -1221,7 +1228,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                                 onClick={() => zone.setAdjustmentCm(0)}
                                 className="text-[10px] px-2 py-0.5 border border-black/15 text-neutral-600 hover:text-black cursor-pointer"
                               >
-                                Reset
+                                {copy.pdp.tailoringReset}
                               </button>
                             </div>
                             <div className="flex justify-between text-[10px] font-mono-tabular text-neutral-500">
@@ -1251,7 +1258,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   {/* Optional Cuff Monogram */}
                   <div className="px-4 py-3 bg-[#FAFAFA]">
                     <label htmlFor="cuff-monogram" className="block text-[11px] text-neutral-600 mb-1">
-                      Optional Cuff Monogram (max 4 initials)
+                      {copy.pdp.cuffMonogramLabel}
                     </label>
                     <input
                       id="cuff-monogram"
@@ -1259,7 +1266,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       maxLength={4}
                       value={monogram}
                       onChange={(e) => setMonogram(e.target.value.toUpperCase())}
-                      placeholder="e.g. M.N."
+                      placeholder={copy.pdp.cuffMonogramPlaceholder}
                       className="w-full px-3 py-1.5 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
                     />
                   </div>
@@ -1346,7 +1353,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 <div className="min-w-0 pt-0.5">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-white/65 mb-1 flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Verified Customer Reviews
+                    {copy.pdp.verifiedReviewsTitle}
                   </div>
                   <h2
                     id="pdp-reviews-modal-title"
@@ -1370,10 +1377,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     {reviewsData.reviewCount > 0 ? (
                       <span className="text-xs font-mono-tabular text-white/90">
                         {reviewsData.averageRating.toFixed(1)} / 5.0 · {reviewsData.reviewCount}{' '}
-                        {reviewsData.reviewCount === 1 ? 'review' : 'reviews'}
+                        {reviewsData.reviewCount === 1
+                          ? copy.pdp.reviewSingular
+                          : copy.pdp.reviewPlural}
                       </span>
                     ) : (
-                      <span className="text-xs text-white/70">No ratings yet</span>
+                      <span className="text-xs text-white/70">{copy.pdp.noRatingsYet}</span>
                     )}
                   </div>
                 </div>
@@ -1606,7 +1615,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E]/5 text-[11px] uppercase tracking-wider font-medium cursor-pointer"
                 >
                   <Building2 className="w-3.5 h-3.5" />
-                  <span>B2B Quote</span>
+                  <span>{copy.pdp.b2bQuoteCta}</span>
                 </button>
               )}
               <button

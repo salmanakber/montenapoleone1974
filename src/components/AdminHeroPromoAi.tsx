@@ -164,11 +164,6 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
           <div key={slide.id} className="border border-neutral-200 bg-white p-5 space-y-4 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
               <div className="flex items-center gap-3">
-                <img
-                  src={slide.image_url}
-                  alt={slide.title_en}
-                  className="w-20 h-14 object-cover bg-[#E6E6E6] border border-black/10"
-                />
                 <div>
                   <div className="font-semibold text-sm">{slide.title_en}</div>
                   <div className="text-[11px] text-neutral-500 font-mono-tabular">
@@ -205,6 +200,24 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
                   />
                   <span>Show CTA Button</span>
                 </label>
+              </div>
+            </div>
+
+            <div className="relative w-full h-44 sm:h-56 overflow-hidden bg-[#8D826E] border border-black/10">
+              <img
+                src={slide.image_url}
+                alt={slide.title_en}
+                referrerPolicy="no-referrer"
+                className="absolute inset-0 w-full h-full object-cover object-center"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-transparent" />
+              <div className="absolute bottom-3 left-3 right-3 text-white">
+                <div className="text-[10px] uppercase tracking-wider text-white/70">
+                  Full-screen preview (object-cover · centered)
+                </div>
+                <div className="text-sm font-medium tracking-wide uppercase truncate">
+                  {slide.title_en || 'Untitled slide'}
+                </div>
               </div>
             </div>
 

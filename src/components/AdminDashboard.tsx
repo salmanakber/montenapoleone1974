@@ -321,6 +321,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setHasEnvPasscode(Boolean(data.hasEnvPasscode));
         if (data.user && authToken) {
           onAuthChange(authToken, data.user);
+        } else if (authToken && !data.user) {
+          onAuthChange(null, null);
         }
       })
       .finally(() => setCheckingAuth(false));
