@@ -1574,46 +1574,60 @@ function seedInitialData(): void {
 
   const existingReviews = db.prepare('SELECT COUNT(*) AS count FROM product_reviews').get() as { count: number };
   if (existingReviews.count === 0) {
-    const insertReview = db.prepare(`
-      INSERT INTO product_reviews (
-        product_id, order_number, customer_email, customer_name, rating, title, comment, fit_feedback, region_code, verified_purchase, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now', ?))
-    `);
-    insertReview.run(
-      1,
-      'MN-2026-1001',
-      'henrik.solberg@nordicexec.no',
-      'Henrik Solberg',
-      5,
-      'Perfekt passform og utrolig lin-kvalitet',
-      'Bestilte med -1 cm ermelengde under Skreddersøm og skjorten sitter som støpt. Luften går rett gjennom stoffet.',
-      'true_to_size',
-      'no',
-      '-2 days'
-    );
-    insertReview.run(
-      1,
-      'MN-2026-1003',
-      'tuan.nguyen@saigonventures.vn',
-      'Nguyễn Minh Tuấn',
-      5,
-      'Vải linen Ý rất mát và đứng phom',
-      'Chiều dài tay áo chỉnh -2cm chuẩn xác từng milimet. Rất hài lòng khi mặc tại TP.HCM.',
-      'true_to_size',
-      'vn',
-      '-1 days'
-    );
-    insertReview.run(
-      4,
-      'MN-2026-1004',
-      'j.vance@manhattan-capital.com',
-      'Julian Vance',
-      5,
-      'Two-ply crispness all the way from morning briefing to dinner',
-      'The 100/2-ply cotton drapes cleanly beneath a blazer and the French cuffs hold their structure effortlessly.',
-      'true_to_size',
-      'en',
-      '-1 days'
-    );
+    const productIds = db
+      .prepare('SELECT id FROM products WHERE active = 1 ORDER BY id ASC LIMIT 4')
+      .all() as Array<{ id: number }>;
+    if (productIds.length > 0) {
+      const firstId = productIds[0].id;
+      const secondId = productIds[Math.min(3, productIds.length - 1)].id;
+      const insertReview = db.prepare(`
+        INSERT INTO product_reviews (
+          product_id, order_number, customer_email, customer_name, rating, title, comment, fit_feedback, region_code, verified_purchase, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now', ?))
+      `);
+      try {
+        insertReview.run(
+          firstId,
+          'MN-2026-1001',
+          'henrik.solberg@nordicexec.no',
+          'Henrik Solberg',
+          5,
+          'Perfekt passform og utrolig lin-kvalitet',
+          'Bestilte med -1 cm ermelengde under Skreddersøm og skjorten sitter som støpt. Luften går rett gjennom stoffet.',
+          'true_to_size',
+          'no',
+          '-2 days'
+        );
+        insertReview.run(
+          firstId,
+          'MN-2026-1003',
+          'tuan.nguyen@saigonventures.vn',
+          'Nguyễn Minh Tuấn',
+          5,
+          'Vải linen Ý rất mát và đứng phom',
+          'Chiều dài tay áo chỉnh -2cm chuẩn xác từng milimet. Rất hài lòng khi mặc tại TP.HCM.',
+          'true_to_size',
+          'vn',
+          '-1 days'
+        );
+        insertReview.run(
+          secondId,
+          'MN-2026-1004',
+          'j.vance@manhattan-capital.com',
+          'Julian Vance',
+          5,
+          'Two-ply crispness all the way from morning briefing to dinner',
+          'The 100/2-ply cotton drapes cleanly beneath a blazer and the French cuffs hold their structure effortlessly.',
+          'true_to_size',
+          'en',
+          '-1 days'
+        );
+      } catch (err) {
+        console.warn(
+          '[seed] Skipping sample product reviews:',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
   }
 }
