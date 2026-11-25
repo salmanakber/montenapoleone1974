@@ -228,6 +228,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   );
   const [wooSourceRegion, setWooSourceRegion] = useState<RegionCode>('en');
   const [wooAutoTranslate, setWooAutoTranslate] = useState(true);
+  const [wooDownloadImages, setWooDownloadImages] = useState(true);
+  const [csvFileName, setCsvFileName] = useState<string | null>(null);
+  const [csvImportBusy, setCsvImportBusy] = useState(false);
+  const [csvImportStep, setCsvImportStep] = useState<string | null>(null);
   const [wooPreview, setWooPreview] = useState<{ rows: WooProductImportRow[]; errors: string[] } | null>(null);
   const [csvPreview, setCsvPreview] = useState<{ rows: CsvImportRow[]; errors: string[] } | null>(null);
   const [csvResultMsg, setCsvResultMsg] = useState<string | null>(null);
@@ -588,62 +592,107 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleApplyCsvImport = async () => {
-    if (!authToken) return;
+    if (!authToken || csvImportBusy) return;
     setCsvResultMsg(null);
+    setCsvImportBusy(true);
 
-    if (isWooCommerceCsvHeader(csvText)) {
-      const wooParsed = parseWooCommerceCsv(csvText, wooSourceRegion);
-      setWooPreview(wooParsed);
-      if (wooParsed.rows.length === 0) {
-        setCsvResultMsg(wooParsed.errors[0] || 'No valid WooCommerce product rows detected.');
+    try {
+      if (isWooCommerceCsvHeader(csvText)) {
+        setCsvImportStep('Parsing CSV…');
+        const wooParsed = parseWooCommerceCsv(csvText, wooSourceRegion);
+        setWooPreview(wooParsed);
+        if (wooParsed.rows.length === 0) {
+          setCsvResultMsg(wooParsed.errors[0] || 'No valid WooCommerce product rows detected.');
+          return;
+        }
+        const remoteImgCount = wooParsed.rows.reduce(
+          (n, r) => n + (r.images || []).filter((u) => /^https?:\/\//i.test(String(u))).length,
+          0
+        );
+        setCsvImportStep(
+          wooDownloadImages
+            ? `Importing ${wooParsed.rows.length} product(s) and saving ${remoteImgCount} image URL(s) locally…`
+            : `Importing ${wooParsed.rows.length} product(s)…`
+        );
+        // Prefer csvText for large catalogs — avoids multi‑MB JSON row payloads
+        const useCsvText = wooParsed.rows.length > 80 || csvText.length > 200_000;
+        const res = await fetch('/api/admin/import/woocommerce', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify(
+            useCsvText
+              ? {
+                  csvText,
+                  baseRegion: wooSourceRegion,
+                  translateLanguages: wooAutoTranslate,
+                  downloadImages: wooDownloadImages,
+                }
+              : {
+                  rows: wooParsed.rows,
+                  baseRegion: wooSourceRegion,
+                  translateLanguages: wooAutoTranslate,
+                  downloadImages: wooDownloadImages,
+                }
+          ),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const imgParts = [
+            data.mediaCopiedLocalCount
+              ? `${data.mediaCopiedLocalCount} copied from WordPress`
+              : null,
+            data.mediaDownloadedCount
+              ? `${data.mediaDownloadedCount} downloaded`
+              : null,
+            data.mediaReusedCount ? `${data.mediaReusedCount} already local` : null,
+            data.mediaFailedCount ? `${data.mediaFailedCount} failed` : null,
+          ].filter(Boolean);
+          setCsvResultMsg(
+            `Import complete: ${data.importedCount} product(s) · ${data.createdCount} created · ${data.updatedCount} updated · ${data.categoriesCreated} categories · ${data.variantsSynced ?? 0} variants` +
+              (wooDownloadImages
+                ? ` · Images: ${imgParts.length ? imgParts.join(', ') : 'none found'} (${data.remoteImageUrlsFound ?? 0} remote URLs)`
+                : ' · image download skipped') +
+              (data.translatedWithAi ? ' · AI EN/NO/IT/VN' : ' · EN/NO/IT/VN')
+          );
+          loadAdminData();
+          onRefreshStorefront();
+        } else {
+          setCsvResultMsg(data.error || 'WooCommerce CSV import failed.');
+        }
         return;
       }
-      const res = await fetch('/api/admin/import/woocommerce', {
+
+      setCsvImportStep('Importing localization rows…');
+      const parsed = parseProductImportCsv(csvText);
+      setCsvPreview(parsed);
+      if (parsed.rows.length === 0) return;
+
+      const res = await fetch('/api/admin/import/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({
-          rows: wooParsed.rows,
-          baseRegion: wooSourceRegion,
-          translateLanguages: wooAutoTranslate,
-        }),
+        body: JSON.stringify({ rows: parsed.rows }),
       });
       const data = await res.json();
       if (res.ok) {
         setCsvResultMsg(
-          `WooCommerce Import complete: ${data.importedCount} product(s) (${data.createdCount} created, ${data.updatedCount} updated, ${data.categoriesCreated} categories, ${data.variantsSynced ?? 0} size variants, ${data.mediaDownloadedCount ?? 0} images downloaded to Media Library, ${data.mediaReusedCount ?? 0} cached${data.translatedWithAi ? ' · AI EN/NO/IT/VN localized' : ' · EN/NO/IT/VN localized'}).`
+          `Imported ${data.updatedCount} regional localization rows (${data.skippedCount} skipped).`
         );
         loadAdminData();
         onRefreshStorefront();
       } else {
-        setCsvResultMsg(data.error || 'WooCommerce CSV import failed.');
+        setCsvResultMsg(data.error || 'CSV import failed.');
       }
-      return;
-    }
-
-    const parsed = parseProductImportCsv(csvText);
-    setCsvPreview(parsed);
-    if (parsed.rows.length === 0) return;
-
-    const res = await fetch('/api/admin/import/products', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ rows: parsed.rows }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setCsvResultMsg(
-        `Imported ${data.updatedCount} regional localization rows (${data.skippedCount} skipped).`
-      );
-      loadAdminData();
-      onRefreshStorefront();
-    } else {
-      setCsvResultMsg(data.error || 'CSV import failed.');
+    } catch {
+      setCsvResultMsg('Network error during import. Try again — large catalogs can take a few minutes.');
+    } finally {
+      setCsvImportBusy(false);
+      setCsvImportStep(null);
     }
   };
 
@@ -867,7 +916,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       });
       const data = await res.json();
       if (res.ok) {
-        const msg = `Synced external product media: ${data.downloadedCount} downloaded into Media Library (${data.reusedCount} cached, ${data.updatedProducts} product(s) updated).`;
+        const msg = `Synced external product media: ${data.copiedLocalCount ?? 0} copied from WordPress, ${data.downloadedCount} downloaded, ${data.reusedCount} cached, ${data.failedCount ?? 0} failed · ${data.updatedProducts} product(s) updated.`;
         setMediaSyncMsg(msg);
         setCsvResultMsg((prev) => (prev ? `${prev} · ${msg}` : msg));
         await loadAdminData();
@@ -1848,72 +1897,95 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
 
               {showCsvImport && (
-                <div className="border border-[#142B4E]/25 bg-[#FAFAFA] p-5 space-y-3 text-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-2">
-                        <span>Bulk CSV / WooCommerce Product & Variations Importer</span>
+                <div className="border border-[#142B4E]/25 bg-[#FAFAFA] p-5 space-y-4 text-xs">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold uppercase tracking-wider text-[#142B4E] flex flex-wrap items-center gap-2">
+                        <span>Product CSV Import</span>
                         {isWooCommerceCsvHeader(csvText) && (
                           <span className="px-2 py-0.5 bg-[#0284C7] text-white text-[10px]">
-                            WooCommerce CSV Detected
+                            WooCommerce Detected
+                          </span>
+                        )}
+                        {csvFileName && (
+                          <span className="px-2 py-0.5 bg-white border border-neutral-300 text-neutral-700 text-[10px] font-mono-tabular normal-case tracking-normal">
+                            {csvFileName}
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-neutral-500 mt-0.5">
-                        Supports WooCommerce Product Exports (simple, variable, & variation rows with Sizes, Fits, Parent &gt; Child categories, and attributes) and rewrites single-language copy across EN, NO, IT, VN.
+                      <div className="text-[11px] text-neutral-500 mt-1 max-w-2xl">
+                        1) Choose your WooCommerce export · 2) Confirm options · 3) Import.
+                        Image URLs (including <code className="font-mono-tabular">Image URL</code> /
+                        Gallery columns) are saved into Media Library as local{' '}
+                        <code className="font-mono-tabular">/uploads</code> files for SEO.
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const sample =
-                            'ID,Type,SKU,Name,Published,Short description,Description,In stock?,Stock,Regular price,Sale price,Categories,Images,Parent,Attribute 1 name,Attribute 1 value(s),Attribute 2 name,Attribute 2 value(s)\n' +
-                            '901,variable,MN-WOO-901,"Como Royal Twill Shirt",1,"Fine Italian 2-ply twill","Woven in Como with mother-of-pearl buttons",1,,189,165,"Business > Twill Non-Iron","/src/assets/images/shirt_white_signature_1795248293653.jpg",,Size,"38 / S, 40 / M, 42 / L",Fit,"Slim Fit, Regular Fit"\n' +
-                            '902,variation,MN-WOO-901-38,"Como Royal Twill - 38",1,,,1,14,189,165,,,MN-WOO-901,Size,"38 / S",Fit,"Slim Fit"\n' +
-                            '903,variation,MN-WOO-901-40,"Como Royal Twill - 40",1,,,1,22,189,165,,,MN-WOO-901,Size,"40 / M",Fit,"Regular Fit"\n' +
-                            '904,simple,MN-WOO-904,"Portofino Resort Linen",1,"Lightweight coastal linen","Breathable summer weave",1,18,169,,"Casual & Linen > Summer Linen","/src/assets/images/shirt_beige_linen_1795248293982.jpg",,Size,"39 / M, 40 / M, 41 / L",,';
-                          setCsvText(sample);
-                          setCsvPreview(null);
-                          setWooPreview(parseWooCommerceCsv(sample, wooSourceRegion));
-                          setCsvResultMsg(null);
-                        }}
-                        className="px-3 py-1.5 bg-white border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E]/5 cursor-pointer"
-                      >
-                        Load Variable + Size Sample
-                      </button>
-                      <label className="px-3 py-1.5 bg-white border border-neutral-300 cursor-pointer hover:bg-neutral-50">
-                        <span>Upload .csv file</span>
-                        <input
-                          type="file"
-                          accept=".csv,text/csv"
-                          className="sr-only"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            f.text().then((txt) => {
-                              setCsvText(txt);
-                              if (isWooCommerceCsvHeader(txt)) {
-                                setCsvPreview(null);
-                                setWooPreview(parseWooCommerceCsv(txt, wooSourceRegion));
-                              } else {
-                                setWooPreview(null);
-                                setCsvPreview(parseProductImportCsv(txt));
-                              }
-                            });
-                          }}
-                        />
-                      </label>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sample =
+                          'ID,Type,SKU,Name,Published,Short description,Description,In stock?,Stock,Regular price,Sale price,Categories,Images,Parent,Attribute 1 name,Attribute 1 value(s),Attribute 2 name,Attribute 2 value(s)\n' +
+                          '901,variable,MN-WOO-901,"Como Royal Twill Shirt",1,"Fine Italian 2-ply twill","Woven in Como with mother-of-pearl buttons",1,,189,165,"Business > Twill Non-Iron","/src/assets/images/shirt_white_signature_1795248293653.jpg",,Size,"38 / S, 40 / M, 42 / L",Fit,"Slim Fit, Regular Fit"\n' +
+                          '902,variation,MN-WOO-901-38,"Como Royal Twill - 38",1,,,1,14,189,165,,,MN-WOO-901,Size,"38 / S",Fit,"Slim Fit"\n' +
+                          '903,variation,MN-WOO-901-40,"Como Royal Twill - 40",1,,,1,22,189,165,,,MN-WOO-901,Size,"40 / M",Fit,"Regular Fit"\n' +
+                          '904,simple,MN-WOO-904,"Portofino Resort Linen",1,"Lightweight coastal linen","Breathable summer weave",1,18,169,,"Casual & Linen > Summer Linen","/src/assets/images/shirt_beige_linen_1795248293982.jpg",,Size,"39 / M, 40 / M, 41 / L",,';
+                        setCsvText(sample);
+                        setCsvFileName('sample-variable-products.csv');
+                        setCsvPreview(null);
+                        setWooPreview(parseWooCommerceCsv(sample, wooSourceRegion));
+                        setCsvResultMsg(null);
+                      }}
+                      className="px-3 py-1.5 bg-white border border-neutral-300 text-neutral-600 hover:bg-neutral-50 cursor-pointer shrink-0"
+                    >
+                      Load sample
+                    </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-4 bg-white border border-neutral-200 px-3 py-2">
-                    <label className="flex items-center gap-2 text-[11px] text-neutral-700">
-                      <span className="font-medium uppercase tracking-wider">CSV Source Currency/Language:</span>
+                  <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-[#142B4E]/40 bg-white px-4 py-8 cursor-pointer hover:bg-[#142B4E]/[0.03] transition-colors">
+                    <span className="text-sm font-medium text-[#142B4E]">
+                      {csvFileName ? 'Replace CSV file' : 'Drop or choose your WooCommerce .csv'}
+                    </span>
+                    <span className="text-[11px] text-neutral-500">
+                      Accepts Product Export CSV with Image URL / Gallery Image URLs columns
+                    </span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setCsvResultMsg(null);
+                        setCsvFileName(f.name);
+                        f.text().then((txt) => {
+                          setCsvText(txt);
+                          if (isWooCommerceCsvHeader(txt)) {
+                            const woo = parseWooCommerceCsv(txt, wooSourceRegion);
+                            setCsvPreview(null);
+                            setWooPreview(woo);
+                            const imgN = woo.rows.reduce((n, r) => n + (r.images?.length || 0), 0);
+                            setCsvResultMsg(
+                              `Ready: ${woo.rows.length} product(s), ${imgN} image URL(s), ${woo.categories.length} category path(s).`
+                            );
+                          } else {
+                            setWooPreview(null);
+                            setCsvPreview(parseProductImportCsv(txt));
+                          }
+                        });
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-white border border-neutral-200 p-3">
+                    <label className="flex flex-col gap-1 text-[11px] text-neutral-700">
+                      <span className="font-medium uppercase tracking-wider text-neutral-500">
+                        Source currency
+                      </span>
                       <select
                         value={wooSourceRegion}
                         onChange={(e) => setWooSourceRegion(e.target.value as RegionCode)}
-                        className="border border-neutral-300 px-2 py-1 bg-white outline-none"
+                        className="border border-neutral-300 px-2 py-1.5 bg-white outline-none"
                       >
                         <option value="en">English (USD)</option>
                         <option value="no">Norwegian (NOK)</option>
@@ -1921,64 +1993,106 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <option value="vn">Vietnamese (VND)</option>
                       </select>
                     </label>
-                    <label className="flex items-center gap-2 text-[11px] text-neutral-700 cursor-pointer">
+                    <label className="flex items-start gap-2 text-[11px] text-neutral-700 cursor-pointer pt-5">
+                      <input
+                        type="checkbox"
+                        checked={wooDownloadImages}
+                        onChange={(e) => setWooDownloadImages(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <strong className="font-medium">Save images locally</strong>
+                        <span className="block text-neutral-500">
+                          Copy WordPress uploads into Media Library (recommended)
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-[11px] text-neutral-700 cursor-pointer pt-5">
                       <input
                         type="checkbox"
                         checked={wooAutoTranslate}
                         onChange={(e) => setWooAutoTranslate(e.target.checked)}
+                        className="mt-0.5"
                       />
-                      <span>Auto-rewrite titles & descriptions into EN / NO / IT / VN</span>
+                      <span>
+                        <strong className="font-medium">Localize EN / NO / IT / VN</strong>
+                        <span className="block text-neutral-500">Rewrite titles & descriptions</span>
+                      </span>
                     </label>
                   </div>
 
-                  <textarea
-                    rows={4}
-                    value={csvText}
-                    onChange={(e) => setCsvText(e.target.value)}
-                    aria-label="CSV product import data"
-                    className="w-full p-3 font-mono-tabular text-[11px] border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
-                  />
+                  <details className="bg-white border border-neutral-200">
+                    <summary className="px-3 py-2 cursor-pointer text-[11px] text-neutral-600 hover:bg-neutral-50">
+                      Advanced: paste / edit CSV text
+                    </summary>
+                    <textarea
+                      rows={5}
+                      value={csvText}
+                      onChange={(e) => {
+                        setCsvText(e.target.value);
+                        setCsvFileName(null);
+                      }}
+                      aria-label="CSV product import data"
+                      className="w-full p-3 font-mono-tabular text-[11px] border-t border-neutral-200 outline-none focus:border-[#142B4E]"
+                    />
+                  </details>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isWooCommerceCsvHeader(csvText)) {
-                            const woo = parseWooCommerceCsv(csvText, wooSourceRegion);
-                            setCsvPreview(null);
-                            setWooPreview(woo);
-                            setCsvResultMsg(
-                              `WooCommerce CSV validated: ${woo.rows.length} product(s), ${woo.categories.length} category node(s) ready across EN/NO/IT/VN.`
-                            );
-                          } else {
-                            setWooPreview(null);
-                            setCsvPreview(parseProductImportCsv(csvText));
-                          }
-                        }}
-                        className="px-3 py-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 cursor-pointer"
-                      >
-                        Validate CSV
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleApplyCsvImport}
-                        className="px-4 py-1.5 bg-[#142B4E] text-white uppercase tracking-wider font-medium cursor-pointer"
-                      >
-                        {isWooCommerceCsvHeader(csvText) ? 'Import WooCommerce Products' : 'Apply Bulk Import'}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="sync-external-media-btn"
-                        disabled={syncingExternalMedia}
-                        onClick={handleSyncExternalProductMedia}
-                        className="px-3.5 py-1.5 border border-[#142B4E] text-[#142B4E] bg-white hover:bg-[#142B4E]/5 uppercase tracking-wider font-medium cursor-pointer disabled:opacity-50"
-                      >
-                        {syncingExternalMedia ? 'Downloading Images...' : 'Download External Images to Media'}
-                      </button>
-                    </div>
-                    {csvResultMsg && <span className="text-[#4F8A47] font-medium">{csvResultMsg}</span>}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={csvImportBusy}
+                      onClick={() => {
+                        if (isWooCommerceCsvHeader(csvText)) {
+                          const woo = parseWooCommerceCsv(csvText, wooSourceRegion);
+                          setCsvPreview(null);
+                          setWooPreview(woo);
+                          const imgN = woo.rows.reduce((n, r) => n + (r.images?.length || 0), 0);
+                          setCsvResultMsg(
+                            `Validated: ${woo.rows.length} product(s), ${imgN} image URL(s), ${woo.categories.length} category path(s).`
+                          );
+                        } else {
+                          setWooPreview(null);
+                          setCsvPreview(parseProductImportCsv(csvText));
+                        }
+                      }}
+                      className="px-3 py-2 border border-neutral-300 bg-white hover:bg-neutral-50 cursor-pointer disabled:opacity-50"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      disabled={csvImportBusy}
+                      onClick={handleApplyCsvImport}
+                      className="px-5 py-2 bg-[#142B4E] text-white uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
+                    >
+                      {csvImportBusy
+                        ? csvImportStep || 'Importing…'
+                        : isWooCommerceCsvHeader(csvText)
+                          ? `Import ${wooPreview?.rows.length || ''} Products`.trim()
+                          : 'Apply Bulk Import'}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="sync-external-media-btn"
+                      disabled={syncingExternalMedia || csvImportBusy}
+                      onClick={handleSyncExternalProductMedia}
+                      className="px-3.5 py-2 border border-[#142B4E] text-[#142B4E] bg-white hover:bg-[#142B4E]/5 cursor-pointer disabled:opacity-50"
+                    >
+                      {syncingExternalMedia ? 'Saving images…' : 'Re-save remote images'}
+                    </button>
                   </div>
+
+                  {(csvImportBusy || csvResultMsg) && (
+                    <div
+                      className={`px-3 py-2.5 border text-[11px] ${
+                        csvImportBusy
+                          ? 'bg-sky-50 border-sky-200 text-sky-900'
+                          : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      }`}
+                    >
+                      {csvImportBusy ? csvImportStep || 'Working…' : csvResultMsg}
+                    </div>
+                  )}
 
                   {wooPreview && wooPreview.rows.length > 0 && (
                     <div className="border border-neutral-200 bg-white overflow-x-auto max-h-80 overflow-y-auto">
@@ -4446,19 +4560,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* CREATE PRODUCT MODAL */}
       {creatingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
           <div className="fixed inset-0 bg-black/55" onClick={() => !newCreateBusy && setCreatingProduct(false)} />
           <form
             onSubmit={handleCreateProduct}
-            className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-white border border-black/15 shadow-2xl text-xs"
+            className="relative w-full max-w-6xl max-h-[94vh] overflow-y-auto bg-white border border-black/15 shadow-2xl text-xs"
           >
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white px-5 sm:px-6 py-3.5">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white px-5 sm:px-6 py-3">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-[#142B4E]">
                   Add New Shirt
                 </h2>
                 <p className="text-[11px] text-neutral-500 mt-0.5">
-                  Choose fits & sizes — variants are generated automatically for all regions.
+                  Fits × sizes generate variants for all regions automatically.
                 </p>
               </div>
               <button
@@ -4471,123 +4585,207 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
-            <div className="px-5 sm:px-6 py-5 space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="px-5 sm:px-6 py-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Left: identity + prices + image */}
+              <div className="lg:col-span-5 space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1">SKU *</label>
+                    <input
+                      required
+                      placeholder="e.g. MN-L50"
+                      value={newSku}
+                      onChange={(e) => setNewSku(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1">Stock / Variant</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={newStockQty}
+                      onChange={(e) => setNewStockQty(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-[11px] text-neutral-600 mb-1">SKU *</label>
+                  <label className="block text-[11px] text-neutral-600 mb-1">Title (EN) *</label>
                   <input
                     required
-                    placeholder="e.g. MN-L50"
-                    value={newSku}
-                    onChange={(e) => setNewSku(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    placeholder="e.g. White Signature Twill"
+                    value={newTitleEn}
+                    onChange={(e) => setNewTitleEn(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-neutral-600 mb-1">Default Stock / Variant</label>
+                  <label className="block text-[11px] text-neutral-600 mb-1">Fabric Spec *</label>
                   <input
-                    type="number"
-                    min={0}
-                    value={newStockQty}
-                    onChange={(e) => setNewStockQty(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    required
+                    placeholder="100% Italian 2-Ply Cotton"
+                    value={newFabric}
+                    onChange={(e) => setNewFabric(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-[11px] text-neutral-600 mb-1">Product Title (English) *</label>
-                <input
-                  required
-                  placeholder="e.g. White Signature Twill"
-                  value={newTitleEn}
-                  onChange={(e) => setNewTitleEn(e.target.value)}
-                  className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-neutral-600 mb-1">Fabric Spec *</label>
-                <input
-                  required
-                  placeholder="100% Italian 2-Ply Cotton"
-                  value={newFabric}
-                  onChange={(e) => setNewFabric(e.target.value)}
-                  className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
-                />
-              </div>
-
-              <div className="border border-neutral-200 p-3.5 bg-[#FAFAFA] space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
-                  Categories
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+                    Prices
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <div>
+                      <label className="text-[10px] text-neutral-500">USD</label>
+                      <input
+                        type="number"
+                        value={newPriceEn}
+                        onChange={(e) => setNewPriceEn(Number(e.target.value))}
+                        className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-neutral-500">NOK</label>
+                      <input
+                        type="number"
+                        value={newPriceNo}
+                        onChange={(e) => setNewPriceNo(Number(e.target.value))}
+                        className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-neutral-500">EUR</label>
+                      <input
+                        type="number"
+                        value={newPriceIt}
+                        onChange={(e) => setNewPriceIt(Number(e.target.value))}
+                        className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-neutral-500">VND</label>
+                      <input
+                        type="number"
+                        value={newPriceVn}
+                        onChange={(e) => setNewPriceVn(Number(e.target.value))}
+                        className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto">
-                  {(() => {
-                    const usableCats = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
-                    const parents = usableCats.filter((c) => !c.parent_id);
-                    const ordered: Array<{ slug: string; label: string; isChild: boolean }> = [];
-                    parents.forEach((par) => {
-                      ordered.push({ slug: par.slug, label: par.name_en, isChild: false });
+
+                <div className="flex items-center gap-3 border border-neutral-200 p-2.5 bg-[#FAFAFA]">
+                  <img
+                    src={newPrimaryImg}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="w-14 h-14 object-cover bg-[#E6E6E6] border border-neutral-200 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-0.5">Primary image</div>
+                    <span className="block truncate text-neutral-600 font-mono-tabular text-[10px]">
+                      {newPrimaryImg}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMediaPickerTarget('primary')}
+                      className="mt-1 text-[#142B4E] hover:underline cursor-pointer"
+                    >
+                      Pick from Media
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
+                  Will create{' '}
+                  <strong className="font-mono-tabular">
+                    {Math.max(0, newFits.length) * Math.max(0, newSizes.length)}
+                  </strong>{' '}
+                  variants ({newFits.length || 0} fits × {newSizes.length || 0} sizes).
+                </div>
+
+                {newCreateError && (
+                  <div className="px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-[11px]">
+                    {newCreateError}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: categories + fits + sizes side by side */}
+              <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="border border-neutral-200 p-3 bg-[#FAFAFA] space-y-2 min-h-0">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                    Categories
+                  </div>
+                  <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
+                    {(() => {
+                      const usableCats = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
+                      const parents = usableCats.filter((c) => !c.parent_id);
+                      const ordered: Array<{ slug: string; label: string; isChild: boolean }> = [];
+                      parents.forEach((par) => {
+                        ordered.push({ slug: par.slug, label: par.name_en, isChild: false });
+                        usableCats
+                          .filter((ch) => ch.parent_id === par.id)
+                          .forEach((ch) =>
+                            ordered.push({ slug: ch.slug, label: `↳ ${ch.name_en}`, isChild: true })
+                          );
+                      });
                       usableCats
-                        .filter((ch) => ch.parent_id === par.id)
-                        .forEach((ch) =>
-                          ordered.push({ slug: ch.slug, label: `↳ ${ch.name_en}`, isChild: true })
+                        .filter((c) => !ordered.some((o) => o.slug === c.slug))
+                        .forEach((c) =>
+                          ordered.push({ slug: c.slug, label: c.name_en, isChild: Boolean(c.parent_id) })
                         );
-                    });
-                    usableCats
-                      .filter((c) => !ordered.some((o) => o.slug === c.slug))
-                      .forEach((c) =>
-                        ordered.push({ slug: c.slug, label: c.name_en, isChild: Boolean(c.parent_id) })
-                      );
-                    const list =
-                      ordered.length > 0
-                        ? ordered
-                        : ['linen', 'business', 'oxford', 'flannel', 'stretch'].map((s) => ({
-                            slug: s,
-                            label: s.toUpperCase(),
-                            isChild: false,
-                          }));
-                    return list.map((item) => {
-                      const checked = newCategories.includes(item.slug);
-                      return (
-                        <label
-                          key={item.slug}
-                          className={`flex items-center gap-1.5 px-2 py-1.5 border cursor-pointer ${
-                            checked
-                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
-                              : 'bg-white text-neutral-700 border-neutral-300'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? Array.from(new Set([...newCategories, item.slug]))
-                                : newCategories.filter((s) => s !== item.slug);
-                              setNewCategories(next.length > 0 ? next : [item.slug]);
-                            }}
-                            className="accent-white"
-                          />
-                          <span className="truncate">{item.label}</span>
-                        </label>
-                      );
-                    });
-                  })()}
+                      const list =
+                        ordered.length > 0
+                          ? ordered
+                          : ['linen', 'business', 'oxford', 'flannel', 'stretch'].map((s) => ({
+                              slug: s,
+                              label: s.toUpperCase(),
+                              isChild: false,
+                            }));
+                      return list.map((item) => {
+                        const checked = newCategories.includes(item.slug);
+                        return (
+                          <label
+                            key={item.slug}
+                            className={`flex items-center gap-1.5 px-2 py-1.5 border cursor-pointer ${
+                              checked
+                                ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                                : 'bg-white text-neutral-700 border-neutral-300'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const next = e.target.checked
+                                  ? Array.from(new Set([...newCategories, item.slug]))
+                                  : newCategories.filter((s) => s !== item.slug);
+                                setNewCategories(next.length > 0 ? next : [item.slug]);
+                              }}
+                              className="accent-white"
+                            />
+                            <span className="truncate">{item.label}</span>
+                          </label>
+                        );
+                      });
+                    })()}
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3.5 space-y-2.5">
+                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
-                      Fit Variations *
+                      Fits *
                     </div>
                     <span className="text-[10px] font-mono-tabular text-neutral-500">
-                      {newFits.length} selected
+                      {newFits.length}
                     </span>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-col gap-1.5">
                     {CREATE_FIT_OPTIONS.map((fit) => {
                       const checked = newFits.includes(fit);
                       return (
@@ -4599,7 +4797,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               checked ? prev.filter((f) => f !== fit) : [...prev, fit]
                             )
                           }
-                          className={`px-2.5 py-1.5 border text-[11px] cursor-pointer ${
+                          className={`w-full text-left px-2.5 py-2 border text-[11px] cursor-pointer ${
                             checked
                               ? 'bg-[#142B4E] text-white border-[#142B4E]'
                               : 'bg-white text-neutral-700 border-neutral-300 hover:border-[#142B4E]'
@@ -4612,7 +4810,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
-                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3.5 space-y-2.5">
+                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
                       Sizes *
@@ -4637,7 +4835,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </span>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5 max-h-64 overflow-y-auto">
                     {CREATE_SIZE_OPTIONS.map((size) => {
                       const checked = newSizes.includes(size);
                       return (
@@ -4662,88 +4860,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
               </div>
-
-              <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
-                Will create{' '}
-                <strong className="font-mono-tabular">
-                  {Math.max(0, newFits.length) * Math.max(0, newSizes.length)}
-                </strong>{' '}
-                SKU variants ({newFits.length || 0} fits × {newSizes.length || 0} sizes) across EN / NO / IT / VN.
-              </div>
-
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600 mb-2">
-                  Regional Base Prices
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div>
-                    <label className="text-[10px] text-neutral-500">USD</label>
-                    <input
-                      type="number"
-                      value={newPriceEn}
-                      onChange={(e) => setNewPriceEn(Number(e.target.value))}
-                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-neutral-500">NOK</label>
-                    <input
-                      type="number"
-                      value={newPriceNo}
-                      onChange={(e) => setNewPriceNo(Number(e.target.value))}
-                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-neutral-500">EUR</label>
-                    <input
-                      type="number"
-                      value={newPriceIt}
-                      onChange={(e) => setNewPriceIt(Number(e.target.value))}
-                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-neutral-500">VND</label>
-                    <input
-                      type="number"
-                      value={newPriceVn}
-                      onChange={(e) => setNewPriceVn(Number(e.target.value))}
-                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 border border-neutral-200 p-2.5 bg-[#FAFAFA]">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <img
-                    src={newPrimaryImg}
-                    alt=""
-                    referrerPolicy="no-referrer"
-                    className="w-11 h-11 object-cover bg-[#E6E6E6] border border-neutral-200 shrink-0"
-                  />
-                  <span className="truncate text-neutral-600 font-mono-tabular text-[11px]">
-                    {newPrimaryImg}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setMediaPickerTarget('primary')}
-                  className="text-[#142B4E] hover:underline shrink-0 cursor-pointer"
-                >
-                  Pick from Media
-                </button>
-              </div>
-
-              {newCreateError && (
-                <div className="px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-[11px]">
-                  {newCreateError}
-                </div>
-              )}
             </div>
 
-            <div className="sticky bottom-0 border-t border-black/10 bg-white px-5 sm:px-6 py-3.5 flex items-center justify-end gap-2">
+            <div className="sticky bottom-0 border-t border-black/10 bg-white px-5 sm:px-6 py-3 flex items-center justify-end gap-2">
               <button
                 type="button"
                 disabled={newCreateBusy}

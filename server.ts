@@ -115,7 +115,7 @@ initializeDatabase();
 
 const app = express();
 app.set('trust proxy', true);
-app.use(express.json({ limit: '4mb' }));
+app.use(express.json({ limit: '32mb' }));
 
 // Static serving for uploaded WordPress-style media files
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -4023,17 +4023,81 @@ function isSafeRemoteImageUrl(rawUrl: string): boolean {
   }
 }
 
+function resolveLocalWordpressUploadPath(sourceUrl: string): string | null {
+  try {
+    const parsed = new URL(sourceUrl);
+    const marker = '/wp-content/uploads/';
+    const idx = parsed.pathname.toLowerCase().indexOf(marker);
+    if (idx === -1) return null;
+    const rel = decodeURIComponent(parsed.pathname.slice(idx + marker.length));
+    const candidates = [
+      process.env.WP_UPLOADS_DIR,
+      '/var/www/wordpress/wp-content/uploads',
+      path.resolve(process.cwd(), '..', 'wordpress', 'wp-content', 'uploads'),
+      path.resolve(process.cwd(), 'wordpress', 'wp-content', 'uploads'),
+    ].filter(Boolean) as string[];
+
+    for (const root of candidates) {
+      const absRoot = path.resolve(root);
+      const abs = path.resolve(absRoot, rel);
+      if (abs.startsWith(absRoot + path.sep) && fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+        return abs;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function registerMirroredMediaRow(params: {
+  filename: string;
+  localUrl: string;
+  mimeType: string;
+  sizeBytes: number;
+  sourceUrl: string;
+  uploadedBy: string;
+}): void {
+  const cleanOriginal = params.filename.replace(/^woo-[a-f0-9]+-/i, '');
+  db.prepare(
+    `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
+     SELECT ?, ?, ?, 'products', ?, ?, 1200, 1500, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ? OR caption = ?)`
+  ).run(
+    params.filename,
+    cleanOriginal,
+    params.localUrl,
+    params.mimeType,
+    params.sizeBytes,
+    cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+    params.sourceUrl,
+    params.uploadedBy,
+    params.localUrl,
+    params.sourceUrl
+  );
+}
+
 async function mirrorExternalImagesToLocalMedia(
   urls: string[],
   uploadedBy: string
-): Promise<{ urlMap: Map<string, string>; downloadedCount: number; reusedCount: number }> {
+): Promise<{
+  urlMap: Map<string, string>;
+  downloadedCount: number;
+  reusedCount: number;
+  copiedLocalCount: number;
+  failedCount: number;
+}> {
   const uniqueUrls = Array.from(
     new Set(urls.map((u) => String(u || '').trim()).filter((u) => isSafeRemoteImageUrl(u)))
   );
   const urlMap = new Map<string, string>();
   let downloadedCount = 0;
   let reusedCount = 0;
-  if (uniqueUrls.length === 0) return { urlMap, downloadedCount, reusedCount };
+  let copiedLocalCount = 0;
+  let failedCount = 0;
+  if (uniqueUrls.length === 0) {
+    return { urlMap, downloadedCount, reusedCount, copiedLocalCount, failedCount };
+  }
 
   const existingByUrl = new Map<string, string>();
   const existingRows = db
@@ -4082,22 +4146,46 @@ async function mirrorExternalImagesToLocalMedia(
       if (stat.size > 0) {
         urlMap.set(src, localUrl);
         reusedCount++;
-        const cleanOriginal = safeFilename.replace(/^woo-[a-f0-9]+-/i, '');
-        db.prepare(
-          `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
-           SELECT ?, ?, ?, 'products', 'image/jpeg', ?, 1200, 1500, ?, ?, ?
-           WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
-        ).run(
-          safeFilename,
-          cleanOriginal,
+        registerMirroredMediaRow({
+          filename: safeFilename,
           localUrl,
-          stat.size,
-          cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
-          src,
+          mimeType: 'image/jpeg',
+          sizeBytes: stat.size,
+          sourceUrl: src,
           uploadedBy,
-          localUrl
-        );
+        });
         continue;
+      }
+    }
+
+    // Prefer copying from local WordPress uploads (same VPS) — much faster/reliable than HTTP
+    const localWpFile = resolveLocalWordpressUploadPath(src);
+    if (localWpFile) {
+      try {
+        fs.copyFileSync(localWpFile, diskPath);
+        const stat = fs.statSync(diskPath);
+        const ext = path.extname(localWpFile).toLowerCase();
+        const mime =
+          ext === '.png'
+            ? 'image/png'
+            : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.gif'
+                ? 'image/gif'
+                : 'image/jpeg';
+        urlMap.set(src, localUrl);
+        copiedLocalCount++;
+        registerMirroredMediaRow({
+          filename: safeFilename,
+          localUrl,
+          mimeType: mime,
+          sizeBytes: stat.size,
+          sourceUrl: src,
+          uploadedBy,
+        });
+        continue;
+      } catch {
+        // fall through to HTTP fetch
       }
     }
 
@@ -4145,25 +4233,16 @@ async function mirrorExternalImagesToLocalMedia(
               const localUrl = `/uploads/${finalFilename}`;
               urlMap.set(sourceUrl, localUrl);
               downloadedCount++;
-
-              const cleanOriginal = finalFilename.replace(/^woo-[a-f0-9]+-/i, '');
-              db.prepare(
-                `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
-                 SELECT ?, ?, ?, 'products', ?, ?, 1200, 1500, ?, ?, ?
-                 WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
-              ).run(
-                finalFilename,
-                cleanOriginal,
+              registerMirroredMediaRow({
+                filename: finalFilename,
                 localUrl,
-                contentType.startsWith('image/')
+                mimeType: contentType.startsWith('image/')
                   ? contentType.split(';')[0].trim()
                   : 'image/jpeg',
-                arrayBuf.byteLength,
-                cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+                sizeBytes: arrayBuf.byteLength,
                 sourceUrl,
                 uploadedBy,
-                localUrl
-              );
+              });
               lastError = null;
               break;
             } catch (err) {
@@ -4172,16 +4251,18 @@ async function mirrorExternalImagesToLocalMedia(
             }
           }
           if (lastError) {
+            failedCount++;
             // keep original remote URL; admin can re-run Media Sync later
           }
         } catch {
+          failedCount++;
           // keep original URL gracefully if remote host rejects or times out
         }
       })
     );
   }
 
-  return { urlMap, downloadedCount, reusedCount };
+  return { urlMap, downloadedCount, reusedCount, copiedLocalCount, failedCount };
 }
 
 // Mirror existing external product primary/secondary/gallery URLs into local uploads + Media Library
@@ -4212,10 +4293,13 @@ app.post('/api/admin/media/sync-external-products', requireStaffOrOwner, async (
     }
   }
 
-  const { urlMap, downloadedCount, reusedCount } = await mirrorExternalImagesToLocalMedia(
-    allUrls,
-    user.email
-  );
+  const {
+    urlMap,
+    downloadedCount,
+    reusedCount,
+    copiedLocalCount,
+    failedCount,
+  } = await mirrorExternalImagesToLocalMedia(allUrls, user.email);
 
   let updatedProducts = 0;
   const updateStmt = db.prepare(
@@ -4250,9 +4334,16 @@ app.post('/api/admin/media/sync-external-products', requireStaffOrOwner, async (
     user,
     'MEDIA_EXTERNAL_SYNCED',
     `${updatedProducts} products`,
-    `Downloaded ${downloadedCount} new image(s), reused ${reusedCount} cached image(s)`
+    `Copied ${copiedLocalCount} from WordPress, downloaded ${downloadedCount}, reused ${reusedCount}, failed ${failedCount}`
   );
-  res.json({ ok: true, downloadedCount, reusedCount, updatedProducts });
+  res.json({
+    ok: true,
+    downloadedCount,
+    reusedCount,
+    copiedLocalCount,
+    failedCount,
+    updatedProducts,
+  });
 });
 
 // Full WooCommerce CSV Product + Variations + Hierarchical Category + Multi-Language Rewriter
@@ -4420,11 +4511,22 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
       }
     }
   }
+  const downloadImages = req.body?.downloadImages !== false;
   const {
     urlMap: mirroredImageMap,
     downloadedCount: mediaDownloadedCount,
     reusedCount: mediaReusedCount,
-  } = await mirrorExternalImagesToLocalMedia(allRemoteImageUrls, user.email);
+    copiedLocalCount: mediaCopiedLocalCount,
+    failedCount: mediaFailedCount,
+  } = downloadImages
+    ? await mirrorExternalImagesToLocalMedia(allRemoteImageUrls, user.email)
+    : {
+        urlMap: new Map<string, string>(),
+        downloadedCount: 0,
+        reusedCount: 0,
+        copiedLocalCount: 0,
+        failedCount: 0,
+      };
 
   let createdProducts = 0;
   let updatedProducts = 0;
@@ -4685,7 +4787,7 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     user,
     'WOOCOMMERCE_CSV_IMPORTED',
     `${rows.length} SKUs`,
-    `Created ${createdProducts}, updated ${updatedProducts}, categories ${createdCategories}, variants ${variantsSynced}, media ${mediaDownloadedCount} saved (${mediaReusedCount} cached)${translatedWithAi ? ' (AI multilingual)' : ''}`
+    `Created ${createdProducts}, updated ${updatedProducts}, categories ${createdCategories}, variants ${variantsSynced}, media copied ${mediaCopiedLocalCount} / downloaded ${mediaDownloadedCount} / reused ${mediaReusedCount} / failed ${mediaFailedCount}${translatedWithAi ? ' (AI multilingual)' : ''}`
   );
   res.json({
     ok: true,
@@ -4696,6 +4798,10 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     variantsSynced,
     mediaDownloadedCount,
     mediaReusedCount,
+    mediaCopiedLocalCount,
+    mediaFailedCount,
+    remoteImageUrlsFound: allRemoteImageUrls.length,
+    downloadImages,
     translatedWithAi,
     createdProducts,
     updatedProducts,

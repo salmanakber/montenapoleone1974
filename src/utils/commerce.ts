@@ -892,7 +892,7 @@ export function buildDeterministicMultilingualCopy(input: {
 export function isWooCommerceCsvHeader(csvText: string): boolean {
   const table = parseFullCsvTable(csvText);
   if (table.length === 0) return false;
-  const headers = table[0].map((h) => h.toLowerCase().trim());
+  const headers = table[0].map((h) => h.replace(/^\uFEFF/, '').toLowerCase().trim());
   return (
     (headers.includes('name') || headers.includes('post_title') || headers.includes('product id')) &&
     (headers.includes('regular price') ||
@@ -925,7 +925,7 @@ export function parseWooCommerceCsv(
     };
   }
 
-  const headers = table[0].map((h) => h.toLowerCase().trim());
+  const headers = table[0].map((h) => h.replace(/^\uFEFF/, '').toLowerCase().trim());
   const col = (...names: string[]) => {
     for (const n of names) {
       const i = headers.indexOf(n);
