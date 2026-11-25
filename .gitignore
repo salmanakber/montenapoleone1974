@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Protect live commerce data from accidental git overwrite on deploy
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db.bak*
+uploads/

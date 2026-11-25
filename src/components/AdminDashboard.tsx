@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  Bell,
   Boxes,
   Building2,
   Check,
@@ -265,7 +266,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [mediaPickerTarget, setMediaPickerTarget] = useState<
     'primary' | 'secondary' | 'tailoring' | 'menu' | 'hero' | { type: 'gallery'; index: number } | null
   >(null);
-  const [tailoringPickerCb, setTailoringPickerCb] = useState<((url: string) => void) | null>(null);
+  /** Ref avoids stale/shared callback bugs when picking images for different menu rows. */
+  const mediaPickerCbRef = useRef<((url: string) => void) | null>(null);
+  const [mediaPickerPreview, setMediaPickerPreview] = useState<MediaAsset | null>(null);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [lastSeenOrderId, setLastSeenOrderId] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('mn_admin_last_seen_order_id') || 0);
+    } catch {
+      return 0;
+    }
+  });
 
   // B2B Quote & Order Conversion drafts
   const [b2bQuoteDrafts, setB2bQuoteDrafts] = useState<Record<number, string>>({});
@@ -456,6 +467,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       loadAdminData();
     }
   }, [authToken, authUser, loadAdminData]);
+
+  // Soft-poll orders so notification badge updates without wiping other admin work
+  useEffect(() => {
+    if (!authToken || !authUser || !hasPermission(authUser, 'manage_orders')) return;
+    const tick = window.setInterval(() => {
+      void fetch('/api/admin/orders', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.orders) setOrders(d.orders);
+        })
+        .catch(() => {});
+    }, 45000);
+    return () => window.clearInterval(tick);
+  }, [authToken, authUser]);
 
   useEffect(() => {
     setOrderPage(1);
@@ -1111,6 +1138,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const newOrders = useMemo(
+    () =>
+      orders
+        .filter((o) => o.id > lastSeenOrderId)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, 20),
+    [orders, lastSeenOrderId]
+  );
+  const newOrderCount = newOrders.length;
+
+  const markOrdersSeen = useCallback(() => {
+    const maxId = orders.reduce((m, o) => Math.max(m, o.id), lastSeenOrderId);
+    setLastSeenOrderId(maxId);
+    try {
+      localStorage.setItem('mn_admin_last_seen_order_id', String(maxId));
+    } catch {
+      /* ignore */
+    }
+  }, [orders, lastSeenOrderId]);
+
   const renderAdminTopBar = (signedInUser: AuthUser | null) => (
     <header className="bg-[#142B4E] text-white border-b border-black/15 sticky top-0 z-30">
       <div className="max-w-[1440px] mx-auto px-4 sm:px-8 h-14 flex items-center justify-between gap-4">
@@ -1132,7 +1179,81 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
         {signedInUser && (
-          <div className="flex items-center gap-3 text-xs shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs shrink-0">
+            {hasPermission(signedInUser, 'manage_orders') && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotifOpen((v) => !v)}
+                  aria-label="Notifications"
+                  className="relative p-2 bg-white/10 hover:bg-white/20 cursor-pointer"
+                >
+                  <Bell className="w-4 h-4" />
+                  {newOrderCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#C45C26] text-[10px] font-semibold leading-4 text-center">
+                      {newOrderCount > 9 ? '9+' : newOrderCount}
+                    </span>
+                  )}
+                </button>
+                {notifOpen && (
+                  <div className="absolute right-0 mt-2 w-80 max-w-[min(20rem,calc(100vw-2rem))] bg-white text-[#1A1A1A] border border-black/10 shadow-xl z-40">
+                    <div className="px-3 py-2.5 border-b border-neutral-200 flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                        Notifications
+                      </span>
+                      <button
+                        type="button"
+                        onClick={markOrdersSeen}
+                        className="text-[11px] text-[#142B4E] hover:underline cursor-pointer"
+                      >
+                        Mark all read
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {newOrders.length === 0 ? (
+                        <div className="px-3 py-6 text-xs text-neutral-500 text-center">
+                          No new order notifications.
+                        </div>
+                      ) : (
+                        newOrders.map((o) => (
+                          <button
+                            key={o.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('orders');
+                              onTabChange?.('orders');
+                              setNotifOpen(false);
+                              markOrdersSeen();
+                            }}
+                            className="w-full text-left px-3 py-2.5 border-b border-neutral-100 hover:bg-[#F7F5F2] cursor-pointer"
+                          >
+                            <div className="text-xs font-medium text-[#1A1A1A]">
+                              New order {o.order_number}
+                            </div>
+                            <div className="text-[11px] text-neutral-500 mt-0.5 truncate">
+                              {o.customer_name || o.customer_email} · {o.currency_code}{' '}
+                              {Number(o.total).toFixed(0)}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('orders');
+                        onTabChange?.('orders');
+                        setNotifOpen(false);
+                        markOrdersSeen();
+                      }}
+                      className="w-full px-3 py-2.5 text-[11px] uppercase tracking-wider text-[#142B4E] font-semibold hover:bg-[#F7F5F2] cursor-pointer"
+                    >
+                      Open Orders
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <span className="hidden sm:inline text-white/80">
               {signedInUser.name} ({signedInUser.role.toUpperCase()})
             </span>
@@ -1367,6 +1488,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         hasPermission(authUser, 'manage_inventory'),
     },
     {
+      id: 'orders',
+      label: 'Orders & DHL',
+      icon: <ShoppingBag className="w-4 h-4" />,
+      visible: hasPermission(authUser, 'manage_orders'),
+    },
+    {
       id: 'products',
       label: 'Products & Bulk Editor',
       icon: <Layers className="w-4 h-4" />,
@@ -1436,12 +1563,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       label: 'AI Concierge & Agent',
       icon: <Sparkles className="w-4 h-4" />,
       visible: hasPermission(authUser, 'manage_settings'),
-    },
-    {
-      id: 'orders',
-      label: 'Orders & DHL',
-      icon: <ShoppingBag className="w-4 h-4" />,
-      visible: hasPermission(authUser, 'manage_orders'),
     },
     {
       id: 'emails',
@@ -1557,6 +1678,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onClick={() => {
                     setActiveTab(tab.id);
                     onTabChange?.(tab.id);
+                    if (tab.id === 'orders') markOrdersSeen();
                   }}
                   className={`w-full px-3 py-2 text-xs flex items-center gap-2.5 text-left transition-colors cursor-pointer ${
                     safeActiveTab === tab.id
@@ -1565,7 +1687,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   }`}
                 >
                   {tab.icon}
-                  <span>{tab.label}</span>
+                  <span className="flex-1">{tab.label}</span>
+                  {tab.id === 'orders' && newOrderCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#C45C26] text-white text-[10px] font-semibold leading-[18px] text-center">
+                      {newOrderCount > 9 ? '9+' : newOrderCount}
+                    </span>
+                  )}
                 </button>
               ))}
           </nav>
@@ -2485,7 +2612,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onRefreshStorefront();
                 }}
                 onOpenMediaPicker={(cb) => {
-                  setTailoringPickerCb(() => cb);
+                  mediaPickerCbRef.current = cb;
+                  setMediaPickerPreview(null);
                   setMediaPickerTarget('tailoring');
                 }}
               />
@@ -2505,7 +2633,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onRefreshStorefront();
                 }}
                 onOpenMediaPicker={(cb) => {
-                  setTailoringPickerCb(() => cb);
+                  mediaPickerCbRef.current = cb;
+                  setMediaPickerPreview(null);
                   setMediaPickerTarget('tailoring');
                 }}
               />
@@ -2520,7 +2649,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 authToken={authToken}
                 onRefreshStorefront={onRefreshStorefront}
                 onPickImage={(cb) => {
-                  setTailoringPickerCb(() => cb);
+                  mediaPickerCbRef.current = cb;
+                  setMediaPickerPreview(null);
                   setMediaPickerTarget('menu');
                 }}
               />
@@ -2538,7 +2668,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onRefresh={loadAdminData}
                   onRefreshStorefront={onRefreshStorefront}
                   onPickImage={(cb) => {
-                    setTailoringPickerCb(() => cb);
+                    mediaPickerCbRef.current = cb;
+                    setMediaPickerPreview(null);
                     setMediaPickerTarget('hero');
                   }}
                 />
@@ -2550,7 +2681,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     onRefresh={loadAdminData}
                     onRefreshStorefront={onRefreshStorefront}
                     onPickImage={(cb) => {
-                      setTailoringPickerCb(() => cb);
+                      mediaPickerCbRef.current = cb;
+                      setMediaPickerPreview(null);
                       setMediaPickerTarget('hero');
                     }}
                   />
@@ -4495,7 +4627,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div
             role="dialog"
             aria-modal="true"
-            className="relative w-full max-w-5xl bg-white border border-black/20 shadow-2xl flex flex-col max-h-[90vh]"
+            className="relative w-full max-w-5xl bg-white border border-black/20 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
           >
             <div className="flex items-center justify-between border-b border-black/10 px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-semibold uppercase tracking-wider">
@@ -4517,7 +4649,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 type="button"
                 onClick={() => {
                   setMediaPickerTarget(null);
-                  setTailoringPickerCb(null);
+                  mediaPickerCbRef.current = null;
+                  setMediaPickerPreview(null);
                 }}
                 className="p-1 text-neutral-500 hover:text-black cursor-pointer"
                 aria-label="Close media picker"
@@ -4526,55 +4659,142 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
-            <div className="overflow-y-auto px-5 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
               <MediaLibraryPanel
                 authToken={authToken}
                 media={media}
                 pickerMode
+                showStickyBar={false}
+                selectedAssetId={mediaPickerPreview?.id ?? null}
+                onSelectedAssetChange={setMediaPickerPreview}
                 onRefresh={loadAdminData}
                 onSelectMedia={(asset) => {
-                  if (
-                    (mediaPickerTarget === 'tailoring' ||
+                  const apply = (url: string) => {
+                    if (
+                      mediaPickerTarget === 'tailoring' ||
                       mediaPickerTarget === 'menu' ||
-                      mediaPickerTarget === 'hero') &&
-                    tailoringPickerCb
-                  ) {
-                    tailoringPickerCb(asset.url);
-                  } else if (
-                    typeof mediaPickerTarget === 'object' &&
-                    mediaPickerTarget?.type === 'gallery'
-                  ) {
-                    const targetIdx = mediaPickerTarget.index;
-                    setEditGallerySlots((prev) => {
-                      const next = [...prev];
-                      while (next.length <= targetIdx) next.push('');
-                      next[targetIdx] = asset.url;
-                      return next;
-                    });
-                    if (targetIdx === 0 && editingProduct) {
+                      mediaPickerTarget === 'hero'
+                    ) {
+                      mediaPickerCbRef.current?.(url);
+                    } else if (
+                      typeof mediaPickerTarget === 'object' &&
+                      mediaPickerTarget?.type === 'gallery'
+                    ) {
+                      const targetIdx = mediaPickerTarget.index;
+                      setEditGallerySlots((prev) => {
+                        const next = [...prev];
+                        while (next.length <= targetIdx) next.push('');
+                        next[targetIdx] = url;
+                        return next;
+                      });
+                      if (targetIdx === 0 && editingProduct) {
+                        setEditingProduct((prev) =>
+                          prev ? { ...prev, secondary_image: url } : prev
+                        );
+                      }
+                    } else if (editingProduct) {
                       setEditingProduct((prev) =>
-                        prev ? { ...prev, secondary_image: asset.url } : prev
+                        prev
+                          ? {
+                              ...prev,
+                              primary_image:
+                                mediaPickerTarget === 'primary' ? url : prev.primary_image,
+                              secondary_image:
+                                mediaPickerTarget === 'secondary' ? url : prev.secondary_image,
+                            }
+                          : prev
                       );
+                    } else if (creatingProduct) {
+                      setNewPrimaryImg(url);
                     }
-                  } else if (editingProduct) {
-                    setEditingProduct((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            primary_image:
-                              mediaPickerTarget === 'primary' ? asset.url : prev.primary_image,
-                            secondary_image:
-                              mediaPickerTarget === 'secondary' ? asset.url : prev.secondary_image,
-                          }
-                        : prev
-                    );
-                  } else if (creatingProduct) {
-                    setNewPrimaryImg(asset.url);
-                  }
-                  setTailoringPickerCb(null);
+                  };
+                  apply(asset.url);
+                  mediaPickerCbRef.current = null;
+                  setMediaPickerPreview(null);
                   setMediaPickerTarget(null);
                 }}
               />
+            </div>
+
+            <div className="shrink-0 border-t border-neutral-200 px-5 py-3.5 bg-white flex flex-wrap items-center justify-between gap-3">
+              {mediaPickerPreview ? (
+                <>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={mediaPickerPreview.url}
+                      alt={mediaPickerPreview.alt_text || mediaPickerPreview.original_name}
+                      referrerPolicy="no-referrer"
+                      className="w-11 h-11 object-cover border border-neutral-200 bg-[#F4F4F4] shrink-0"
+                    />
+                    <div className="min-w-0 text-xs">
+                      <div className="font-semibold text-[#142B4E] truncate max-w-[260px] sm:max-w-md">
+                        {mediaPickerPreview.original_name}
+                      </div>
+                      <div className="text-[11px] font-mono-tabular text-neutral-500 truncate max-w-[260px] sm:max-w-md">
+                        {mediaPickerPreview.url}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="media-picker-choose-btn"
+                    onClick={() => {
+                      const asset = mediaPickerPreview;
+                      if (!asset) return;
+                      if (
+                        mediaPickerTarget === 'tailoring' ||
+                        mediaPickerTarget === 'menu' ||
+                        mediaPickerTarget === 'hero'
+                      ) {
+                        mediaPickerCbRef.current?.(asset.url);
+                      } else if (
+                        typeof mediaPickerTarget === 'object' &&
+                        mediaPickerTarget?.type === 'gallery'
+                      ) {
+                        const targetIdx = mediaPickerTarget.index;
+                        setEditGallerySlots((prev) => {
+                          const next = [...prev];
+                          while (next.length <= targetIdx) next.push('');
+                          next[targetIdx] = asset.url;
+                          return next;
+                        });
+                      } else if (editingProduct) {
+                        setEditingProduct((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                primary_image:
+                                  mediaPickerTarget === 'primary'
+                                    ? asset.url
+                                    : prev.primary_image,
+                                secondary_image:
+                                  mediaPickerTarget === 'secondary'
+                                    ? asset.url
+                                    : prev.secondary_image,
+                              }
+                            : prev
+                        );
+                      } else if (creatingProduct) {
+                        setNewPrimaryImg(asset.url);
+                      }
+                      mediaPickerCbRef.current = null;
+                      setMediaPickerPreview(null);
+                      setMediaPickerTarget(null);
+                    }}
+                    className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-[0.16em] font-semibold inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Choose Image</span>
+                  </button>
+                </>
+              ) : (
+                <div className="w-full flex items-center justify-between text-xs text-neutral-500">
+                  <span>Click any image above to select it.</span>
+                  <span className="px-5 py-2 bg-neutral-200 text-neutral-500 uppercase tracking-wider font-medium">
+                    Choose Image
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

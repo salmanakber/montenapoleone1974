@@ -271,13 +271,37 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
                   {item.slot === 'mega_card' && (
                     <button
                       type="button"
-                      onClick={() =>
-                        onPickImage((url) =>
+                      onClick={() => {
+                        const targetId = item.id;
+                        const targetTitle = item.title_en;
+                        onPickImage((url) => {
+                          // Capture targetId so each row keeps its own image (never share across items)
                           setMenuItems((prev) =>
-                            prev.map((m) => (m.id === item.id ? { ...m, image_url: url } : m))
-                          )
-                        )
-                      }
+                            prev.map((m) => (m.id === targetId ? { ...m, image_url: url } : m))
+                          );
+                          // Persist image only for this item — partial PATCH won't clobber other fields
+                          void (async () => {
+                            try {
+                              const res = await fetch(`/api/admin/menu/items/${targetId}`, {
+                                method: 'PATCH',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  Authorization: `Bearer ${authToken}`,
+                                },
+                                body: JSON.stringify({ image_url: url }),
+                              });
+                              if (res.ok) {
+                                setFeedback(`Saved image for "${targetTitle}".`);
+                                onRefreshStorefront();
+                              } else {
+                                setFeedback('Could not save menu image.');
+                              }
+                            } catch {
+                              setFeedback('Could not save menu image.');
+                            }
+                          })();
+                        });
+                      }}
                       className="px-2.5 py-1 border border-[#142B4E]/30 text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
                     >
                       <ImageIcon className="w-3 h-3" />

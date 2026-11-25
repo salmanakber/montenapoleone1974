@@ -27,13 +27,25 @@ export const CUFF_SPECS: Record<
   },
 };
 
+/** Zone baseline (cm) used to subtly scale measurement marks when size changes. */
+const ZONE_BASE_CM: Record<TailoringZoneKey, number> = {
+  shirt_length: 80,
+  sleeve_length: 66,
+  waist: 100,
+  chest: 110,
+  bottom_hem: 108,
+  shoulder: 46,
+};
+
 export const TailoringZoneSketch: React.FC<{
   zone: TailoringZoneKey;
+  /** Optional JPG override (admin matrix). Storefront prefers live SVG + size cm. */
   customImageUrl?: string;
   sizeLabel?: string;
   cmValue?: number;
-}> = ({ zone, customImageUrl, sizeLabel, cmValue }) => {
-  if (customImageUrl && customImageUrl.trim().length > 0) {
+  preferSvg?: boolean;
+}> = ({ zone, customImageUrl, sizeLabel, cmValue, preferSvg = true }) => {
+  if (!preferSvg && customImageUrl && customImageUrl.trim().length > 0) {
     return (
       <div className="w-12 h-12 rounded bg-[#F0F0F0] border border-black/10 overflow-hidden relative shrink-0">
         <img
@@ -51,6 +63,11 @@ export const TailoringZoneSketch: React.FC<{
     );
   }
 
+  const scale =
+    cmValue && ZONE_BASE_CM[zone]
+      ? Math.max(0.82, Math.min(1.18, cmValue / ZONE_BASE_CM[zone]))
+      : 1;
+
   return (
     <div
       className="w-12 h-12 rounded bg-[#F0F0F0] border border-black/10 flex flex-col items-center justify-center relative shrink-0 overflow-hidden"
@@ -58,7 +75,8 @@ export const TailoringZoneSketch: React.FC<{
     >
       <svg
         viewBox="0 0 48 48"
-        className="w-10 h-10 text-neutral-500"
+        className="w-10 h-10 text-neutral-500 transition-transform duration-300"
+        style={{ transform: `scale(${0.92 + (scale - 1) * 0.35})` }}
         fill="none"
         stroke="currentColor"
         strokeWidth="1.25"
@@ -72,44 +90,44 @@ export const TailoringZoneSketch: React.FC<{
         />
         {zone === 'shirt_length' && (
           <g stroke="#142B4E" strokeWidth="1.6">
-            <line x1="24" y1="10" x2="24" y2="41" />
-            <polyline points="21.5,13 24,10 26.5,13" />
-            <polyline points="21.5,38 24,41 26.5,38" />
+            <line x1="24" y1={12 - 2 * scale} x2="24" y2={38 + 3 * scale} />
+            <polyline points={`21.5,${13 - 2 * scale} 24,${10 - 2 * scale} 26.5,${13 - 2 * scale}`} />
+            <polyline points={`21.5,${38 + 2 * scale} 24,${41 + 2 * scale} 26.5,${38 + 2 * scale}`} />
           </g>
         )}
         {zone === 'sleeve_length' && (
           <g stroke="#142B4E" strokeWidth="1.6">
-            <line x1="34" y1="11" x2="41" y2="24" />
+            <line x1="34" y1="11" x2={39 + 2 * scale} y2={22 + 2 * scale} />
             <circle cx="34" cy="11" r="1.4" fill="#142B4E" />
-            <polyline points="37.5,23 41,24 41.5,20.5" />
+            <polyline points={`${36.5 + scale},${21 + 2 * scale} ${39 + 2 * scale},${22 + 2 * scale} ${40 + 2 * scale},${19 + scale}`} />
           </g>
         )}
         {zone === 'waist' && (
           <g stroke="#1D63DC" strokeWidth="1.7">
-            <line x1="14" y1="29" x2="34" y2="29" />
-            <polyline points="16.5,26.5 14,29 16.5,31.5" />
-            <polyline points="31.5,26.5 34,29 31.5,31.5" />
+            <line x1={16 - 2 * scale} y1="29" x2={32 + 2 * scale} y2="29" />
+            <polyline points={`${18.5 - 2 * scale},26.5 ${16 - 2 * scale},29 ${18.5 - 2 * scale},31.5`} />
+            <polyline points={`${29.5 + 2 * scale},26.5 ${32 + 2 * scale},29 ${29.5 + 2 * scale},31.5`} />
           </g>
         )}
         {zone === 'chest' && (
           <g stroke="#1D63DC" strokeWidth="1.7">
-            <line x1="14" y1="20" x2="34" y2="20" />
-            <polyline points="16.5,17.5 14,20 16.5,22.5" />
-            <polyline points="31.5,17.5 34,20 31.5,22.5" />
+            <line x1={16 - 2 * scale} y1="20" x2={32 + 2 * scale} y2="20" />
+            <polyline points={`${18.5 - 2 * scale},17.5 ${16 - 2 * scale},20 ${18.5 - 2 * scale},22.5`} />
+            <polyline points={`${29.5 + 2 * scale},17.5 ${32 + 2 * scale},20 ${29.5 + 2 * scale},22.5`} />
           </g>
         )}
         {zone === 'bottom_hem' && (
           <g stroke="#1D63DC" strokeWidth="1.7">
-            <line x1="14" y1="39" x2="34" y2="39" />
-            <polyline points="16.5,36.5 14,39 16.5,41.5" />
-            <polyline points="31.5,36.5 34,39 31.5,41.5" />
+            <line x1={16 - 2 * scale} y1="39" x2={32 + 2 * scale} y2="39" />
+            <polyline points={`${18.5 - 2 * scale},36.5 ${16 - 2 * scale},39 ${18.5 - 2 * scale},41.5`} />
+            <polyline points={`${29.5 + 2 * scale},36.5 ${32 + 2 * scale},39 ${29.5 + 2 * scale},41.5`} />
           </g>
         )}
         {zone === 'shoulder' && (
           <g stroke="#1D63DC" strokeWidth="1.7">
-            <line x1="10" y1="12" x2="38" y2="12" />
-            <circle cx="10" cy="12" r="1.4" fill="#1D63DC" />
-            <circle cx="38" cy="12" r="1.4" fill="#1D63DC" />
+            <line x1={12 - 2 * scale} y1="12" x2={36 + 2 * scale} y2="12" />
+            <circle cx={12 - 2 * scale} cy="12" r="1.4" fill="#1D63DC" />
+            <circle cx={36 + 2 * scale} cy="12" r="1.4" fill="#1D63DC" />
           </g>
         )}
       </svg>

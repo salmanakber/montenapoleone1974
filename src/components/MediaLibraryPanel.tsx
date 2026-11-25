@@ -6,8 +6,13 @@ interface MediaLibraryPanelProps {
   authToken: string;
   media: MediaAsset[];
   pickerMode?: boolean;
+  /** When false, caller renders its own choose-image footer (avoids sticky overlap glitch). */
+  showStickyBar?: boolean;
   onRefresh: () => void;
   onSelectMedia?: (asset: MediaAsset) => void;
+  /** Currently selected asset id (controlled, optional). */
+  selectedAssetId?: number | null;
+  onSelectedAssetChange?: (asset: MediaAsset | null) => void;
 }
 
 const FOLDERS: Array<MediaAsset['folder'] | 'all'> = [
@@ -23,13 +28,18 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
   authToken,
   media,
   pickerMode = false,
+  showStickyBar = true,
   onRefresh,
   onSelectMedia,
+  selectedAssetId,
+  onSelectedAssetChange,
 }) => {
   const [selectedFolder, setSelectedFolder] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [uploadFolder, setUploadFolder] = useState<MediaAsset['folder']>('uploads');
-  const [selectedId, setSelectedId] = useState<number | null>(media[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<number | null>(
+    selectedAssetId ?? media[0]?.id ?? null
+  );
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
@@ -69,10 +79,15 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
     }
   }, [activeAsset?.id]);
 
+  React.useEffect(() => {
+    if (selectedAssetId != null) setSelectedId(selectedAssetId);
+  }, [selectedAssetId]);
+
   const selectAsset = (asset: MediaAsset) => {
     setSelectedId(asset.id);
     setEditAlt(asset.alt_text);
     setEditCaption(asset.caption);
+    onSelectedAssetChange?.(asset);
   };
 
   const toggleBulkId = (id: number) => {
@@ -527,10 +542,10 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
         </aside>
       </div>
 
-      {pickerMode && onSelectMedia && (
+      {pickerMode && onSelectMedia && showStickyBar && (
         <div
           data-testid="media-picker-sticky-bar"
-          className="sticky bottom-0 z-20 -mx-6 -mb-6 px-6 py-3.5 bg-white/95 backdrop-blur-md border-t border-neutral-200 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] flex flex-wrap items-center justify-between gap-3"
+          className="sticky bottom-0 z-20 mt-4 pt-3.5 pb-1 bg-white border-t border-neutral-200 flex flex-wrap items-center justify-between gap-3"
         >
           {activeAsset ? (
             <>

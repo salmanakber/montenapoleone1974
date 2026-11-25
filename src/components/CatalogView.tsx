@@ -107,12 +107,17 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   useEffect(() => {
     const el = carouselRef.current;
     if (!el) return;
-    const update = () => setCanScrollCarousel(el.scrollWidth > el.clientWidth + 4);
+    const update = () => {
+      // Only show arrows when category chips actually overflow the banner width
+      setCanScrollCarousel(el.scrollWidth > el.clientWidth + 2);
+    };
     update();
+    const raf = window.requestAnimationFrame(update);
     const ro = new ResizeObserver(update);
     ro.observe(el);
     window.addEventListener('resize', update);
     return () => {
+      window.cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', update);
     };
@@ -126,7 +131,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       <div className="flex flex-col items-center gap-2.5 mb-4">
         <div
           data-testid="b2c-category-carousel"
-          className="w-full lg:w-[70%] max-w-full mx-auto flex items-stretch bg-white border border-black/15 shadow-sm rounded-xl overflow-hidden"
+          className="w-full lg:w-[92%] max-w-[1480px] mx-auto flex items-stretch bg-white border border-black/15 shadow-sm rounded-xl overflow-hidden"
         >
           {canScrollCarousel && (
             <button

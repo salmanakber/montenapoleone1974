@@ -1172,8 +1172,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           <div className="flex items-center gap-3 min-w-0">
                             <TailoringZoneSketch
                               zone={zone.key}
-                              customImageUrl={zone.sketchUrl}
-                              sizeLabel={size}
+                              sizeLabel={`${fit} · ${size}`}
                               cmValue={adjustedCm}
                             />
                             <div className="min-w-0">

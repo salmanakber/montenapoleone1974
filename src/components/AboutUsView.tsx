@@ -86,20 +86,20 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
           transition={{ duration: 0.5, delay: 0.08 }}
           className="lg:col-span-6 grid grid-cols-2 gap-3"
         >
-          <div className="aspect-[3/4] bg-[#EFEFEF] overflow-hidden border border-black/5">
+          <div className="aspect-[4/5] sm:aspect-[3/4] bg-[#EFEFEF] overflow-hidden border border-black/5">
             <img
               src={ATELIER_MEDIA.atelierImg1}
               alt="Monte Napoleone 1974 Italian Shirting Craftsmanship"
               referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover object-top"
             />
           </div>
-          <div className="aspect-[3/4] bg-[#EFEFEF] overflow-hidden mt-7 border border-black/5">
+          <div className="aspect-[4/5] sm:aspect-[3/4] bg-[#EFEFEF] overflow-hidden mt-4 sm:mt-7 border border-black/5">
             <img
               src={ATELIER_MEDIA.atelierImg2}
               alt="Monte Napoleone 1974 Tailoring & Collar Precision"
               referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover object-top"
             />
           </div>
         </motion.div>
@@ -117,7 +117,7 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-            <div className="lg:col-span-7 relative bg-[#0B192E] border border-white/15 rounded-md overflow-hidden shadow-2xl aspect-[16/10] lg:aspect-auto lg:min-h-[440px]">
+            <div className="lg:col-span-7 relative bg-[#0B192E] border border-white/15 rounded-md overflow-hidden shadow-2xl aspect-video lg:aspect-auto lg:min-h-[480px]">
               <video
                 ref={videoRef}
                 data-testid="about-atelier-video"
@@ -127,7 +127,7 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
                 playsInline
                 preload="auto"
                 poster={ATELIER_MEDIA.atelierImg1}
-                className="w-full h-full object-cover pointer-events-none select-none"
+                className="w-full h-full object-cover object-center pointer-events-none select-none"
               >
                 <source src={ATELIER_MEDIA.atelierVideo} type="video/mp4" />
               </video>
@@ -137,23 +137,23 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
               </div>
             </div>
             <div className="lg:col-span-5 grid grid-cols-2 lg:grid-cols-1 gap-4">
-              <div className="relative overflow-hidden border border-white/15 aspect-[16/9] lg:aspect-auto lg:h-[220px]">
+              <div className="relative overflow-hidden border border-white/15 aspect-[4/3] lg:aspect-auto lg:min-h-[230px] bg-[#0B192E]">
                 <img
                   src={ATELIER_MEDIA.heritageImg}
                   alt="Monte Napoleone Heritage Collection Tailoring"
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover object-top"
                 />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-[11px] uppercase tracking-[0.14em] text-white">
                   Treviso · Since 1974
                 </div>
               </div>
-              <div className="relative overflow-hidden border border-white/15 aspect-[16/9] lg:aspect-auto lg:h-[220px]">
+              <div className="relative overflow-hidden border border-white/15 aspect-[4/3] lg:aspect-auto lg:min-h-[230px] bg-[#0B192E]">
                 <img
                   src="/src/assets/images/editorial_tailoring_guide_1795248294030.jpg"
                   alt="Two-Ply Fabric & Bespoke Pattern Development"
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover object-top"
                 />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-[11px] uppercase tracking-[0.14em] text-white">
                   100/2 Two-Ply & Linen
@@ -246,12 +246,12 @@ export const AboutUsView: React.FC<AboutUsViewProps> = ({
               </div>
 
               <div className={`lg:col-span-6 ${isReversed ? 'lg:order-1' : ''}`}>
-                <div className="aspect-[16/10] bg-[#EFEFEF] overflow-hidden border border-black/10">
+                <div className="aspect-[5/4] sm:aspect-[16/11] bg-[#EFEFEF] overflow-hidden border border-black/10">
                   <img
                     src={featureImg}
                     alt={feat.title}
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover object-top"
                   />
                 </div>
               </div>
