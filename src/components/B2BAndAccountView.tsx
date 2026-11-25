@@ -21,6 +21,7 @@ import {
 import type {
   AuthUser,
   B2BQuotationItem,
+  CartItem,
   CategoryRecord,
   CustomerAuthPublicConfig,
   OrderRecord,
@@ -42,6 +43,39 @@ import { ProductHoverCard } from './ProductHoverCard.tsx';
 
 const B2B_SIZES = ['S / 37', 'M / 39', 'L / 41', 'XL / 43', '2XL / 45', '3XL / 48'] as const;
 
+/** Rebuild portal enquiry batches from B2B cart lines (grouped by colour config). */
+function batchesFromB2BCart(items: CartItem[]): B2BQuotationItem[] {
+  const map = new Map<string, B2BQuotationItem>();
+  for (const item of items) {
+    const key =
+      item.b2bGroupKey ||
+      `${item.productId}|${item.tailoring.fit}|${item.tailoring.collar}|${item.tailoring.cuff}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.sizeBreakdown[item.tailoring.size] =
+        (existing.sizeBreakdown[item.tailoring.size] || 0) + item.quantity;
+      existing.totalPieces += item.quantity;
+    } else {
+      map.set(key, {
+        id: `cart-${key}-${Date.now()}`,
+        productId: item.productId,
+        sku: item.sku,
+        title: item.title,
+        image: item.image,
+        fit: item.tailoring.fit,
+        collar: item.tailoring.collar,
+        cuff: item.tailoring.cuff,
+        sizeBreakdown: { [item.tailoring.size]: item.quantity },
+        totalPieces: item.quantity,
+        notes: item.tailoring.monogram?.startsWith('B2B:')
+          ? item.tailoring.monogram.replace(/^B2B:\s*/, '')
+          : '',
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
 interface B2BViewProps {
   region: RegionConfig;
   copy: RegionCopy;
@@ -53,8 +87,12 @@ interface B2BViewProps {
   onClearInitialProduct?: () => void;
   /** Notify parent when B2B single-product page is open (for lifting agent / promo chrome). */
   onActiveProductChange?: (open: boolean) => void;
-  /** Push a saved colour batch into the shopping bag. */
+  /** Push a saved colour batch into the shopping bag (quietly during fabric picking). */
   onAddBatchToBag?: (product: Product, batch: B2BQuotationItem) => void;
+  /** Current B2B lines already in the shopping bag — seeds enquiry if needed. */
+  b2bCartItems?: CartItem[];
+  onClearB2BCart?: () => void;
+  onOpenB2BBag?: () => void;
   onSwitchToB2C?: (slug: string) => void;
   onToggleWishlist: (productId: number) => void;
   onOpenSizeGuide: () => void;
@@ -72,6 +110,9 @@ export const B2BView: React.FC<B2BViewProps> = ({
   onClearInitialProduct,
   onActiveProductChange,
   onAddBatchToBag,
+  b2bCartItems = [],
+  onClearB2BCart,
+  onOpenB2BBag,
   onSwitchToB2C,
   onToggleWishlist,
   onOpenSizeGuide,
@@ -282,6 +323,20 @@ export const B2BView: React.FC<B2BViewProps> = ({
     notes: supplierNotes.trim(),
   });
 
+  const openEnquiryForm = (nextBatches?: B2BQuotationItem[]) => {
+    setActiveProduct(null);
+    setShowCheckoutSummary(true);
+    if (nextBatches && nextBatches.length > 0) {
+      setBatches(nextBatches);
+      return;
+    }
+    // If portal batches are empty but bag already has B2B fabrics, seed the enquiry
+    setBatches((prev) => {
+      if (prev.length > 0) return prev;
+      return batchesFromB2BCart(b2bCartItems);
+    });
+  };
+
   const handleSaveAndAddAnother = () => {
     if (!activeProduct) return;
     if (moqSummary.totalPieces <= 0) {
@@ -292,30 +347,43 @@ export const B2BView: React.FC<B2BViewProps> = ({
     const product = activeProduct;
     const batch = buildCurrentBatch(product);
     setBatches((prev) => [...prev, batch]);
+    // Sync into bag for group-order checkout, but keep portal open for next fabric / enquiry
     onAddBatchToBag?.(product, batch);
     setLastSavedLabel(`${product.title} · ${batch.totalPieces} pcs`);
     setSupplierNotes('');
-    // Keep size/fit defaults for the next colour; return to catalog to pick it
     setActiveProduct(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDoneChoosing = () => {
+    let nextBatches = batches;
     if (activeProduct && moqSummary.totalPieces > 0) {
       const product = activeProduct;
       const batch = buildCurrentBatch(product);
-      setBatches((prev) => [...prev, batch]);
+      nextBatches = [...batches, batch];
+      setBatches(nextBatches);
       onAddBatchToBag?.(product, batch);
-      setActiveProduct(null);
+    } else if (batches.length === 0 && b2bCartItems.length > 0) {
+      nextBatches = batchesFromB2BCart(b2bCartItems);
     }
-    setShowCheckoutSummary(true);
+    openEnquiryForm(nextBatches);
   };
 
   const handleSubmitQuotation = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const payloadQty = Math.max(5, totalBatchPieces || 20);
+    const enquiryItems =
+      batches.length > 0 ? batches : batchesFromB2BCart(b2bCartItems);
+    if (enquiryItems.length === 0) {
+      setError('Choose at least one fabric colour before submitting the B2B enquiry.');
+      return;
+    }
+
+    const payloadQty = Math.max(
+      5,
+      enquiryItems.reduce((sum, b) => sum + b.totalPieces, 0) || 20
+    );
     const res = await fetch('/api/b2b/inquiries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -329,8 +397,8 @@ export const B2BView: React.FC<B2BViewProps> = ({
         embroideryRequested,
         notes:
           generalNotes.trim() ||
-          batches.map((b) => `${b.sku} (${b.totalPieces} pcs · ${b.fit})`).join(' | '),
-        items: batches,
+          enquiryItems.map((b) => `${b.sku} (${b.totalPieces} pcs · ${b.fit})`).join(' | '),
+        items: enquiryItems,
       }),
     });
     const data = await res.json();
@@ -340,6 +408,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
     }
     setSubmittedId({ id: data.id, qty: data.estimatedQty || payloadQty });
     setBatches([]);
+    setLastSavedLabel(null);
     setShowCheckoutSummary(false);
     setActiveProduct(null);
     setCompanyName('');
@@ -347,6 +416,8 @@ export const B2BView: React.FC<B2BViewProps> = ({
     setEmail('');
     setPhone('');
     setGeneralNotes('');
+    // Enquiry is the portal destination — clear matching B2B bag lines after success
+    onClearB2BCart?.();
   };
 
   const tierInfo = useMemo(
@@ -382,51 +453,81 @@ export const B2BView: React.FC<B2BViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {batches.length > 0 && (
+          {(batches.length > 0 || b2bCartItems.length > 0) && (
             <button
               type="button"
-              onClick={() => {
-                setActiveProduct(null);
-                setShowCheckoutSummary(true);
-              }}
+              onClick={() => openEnquiryForm()}
               className="px-4 py-2 bg-[#142B4E] text-white text-xs uppercase tracking-wider font-medium inline-flex items-center gap-2 cursor-pointer"
             >
               <Layers className="w-3.5 h-3.5" />
               <span>
-                Quotation Batch: {batches.length} colour(s) · {totalBatchPieces} pcs
+                {copy.checkout.b2bGroupLabel}:{' '}
+                {Math.max(batches.length, batchesFromB2BCart(b2bCartItems).length)} colour(s) ·{' '}
+                {Math.max(
+                  totalBatchPieces,
+                  b2bCartItems.reduce((s, i) => s + i.quantity, 0)
+                )}{' '}
+                {copy.checkout.pcsLabel}
               </span>
             </button>
           )}
           {!showCheckoutSummary && !activeProduct && (
             <button
               type="button"
-              onClick={() => setShowCheckoutSummary(true)}
+              onClick={() => openEnquiryForm()}
               className="px-4 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-xs uppercase tracking-wider transition-colors cursor-pointer"
             >
               Direct B2B Proposal Form
+            </button>
+          )}
+          {b2bCartItems.length > 0 && !showCheckoutSummary && (
+            <button
+              type="button"
+              onClick={() => onOpenB2BBag?.()}
+              className="px-4 py-2 border border-black/15 text-[#1A1A1A] hover:bg-neutral-100 text-xs uppercase tracking-wider transition-colors cursor-pointer inline-flex items-center gap-2"
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>
+                {copy.checkout.bagTitle} ({b2bCartItems.reduce((s, i) => s + i.quantity, 0)})
+              </span>
             </button>
           )}
         </div>
       </div>
 
       {lastSavedLabel && !activeProduct && !showCheckoutSummary && !submittedId && (
-        <div className="mb-4 px-4 py-3 border border-[#4F8A47]/35 bg-[#F3F8F3] text-xs text-[#2F5D34] flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-4 px-4 py-3 border border-[#4F8A47]/35 bg-[#F3F8F3] text-xs text-[#2F5D34] flex flex-wrap items-center justify-between gap-3">
           <span>
-            Saved to bag: <strong className="font-semibold">{lastSavedLabel}</strong>
-            {batches.length > 0 && (
-              <span className="text-neutral-600">
-                {' '}
-                · {batches.length} colour(s) in quotation · pick another colour below
-              </span>
-            )}
+            Colour saved for enquiry &amp; bag:{' '}
+            <strong className="font-semibold">{lastSavedLabel}</strong>
+            <span className="text-neutral-600">
+              {' '}
+              · pick another fabric below, or submit the B2B enquiry when ready
+            </span>
           </span>
-          <button
-            type="button"
-            onClick={() => setLastSavedLabel(null)}
-            className="text-[11px] uppercase tracking-wider underline cursor-pointer"
-          >
-            Dismiss
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openEnquiryForm()}
+              className="px-3 py-1.5 bg-[#142B4E] text-white text-[11px] uppercase tracking-wider font-semibold cursor-pointer"
+            >
+              {copy.b2b.doneChoosing}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenB2BBag?.()}
+              className="px-3 py-1.5 border border-[#142B4E]/40 text-[#142B4E] text-[11px] uppercase tracking-wider font-semibold cursor-pointer"
+            >
+              {copy.checkout.b2bGroupLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLastSavedLabel(null)}
+              className="text-[11px] uppercase tracking-wider underline cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 

@@ -760,7 +760,11 @@ export default function App() {
   };
 
   /** Push a B2B colour batch into the shopping bag (one line per size with qty > 0). */
-  const handleAddB2BBatchToBag = (product: Product, batch: B2BQuotationItem) => {
+  const handleAddB2BBatchToBag = (
+    product: Product,
+    batch: B2BQuotationItem,
+    opts?: { openDrawer?: boolean }
+  ) => {
     const sizeEntries = Object.entries(batch.sizeBreakdown).filter(([, qty]) => Number(qty) > 0);
     if (sizeEntries.length === 0) return;
     const b2bGroupKey = `${product.id}|${batch.fit}|${batch.collar}|${batch.cuff}`;
@@ -828,8 +832,15 @@ export default function App() {
       }
       return next;
     });
-    setDrawerState({ open: true, mode: 'bag' });
+    // Portal fabric-picking keeps the enquiry flow open; bag still syncs quietly.
+    if (opts?.openDrawer !== false) {
+      setDrawerState({ open: true, mode: 'bag' });
+    }
   };
+
+  const clearB2BCartItems = useCallback(() => {
+    setCart((prev) => prev.filter((item) => resolveCartChannel(item) !== 'b2b'));
+  }, []);
 
   const checkoutItems = useMemo(
     () => cart.filter((item) => resolveCartChannel(item) === checkoutChannel),
@@ -1032,7 +1043,12 @@ export default function App() {
             initialProductSlug={b2bProductSlug}
             onClearInitialProduct={() => setB2bProductSlug(null)}
             onActiveProductChange={setB2bPdpOpen}
-            onAddBatchToBag={handleAddB2BBatchToBag}
+            onAddBatchToBag={(product, batch) =>
+              handleAddB2BBatchToBag(product, batch, { openDrawer: false })
+            }
+            b2bCartItems={cart.filter((item) => resolveCartChannel(item) === 'b2b')}
+            onClearB2BCart={clearB2BCartItems}
+            onOpenB2BBag={() => setDrawerState({ open: true, mode: 'bag' })}
             onSwitchToB2C={(slug) => {
               setB2bProductSlug(null);
               setB2bPdpOpen(false);
