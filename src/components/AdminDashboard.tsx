@@ -274,6 +274,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newPriceIt, setNewPriceIt] = useState(159);
   const [newPriceVn, setNewPriceVn] = useState(4290000);
   const [newPrimaryImg, setNewPrimaryImg] = useState('/src/assets/images/shirt_white_signature_1795248293653.jpg');
+  const [newFits, setNewFits] = useState<string[]>(['Regular Fit', 'Slim Fit']);
+  const [newSizes, setNewSizes] = useState<string[]>([
+    '38 / S',
+    '39 / M',
+    '40 / M',
+    '41 / L',
+    '42 / L',
+    '43 / XL',
+  ]);
+  const [newStockQty, setNewStockQty] = useState(12);
+  const [newCreateBusy, setNewCreateBusy] = useState(false);
+  const [newCreateError, setNewCreateError] = useState<string | null>(null);
+
+  const CREATE_FIT_OPTIONS = ['Regular Fit', 'Slim Fit', 'Contemporary Fit'] as const;
+  const CREATE_SIZE_OPTIONS = [
+    '37 / XS',
+    '38 / S',
+    '39 / M',
+    '40 / M',
+    '41 / L',
+    '42 / L',
+    '43 / XL',
+    '44 / XXL',
+    '45 / 3XL',
+  ] as const;
 
   // New Staff Form
   const [staffName, setStaffName] = useState('');
@@ -913,37 +938,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authToken) return;
+    if (newFits.length === 0) {
+      setNewCreateError('Select at least one fit variation.');
+      return;
+    }
+    if (newSizes.length === 0) {
+      setNewCreateError('Select at least one size.');
+      return;
+    }
+    setNewCreateBusy(true);
+    setNewCreateError(null);
     const assignedCategories = newCategories.length > 0 ? newCategories : ['business'];
-    const res = await fetch('/api/admin/products', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({
-        sku: newSku,
-        category_slug: assignedCategories[0],
-        category_slugs: assignedCategories,
-        fabric_spec: newFabric,
-        is_featured: true,
-        preorder_allowed: true,
-        primary_image: newPrimaryImg,
-        secondary_image: newPrimaryImg,
-        localizations: {
-          en: { title: newTitleEn, price: newPriceEn, stock_qty: 12 },
-          no: { title: `${newTitleEn} (NO)`, price: newPriceNo, stock_qty: 10 },
-          it: { title: `${newTitleEn} (IT)`, price: newPriceIt, stock_qty: 15 },
-          vn: { title: `${newTitleEn} (VN)`, price: newPriceVn, stock_qty: 8 },
+    try {
+      const res = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
         },
-      }),
-    });
-    if (res.ok) {
+        body: JSON.stringify({
+          sku: newSku,
+          category_slug: assignedCategories[0],
+          category_slugs: assignedCategories,
+          fabric_spec: newFabric,
+          is_featured: true,
+          preorder_allowed: true,
+          primary_image: newPrimaryImg,
+          secondary_image: newPrimaryImg,
+          sizes: newSizes,
+          fits: newFits,
+          localizations: {
+            en: { title: newTitleEn, price: newPriceEn, stock_qty: newStockQty },
+            no: { title: `${newTitleEn} (NO)`, price: newPriceNo, stock_qty: newStockQty },
+            it: { title: `${newTitleEn} (IT)`, price: newPriceIt, stock_qty: newStockQty },
+            vn: { title: `${newTitleEn} (VN)`, price: newPriceVn, stock_qty: newStockQty },
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNewCreateError((data as { error?: string }).error || 'Could not create product.');
+        return;
+      }
       setCreatingProduct(false);
       setNewSku('');
       setNewTitleEn('');
       setNewCategories(['business']);
+      setNewFits(['Regular Fit', 'Slim Fit']);
+      setNewSizes(['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL']);
+      setNewStockQty(12);
+      setNewCreateError(null);
       loadAdminData();
       onRefreshStorefront();
+    } catch {
+      setNewCreateError('Network error creating product.');
+    } finally {
+      setNewCreateBusy(false);
     }
   };
 
@@ -1252,6 +1302,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const navTabs: Array<{ id: AdminTab; label: string; icon: React.ReactNode; visible: boolean }> = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" />, visible: true },
     {
+      id: 'reports',
+      label: 'Reports & Analytics',
+      icon: <BarChart3 className="w-4 h-4" />,
+      visible:
+        hasPermission(authUser, 'manage_orders') ||
+        hasPermission(authUser, 'manage_pricing') ||
+        hasPermission(authUser, 'manage_inventory'),
+    },
+    {
       id: 'products',
       label: 'Products & Bulk Editor',
       icon: <Layers className="w-4 h-4" />,
@@ -1334,15 +1393,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       icon: <Mail className="w-4 h-4" />,
       visible:
         hasPermission(authUser, 'manage_orders') || hasPermission(authUser, 'manage_settings'),
-    },
-    {
-      id: 'reports',
-      label: 'Reports & Analytics',
-      icon: <BarChart3 className="w-4 h-4" />,
-      visible:
-        hasPermission(authUser, 'manage_orders') ||
-        hasPermission(authUser, 'manage_pricing') ||
-        hasPermission(authUser, 'manage_inventory'),
     },
     {
       id: 'media',
@@ -4419,35 +4469,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* CREATE PRODUCT MODAL */}
       {creatingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setCreatingProduct(false)} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+          <div className="fixed inset-0 bg-black/55" onClick={() => !newCreateBusy && setCreatingProduct(false)} />
           <form
             onSubmit={handleCreateProduct}
-            className="relative w-full max-w-lg bg-white border border-black/15 shadow-2xl p-6 space-y-4 text-xs"
+            className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-white border border-black/15 shadow-2xl text-xs"
           >
-            <div className="flex items-center justify-between border-b border-black/10 pb-2">
-              <h2 className="text-sm font-semibold uppercase tracking-wider">Add New Shirt</h2>
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white px-5 sm:px-6 py-3.5">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[#142B4E]">
+                  Add New Shirt
+                </h2>
+                <p className="text-[11px] text-neutral-500 mt-0.5">
+                  Choose fits & sizes — variants are generated automatically for all regions.
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setCreatingProduct(false)}
-                className="p-1 text-neutral-500 cursor-pointer"
+                onClick={() => !newCreateBusy && setCreatingProduct(false)}
+                className="p-1.5 text-neutral-500 hover:bg-neutral-100 cursor-pointer"
+                aria-label="Close create product"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="grid grid-cols-1 gap-3">
-              <input
-                required
-                placeholder="SKU (e.g. MN-L50)"
-                value={newSku}
-                onChange={(e) => setNewSku(e.target.value)}
-                className="px-3 py-2 border border-neutral-300 font-mono-tabular"
-              />
-              <div className="border border-neutral-200 p-3 bg-[#FAFAFA] space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
-                  Assign Categories (Select multiple parent & child categories)
+
+            <div className="px-5 sm:px-6 py-5 space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] text-neutral-600 mb-1">SKU *</label>
+                  <input
+                    required
+                    placeholder="e.g. MN-L50"
+                    value={newSku}
+                    onChange={(e) => setNewSku(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                  />
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto">
+                <div>
+                  <label className="block text-[11px] text-neutral-600 mb-1">Default Stock / Variant</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={newStockQty}
+                    onChange={(e) => setNewStockQty(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-neutral-600 mb-1">Product Title (English) *</label>
+                <input
+                  required
+                  placeholder="e.g. White Signature Twill"
+                  value={newTitleEn}
+                  onChange={(e) => setNewTitleEn(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-neutral-600 mb-1">Fabric Spec *</label>
+                <input
+                  required
+                  placeholder="100% Italian 2-Ply Cotton"
+                  value={newFabric}
+                  onChange={(e) => setNewFabric(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+
+              <div className="border border-neutral-200 p-3.5 bg-[#FAFAFA] space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                  Categories
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto">
                   {(() => {
                     const usableCats = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
                     const parents = usableCats.filter((c) => !c.parent_id);
@@ -4478,7 +4575,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       return (
                         <label
                           key={item.slug}
-                          className={`flex items-center gap-1.5 px-2 py-1 border cursor-pointer ${
+                          className={`flex items-center gap-1.5 px-2 py-1.5 border cursor-pointer ${
                             checked
                               ? 'bg-[#142B4E] text-white border-[#142B4E]'
                               : 'bg-white text-neutral-700 border-neutral-300'
@@ -4502,75 +4599,192 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   })()}
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                      Fit Variations *
+                    </div>
+                    <span className="text-[10px] font-mono-tabular text-neutral-500">
+                      {newFits.length} selected
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CREATE_FIT_OPTIONS.map((fit) => {
+                      const checked = newFits.includes(fit);
+                      return (
+                        <button
+                          key={fit}
+                          type="button"
+                          onClick={() =>
+                            setNewFits((prev) =>
+                              checked ? prev.filter((f) => f !== fit) : [...prev, fit]
+                            )
+                          }
+                          className={`px-2.5 py-1.5 border text-[11px] cursor-pointer ${
+                            checked
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white text-neutral-700 border-neutral-300 hover:border-[#142B4E]'
+                          }`}
+                        >
+                          {fit}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="border border-[#142B4E]/15 bg-[#F8FAFC] p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                      Sizes *
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNewSizes([...CREATE_SIZE_OPTIONS])}
+                        className="text-[10px] text-[#142B4E] hover:underline cursor-pointer"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewSizes([])}
+                        className="text-[10px] text-neutral-500 hover:underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                      <span className="text-[10px] font-mono-tabular text-neutral-500">
+                        {newSizes.length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CREATE_SIZE_OPTIONS.map((size) => {
+                      const checked = newSizes.includes(size);
+                      return (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() =>
+                            setNewSizes((prev) =>
+                              checked ? prev.filter((s) => s !== size) : [...prev, size]
+                            )
+                          }
+                          className={`px-2 py-1.5 border font-mono-tabular text-[11px] cursor-pointer ${
+                            checked
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white text-neutral-700 border-neutral-300 hover:border-[#142B4E]'
+                          }`}
+                        >
+                          {size}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
+                Will create{' '}
+                <strong className="font-mono-tabular">
+                  {Math.max(0, newFits.length) * Math.max(0, newSizes.length)}
+                </strong>{' '}
+                SKU variants ({newFits.length || 0} fits × {newSizes.length || 0} sizes) across EN / NO / IT / VN.
+              </div>
+
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600 mb-2">
+                  Regional Base Prices
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[10px] text-neutral-500">USD</label>
+                    <input
+                      type="number"
+                      value={newPriceEn}
+                      onChange={(e) => setNewPriceEn(Number(e.target.value))}
+                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-neutral-500">NOK</label>
+                    <input
+                      type="number"
+                      value={newPriceNo}
+                      onChange={(e) => setNewPriceNo(Number(e.target.value))}
+                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-neutral-500">EUR</label>
+                    <input
+                      type="number"
+                      value={newPriceIt}
+                      onChange={(e) => setNewPriceIt(Number(e.target.value))}
+                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-neutral-500">VND</label>
+                    <input
+                      type="number"
+                      value={newPriceVn}
+                      onChange={(e) => setNewPriceVn(Number(e.target.value))}
+                      className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular outline-none focus:border-[#142B4E]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 border border-neutral-200 p-2.5 bg-[#FAFAFA]">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={newPrimaryImg}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="w-11 h-11 object-cover bg-[#E6E6E6] border border-neutral-200 shrink-0"
+                  />
+                  <span className="truncate text-neutral-600 font-mono-tabular text-[11px]">
+                    {newPrimaryImg}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMediaPickerTarget('primary')}
+                  className="text-[#142B4E] hover:underline shrink-0 cursor-pointer"
+                >
+                  Pick from Media
+                </button>
+              </div>
+
+              {newCreateError && (
+                <div className="px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-[11px]">
+                  {newCreateError}
+                </div>
+              )}
             </div>
-            <input
-              required
-              placeholder="Product Title (English)"
-              value={newTitleEn}
-              onChange={(e) => setNewTitleEn(e.target.value)}
-              className="w-full px-3 py-2 border border-neutral-300"
-            />
-            <input
-              required
-              placeholder="Fabric Spec"
-              value={newFabric}
-              onChange={(e) => setNewFabric(e.target.value)}
-              className="w-full px-3 py-2 border border-neutral-300"
-            />
-            <div className="grid grid-cols-4 gap-2">
-              <div>
-                <label className="text-[10px] text-neutral-500">USD</label>
-                <input
-                  type="number"
-                  value={newPriceEn}
-                  onChange={(e) => setNewPriceEn(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-neutral-500">NOK</label>
-                <input
-                  type="number"
-                  value={newPriceNo}
-                  onChange={(e) => setNewPriceNo(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-neutral-500">EUR</label>
-                <input
-                  type="number"
-                  value={newPriceIt}
-                  onChange={(e) => setNewPriceIt(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-neutral-500">VND</label>
-                <input
-                  type="number"
-                  value={newPriceVn}
-                  onChange={(e) => setNewPriceVn(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 border border-neutral-300 font-mono-tabular"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between border border-neutral-200 p-2">
-              <span className="truncate text-neutral-600">{newPrimaryImg}</span>
+
+            <div className="sticky bottom-0 border-t border-black/10 bg-white px-5 sm:px-6 py-3.5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setMediaPickerTarget('primary')}
-                className="text-[#142B4E] hover:underline shrink-0 ml-2 cursor-pointer"
+                disabled={newCreateBusy}
+                onClick={() => setCreatingProduct(false)}
+                className="px-4 py-2.5 border border-neutral-300 text-neutral-700 uppercase tracking-wider font-medium cursor-pointer hover:bg-neutral-50 disabled:opacity-60"
               >
-                Pick from Media
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={newCreateBusy}
+                className="px-5 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
+              >
+                {newCreateBusy
+                  ? 'Creating...'
+                  : `Create Shirt · ${newFits.length * newSizes.length || 0} Variants`}
               </button>
             </div>
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-[#142B4E] text-white uppercase tracking-wider font-medium cursor-pointer"
-            >
-              Create Multi-Region Shirt
-            </button>
           </form>
         </div>
       )}

@@ -47,7 +47,7 @@ interface GlobeArcDatum {
 interface GlobeRingDatum {
   lat: number;
   lng: number;
-  kind: 'visitor' | 'order';
+  kind: 'visitor' | 'order' | 'live';
 }
 
 interface SelectedGlobePopup {
@@ -107,6 +107,8 @@ const GlobeSceneContent: React.FC<{
   ringsData: GlobeRingDatum[];
   activeCountryNames: Set<string>;
   activeCountryCodes: Set<string>;
+  liveCountryCodes: Set<string>;
+  liveCountryNames: Set<string>;
   zoomTrigger: { seq: number; delta: number };
   paused: boolean;
   isSoftwareGl: boolean;
@@ -119,6 +121,8 @@ const GlobeSceneContent: React.FC<{
   ringsData,
   activeCountryNames,
   activeCountryCodes,
+  liveCountryCodes,
+  liveCountryNames,
   zoomTrigger,
   paused,
   isSoftwareGl,
@@ -166,21 +170,43 @@ const GlobeSceneContent: React.FC<{
     }
   });
 
+  const countryMatches = useCallback((code: string, name: string, codes: Set<string>, names: Set<string>) => {
+    if (codes.has(code)) return true;
+    if (names.has(name)) return true;
+    if (name === 'united states of america' && names.has('united states')) return true;
+    if (name === 'germany' && (codes.has('DE') || names.has('deutschland'))) return true;
+    if ((name === 'deutschland' || name === 'federal republic of germany') && codes.has('DE')) return true;
+    return false;
+  }, []);
+
   const resolvePolygonColor = useCallback(
     (feat: object) => {
       const f = feat as WorldCountryFeature;
       const code = (f.properties?.iso_a2 || '').toUpperCase();
       const name = (f.properties?.name || '').toLowerCase();
-      if (
-        activeCountryCodes.has(code) ||
-        activeCountryNames.has(name) ||
-        (name === 'united states of america' && activeCountryNames.has('united states'))
-      ) {
+      // Live visitors → vivid green country highlight
+      if (countryMatches(code, name, liveCountryCodes, liveCountryNames)) {
+        return '#4ADE80';
+      }
+      // Recent / historical session countries → soft blue
+      if (countryMatches(code, name, activeCountryCodes, activeCountryNames)) {
         return '#E0F2FE';
       }
       return '#FFFFFF';
     },
-    [activeCountryCodes, activeCountryNames]
+    [activeCountryCodes, activeCountryNames, liveCountryCodes, liveCountryNames, countryMatches]
+  );
+
+  const resolvePolygonAltitude = useCallback(
+    (feat: object) => {
+      const f = feat as WorldCountryFeature;
+      const code = (f.properties?.iso_a2 || '').toUpperCase();
+      const name = (f.properties?.name || '').toLowerCase();
+      if (countryMatches(code, name, liveCountryCodes, liveCountryNames)) return 0.018;
+      if (countryMatches(code, name, activeCountryCodes, activeCountryNames)) return 0.01;
+      return 0.006;
+    },
+    [activeCountryCodes, activeCountryNames, liveCountryCodes, liveCountryNames, countryMatches]
   );
 
   return (
@@ -199,40 +225,55 @@ const GlobeSceneContent: React.FC<{
         polygonsData={WORLD_COUNTRY_FEATURES}
         polygonGeoJsonGeometry={(d) => (d as WorldCountryFeature).geometry as any}
         polygonCapColor={resolvePolygonColor}
-        polygonSideColor={() => '#CBD5E1'}
-        polygonStrokeColor={() => '#B8C4D4'}
-        polygonAltitude={0.008}
+        polygonSideColor={(feat) => {
+          const f = feat as WorldCountryFeature;
+          const code = (f.properties?.iso_a2 || '').toUpperCase();
+          const name = (f.properties?.name || '').toLowerCase();
+          if (countryMatches(code, name, liveCountryCodes, liveCountryNames)) return '#16A34A';
+          return '#CBD5E1';
+        }}
+        polygonStrokeColor={(feat) => {
+          const f = feat as WorldCountryFeature;
+          const code = (f.properties?.iso_a2 || '').toUpperCase();
+          const name = (f.properties?.name || '').toLowerCase();
+          if (countryMatches(code, name, liveCountryCodes, liveCountryNames)) return '#15803D';
+          return '#B8C4D4';
+        }}
+        polygonAltitude={resolvePolygonAltitude}
         pointsData={pointsData}
         pointsMerge={false}
         pointLat={(d) => (d as GlobePointDatum).lat}
         pointLng={(d) => (d as GlobePointDatum).lng}
-        pointColor={(d) =>
-          (d as GlobePointDatum).kind === 'order' ? '#3B82F6' : '#0D9488'
-        }
+        pointColor={(d) => {
+          const item = d as GlobePointDatum;
+          if (item.kind === 'order') return '#3B82F6';
+          return item.isActive ? '#22C55E' : '#0D9488';
+        }}
         pointAltitude={(d) => {
           const item = d as GlobePointDatum;
           return item.kind === 'order'
             ? 0.048 + Math.min(0.055, item.orders * 0.012)
             : item.isActive
-            ? 0.032
+            ? 0.042
             : 0.016;
         }}
         pointRadius={(d) => {
           const item = d as GlobePointDatum;
           if (item.kind === 'order') return 0.92;
-          return item.isActive ? 0.84 : 0.56;
+          return item.isActive ? 1.05 : 0.56;
         }}
         ringsData={ringsData}
         ringLat={(d) => (d as GlobeRingDatum).lat}
         ringLng={(d) => (d as GlobeRingDatum).lng}
-        ringColor={(d: unknown) =>
-          (d as GlobeRingDatum).kind === 'order'
-            ? (t: number) => `rgba(59, 130, 246, ${1 - t})`
-            : (t: number) => `rgba(13, 148, 136, ${1 - t})`
-        }
-        ringMaxRadius={3.4}
-        ringPropagationSpeed={1.6}
-        ringRepeatPeriod={1800}
+        ringColor={(d: unknown) => {
+          const kind = (d as GlobeRingDatum).kind;
+          if (kind === 'order') return (t: number) => `rgba(59, 130, 246, ${1 - t})`;
+          if (kind === 'live') return (t: number) => `rgba(34, 197, 94, ${1 - t * 0.85})`;
+          return (t: number) => `rgba(13, 148, 136, ${1 - t})`;
+        }}
+        ringMaxRadius={4.8}
+        ringPropagationSpeed={2.1}
+        ringRepeatPeriod={1300}
         arcsData={arcsData}
         arcStartLat={(d) => (d as GlobeArcDatum).startLat}
         arcStartLng={(d) => (d as GlobeArcDatum).startLng}
@@ -334,12 +375,22 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
   };
 
   // Combine country metrics + live visitor session markers
-  const { pointsData, arcsData, ringsData, activeCountryCodes, activeCountryNames } = useMemo(() => {
+  const {
+    pointsData,
+    arcsData,
+    ringsData,
+    activeCountryCodes,
+    activeCountryNames,
+    liveCountryCodes,
+    liveCountryNames,
+  } = useMemo(() => {
     const pts: GlobePointDatum[] = [];
     const arcs: GlobeArcDatum[] = [];
     const rings: GlobeRingDatum[] = [];
     const codes = new Set<string>();
     const names = new Set<string>();
+    const liveCodes = new Set<string>();
+    const liveNames = new Set<string>();
 
     const orderCoordsByCc = new Map<string, { orders: number; revenue: number }>();
     for (const c of countries) {
@@ -354,6 +405,10 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
       const ccUpper = vc.country_code.toUpperCase();
       codes.add(ccUpper);
       names.add(vc.country.toLowerCase());
+      if (vc.active_count > 0) {
+        liveCodes.add(ccUpper);
+        liveNames.add(vc.country.toLowerCase());
+      }
       const matchingVisitors = visitors.filter(
         (v) => v.country_code.toUpperCase() === ccUpper
       );
@@ -378,6 +433,7 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
         isActive: vc.active_count > 0,
       });
       if (vc.active_count > 0) {
+        rings.push({ lat: vLat, lng: vLng, kind: 'live' });
         rings.push({ lat: vLat, lng: vLng, kind: 'visitor' });
       }
       if (Math.abs(vc.lat - TREVISO_HUB.lat) > 2 || Math.abs(vc.lng - TREVISO_HUB.lng) > 2) {
@@ -389,6 +445,30 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
           kind: 'visitor',
         });
       }
+    }
+
+    // Individual live session pins (city-level green pulse)
+    for (const v of visitors) {
+      if (!v.is_active || !Number.isFinite(v.lat) || !Number.isFinite(v.lng)) continue;
+      const ccUpper = String(v.country_code || '').toUpperCase();
+      if (ccUpper) liveCodes.add(ccUpper);
+      if (v.country) liveNames.add(String(v.country).toLowerCase());
+      pts.push({
+        id: `live-${v.session_id || v.id}`,
+        kind: 'visitor',
+        lat: v.lat,
+        lng: v.lng,
+        country: v.country,
+        countryCode: ccUpper,
+        city: v.city || v.country,
+        activeCount: 1,
+        totalCount: 1,
+        orders: 0,
+        revenueUsd: 0,
+        currentPath: v.current_path || '/',
+        isActive: true,
+      });
+      rings.push({ lat: v.lat, lng: v.lng, kind: 'live' });
     }
 
     // Order hub pins (offset slightly if exact same coordinates as a visitor pin)
@@ -410,7 +490,7 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
         orders: c.orders,
         revenueUsd: c.revenue_usd_equiv,
         currentPath: '',
-        isActive: true,
+        isActive: false,
       });
       rings.push({ lat: c.lat + 0.6, lng: c.lng + 0.8, kind: 'order' });
       if (c.region_code !== 'it') {
@@ -430,6 +510,8 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
       ringsData: rings,
       activeCountryCodes: codes,
       activeCountryNames: names,
+      liveCountryCodes: liveCodes,
+      liveCountryNames: liveNames,
     };
   }, [visitorCountries, visitors, countries]);
 
@@ -570,8 +652,15 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
           </div>
           <div className="flex items-center gap-4 mt-1.5 text-[11px] text-slate-700">
             <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-teal-500 ring-2 ring-teal-200" />
-              <span>Visitor ({metrics.visitorsRightNow} live)</span>
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
+              </span>
+              <span>Live visitor ({metrics.visitorsRightNow})</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm bg-green-400 border border-green-600" />
+              <span>Live country</span>
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-blue-200" />
@@ -610,6 +699,8 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
               ringsData={ringsData}
               activeCountryCodes={activeCountryCodes}
               activeCountryNames={activeCountryNames}
+              liveCountryCodes={liveCountryCodes}
+              liveCountryNames={liveCountryNames}
               zoomTrigger={zoomTrigger}
               paused={Boolean(selectedPopup || hoveredPointData)}
               isSoftwareGl={isSoftwareGl}
@@ -631,12 +722,16 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
                 <div className="flex items-center gap-1.5 font-semibold text-slate-900">
                   <span
                     className={`w-2.5 h-2.5 rounded-full ${
-                      activePopup.kind === 'order' ? 'bg-blue-500' : 'bg-teal-500'
+                      activePopup.kind === 'order'
+                        ? 'bg-blue-500'
+                        : activePopup.activeVisitors > 0
+                          ? 'bg-green-500'
+                          : 'bg-teal-500'
                     }`}
                   />
                   <span>{activePopup.title}</span>
                   {activePopup.activeVisitors > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded text-[9px] uppercase font-semibold">
+                    <span className="ml-1 px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded text-[9px] uppercase font-semibold">
                       Live Now
                     </span>
                   )}
@@ -693,21 +788,33 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
                   onClick={() => handleSelectVisitorCountry(vc)}
                   className={`px-2.5 py-1 rounded-full text-[11px] font-medium border shadow-xs inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
                     isSelected
-                      ? 'bg-teal-600 text-white border-teal-700'
-                      : 'bg-white text-slate-700 border-slate-200 hover:border-teal-500'
+                      ? vc.active_count > 0
+                        ? 'bg-green-600 text-white border-green-700'
+                        : 'bg-teal-600 text-white border-teal-700'
+                      : vc.active_count > 0
+                        ? 'bg-green-50 text-green-800 border-green-300 hover:border-green-500'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-teal-500'
                   }`}
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
                       vc.active_count > 0
                         ? isSelected
-                          ? 'bg-white'
-                          : 'bg-teal-500'
+                          ? 'bg-white animate-pulse'
+                          : 'bg-green-500 animate-pulse'
                         : 'bg-slate-300'
                     }`}
                   />
                   <span>{vc.country}</span>
-                  <span className={`font-mono-tabular text-[10px] ${isSelected ? 'text-teal-100' : 'text-slate-400'}`}>
+                  <span
+                    className={`font-mono-tabular text-[10px] ${
+                      isSelected
+                        ? 'text-white/80'
+                        : vc.active_count > 0
+                          ? 'text-green-700'
+                          : 'text-slate-400'
+                    }`}
+                  >
                     {vc.active_count} live
                   </span>
                 </button>

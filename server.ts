@@ -2556,6 +2556,14 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
   const fabricSpec = String(b.fabric_spec || '100% Italian Cotton');
   const primaryImage = String(b.primary_image || '/src/assets/images/shirt_white_signature_1795248293653.jpg');
   const secondaryImage = String(b.secondary_image || primaryImage);
+  const sizes =
+    Array.isArray(b.sizes) && b.sizes.length > 0
+      ? b.sizes.map((s: unknown) => String(s).trim()).filter(Boolean)
+      : ['37 / XS', '38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL', '44 / XXL'];
+  const fits =
+    Array.isArray(b.fits) && b.fits.length > 0
+      ? b.fits.map((f: unknown) => String(f).trim()).filter(Boolean)
+      : ['Regular Fit', 'Slim Fit'];
 
   if (!sku || !slug) {
     res.status(400).json({ error: 'SKU and slug are required.' });
@@ -2586,7 +2594,7 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
           JSON.stringify([primaryImage, secondaryImage]),
           JSON.stringify(['Spread', 'Semi Spread', 'Button Down', 'Cutaway']),
           JSON.stringify(['Angle', 'Modern', 'Rounded', 'Single French']),
-          JSON.stringify(['37 / XS', '38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL', '44 / XXL'])
+          JSON.stringify(sizes)
         );
 
       const productId = Number(info.lastInsertRowid);
@@ -2616,14 +2624,59 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
           String(l.seo_keywords || '')
         );
       }
+
+      // Generate fit × size variant matrix for the new shirt
+      const insertVariant = db.prepare(
+        `INSERT INTO product_variants (
+          product_id, fit, size_label, sku_variant, price_en, price_no, price_it, price_vn,
+          stock_en, stock_no, stock_it, stock_vn, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(product_id, fit, size_label) DO NOTHING`
+      );
+      const stockDefault = Math.max(
+        0,
+        Number(locs.en?.stock_qty ?? locs.no?.stock_qty ?? 10)
+      );
+      const priceEn = Number(locs.en?.price ?? 175);
+      const priceNo = Number(locs.no?.price ?? 1599);
+      const priceIt = Number(locs.it?.price ?? 159);
+      const priceVn = Number(locs.vn?.price ?? 4290000);
+
+      for (const fit of fits) {
+        const fitCode = fit.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 5) || 'REG';
+        for (const sizeLabel of sizes) {
+          const num = (sizeLabel.match(/\d{2}/) || [sizeLabel.replace(/[^A-Za-z0-9]+/g, '').toUpperCase() || '40'])[0];
+          const skuVariant = `${sku}-${fitCode}-${num}`;
+          insertVariant.run(
+            productId,
+            fit,
+            sizeLabel,
+            skuVariant,
+            priceEn,
+            priceNo,
+            priceIt,
+            priceVn,
+            stockDefault,
+            stockDefault,
+            stockDefault,
+            stockDefault
+          );
+        }
+      }
+
       return productId;
     });
 
     const id = tx();
     if (req.authUser) {
-      logAudit(req.authUser, 'PRODUCT_CREATED', sku, `Created product #${id} (${categorySlugs.join(', ')})`);
+      logAudit(
+        req.authUser,
+        'PRODUCT_CREATED',
+        sku,
+        `Created product #${id} (${categorySlugs.join(', ')}) · ${fits.length} fits · ${sizes.length} sizes`
+      );
     }
-    res.status(201).json({ id });
+    res.status(201).json({ id, fits, sizes });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create product' });
   }
@@ -3280,9 +3333,13 @@ app.delete('/api/admin/media/:id', requirePermission('manage_media'), (req: Auth
 
   // Only remove physical file if it lives inside UPLOADS_DIR (never delete seeded assets in src/assets)
   if (String(existing.url).startsWith('/uploads/')) {
-    const resolved = path.resolve(UPLOADS_DIR, String(existing.filename));
-    if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
-      fs.unlinkSync(resolved);
+    try {
+      const resolved = path.resolve(UPLOADS_DIR, String(existing.filename));
+      if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
+        fs.unlinkSync(resolved);
+      }
+    } catch (err) {
+      console.warn('[media-delete] file unlink failed', err instanceof Error ? err.message : err);
     }
   }
 
@@ -3294,9 +3351,14 @@ app.delete('/api/admin/media/:id', requirePermission('manage_media'), (req: Auth
 });
 
 app.post('/api/admin/media/bulk-delete', requirePermission('manage_media'), (req: AuthedRequest, res) => {
-  const mediaIds = Array.isArray(req.body?.mediaIds)
-    ? req.body.mediaIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
-    : [];
+  const rawIds = Array.isArray(req.body?.mediaIds)
+    ? req.body.mediaIds
+    : Array.isArray(req.body?.ids)
+      ? req.body.ids
+      : [];
+  const mediaIds = rawIds
+    .map((x: unknown) => Number(x))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
 
   if (mediaIds.length === 0) {
     res.status(400).json({ error: 'Select at least one media asset to delete.' });
@@ -3309,9 +3371,13 @@ app.post('/api/admin/media/bulk-delete', requirePermission('manage_media'), (req
       const existing = db.prepare('SELECT * FROM media WHERE id = ?').get(id) as Record<string, unknown> | undefined;
       if (!existing) continue;
       if (String(existing.url).startsWith('/uploads/')) {
-        const resolved = path.resolve(UPLOADS_DIR, String(existing.filename));
-        if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
-          fs.unlinkSync(resolved);
+        try {
+          const resolved = path.resolve(UPLOADS_DIR, String(existing.filename));
+          if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
+            fs.unlinkSync(resolved);
+          }
+        } catch {
+          // Continue deleting DB row even if file is missing / unreadable
         }
       }
       const info = db.prepare('DELETE FROM media WHERE id = ?').run(id);

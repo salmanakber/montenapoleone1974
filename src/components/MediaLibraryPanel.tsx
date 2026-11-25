@@ -83,6 +83,9 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
 
   const handleBulkDeleteMedia = async () => {
     if (selectedIds.length === 0 || bulkDeleting) return;
+    if (!window.confirm(`Delete ${selectedIds.length} selected media file(s)? This cannot be undone.`)) {
+      return;
+    }
     setBulkDeleting(true);
     setError(null);
     setBulkFeedback(null);
@@ -93,7 +96,7 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ ids: selectedIds }),
+        body: JSON.stringify({ mediaIds: selectedIds, ids: selectedIds }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -170,14 +173,27 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
   };
 
   const handleDelete = async (id: number) => {
-    const res = await fetch(`/api/admin/media/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    if (res.ok) {
+    const asset = media.find((m) => m.id === id);
+    const label = asset?.original_name || `media #${id}`;
+    if (!window.confirm(`Delete “${label}”? This cannot be undone.`)) return;
+    setError(null);
+    setBulkFeedback(null);
+    try {
+      const res = await fetch(`/api/admin/media/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError((data as { error?: string }).error || 'Could not delete this media file.');
+        return;
+      }
       if (selectedId === id) setSelectedId(null);
       setSelectedIds((prev) => prev.filter((x) => x !== id));
+      setBulkFeedback(`Deleted ${label}`);
       onRefresh();
+    } catch {
+      setError('Network error deleting media.');
     }
   };
 
