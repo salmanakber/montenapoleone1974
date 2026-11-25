@@ -154,8 +154,6 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const collarSectionRef = useRef<HTMLDivElement>(null);
   const cuffSectionRef = useRef<HTMLDivElement>(null);
   const tailoringSectionRef = useRef<HTMLDivElement>(null);
-  const reviewsSectionRef = useRef<HTMLElement>(null);
-
   useEffect(() => {
     const onScroll = () => setShowStickyBar(window.scrollY > 560);
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -251,6 +249,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [fitFeedback, setFitFeedback] = useState<'runs_small' | 'true_to_size' | 'runs_large'>('true_to_size');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewMessage, setReviewMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [reviewsModalOpen, setReviewsModalOpen] = useState(false);
 
   // PhotoSwipe-style Full-Screen Lightbox State
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -296,6 +295,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       .then((data: ProductReviewsResponse | null) => {
         if (!cancelled && data && Array.isArray(data.reviews)) {
           setReviewsData(data);
+          if (data.viewer?.canReview || reviewToken) {
+            setReviewsModalOpen(true);
+          }
         }
       })
       .catch(() => {});
@@ -303,6 +305,20 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       cancelled = true;
     };
   }, [product.slug, authToken, reviewToken]);
+
+  useEffect(() => {
+    if (!reviewsModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setReviewsModalOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [reviewsModalOpen]);
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -741,21 +757,39 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 {product.title}
               </h1>
               <p className="text-xs text-neutral-500 mt-0.5">{product.fabric_spec}</p>
-              {reviewsData.reviewCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => scrollToSection(reviewsSectionRef)}
-                  className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-[#142B4E] hover:underline cursor-pointer"
-                >
-                  <span className="inline-flex items-center text-amber-500">
-                    <Star className="w-3.5 h-3.5 fill-amber-400" />
-                  </span>
-                  <span className="font-mono-tabular font-semibold">{reviewsData.averageRating.toFixed(1)}</span>
-                  <span className="text-neutral-500">
-                    ({reviewsData.reviewCount} verified {reviewsData.reviewCount === 1 ? 'review' : 'reviews'})
-                  </span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setReviewsModalOpen(true)}
+                data-testid="pdp-reviews-trigger"
+                className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[#142B4E] hover:text-[#0f213d] cursor-pointer group"
+                aria-label="Open customer reviews"
+              >
+                <span className="inline-flex items-center gap-0.5 text-amber-500">
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Star
+                      key={s}
+                      className={`w-3.5 h-3.5 ${
+                        reviewsData.reviewCount > 0 && s <= Math.round(reviewsData.averageRating)
+                          ? 'fill-amber-400 text-amber-500'
+                          : 'text-neutral-300'
+                      }`}
+                    />
+                  ))}
+                </span>
+                {reviewsData.reviewCount > 0 ? (
+                  <>
+                    <span className="font-mono-tabular font-semibold">
+                      {reviewsData.averageRating.toFixed(1)}
+                    </span>
+                    <span className="text-neutral-500 group-hover:underline">
+                      ({reviewsData.reviewCount} verified{' '}
+                      {reviewsData.reviewCount === 1 ? 'review' : 'reviews'})
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-neutral-500 group-hover:underline">Customer reviews</span>
+                )}
+              </button>
             </div>
             <button
               type="button"
@@ -1263,201 +1297,262 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Verified Purchaser Reviews Section (Form hidden from non-buyers) */}
-      <section
-        ref={reviewsSectionRef}
-        id="pdp-reviews"
-        data-testid="pdp-reviews-section"
-        className="mt-10 pt-8 border-t border-black/10 px-4 md:px-6 max-w-5xl"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
-          <div>
-            <h2 className="text-sm font-medium uppercase tracking-[0.12em] text-[#1A1A1A] flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-[#142B4E]" />
-              <span>Verified Customer Reviews</span>
-            </h2>
-            <p className="text-xs text-neutral-500 mt-1">
-              Every rating is linked to a confirmed shirt order (one review per customer per product).
-            </p>
-          </div>
-          {reviewsData.reviewCount > 0 && (
-            <div className="flex items-center gap-2 px-3.5 py-2 bg-[#FAFAFA] border border-black/10">
-              <div className="flex items-center gap-0.5 text-amber-500">
-                {[1, 2, 3, 4, 5].map((s) => (
-                  <Star
-                    key={s}
-                    className={`w-3.5 h-3.5 ${
-                      s <= Math.round(reviewsData.averageRating)
-                        ? 'fill-amber-400 text-amber-500'
-                        : 'text-neutral-300'
-                    }`}
-                  />
-                ))}
-              </div>
-              <span className="text-xs font-mono-tabular font-semibold text-[#142B4E]">
-                {reviewsData.averageRating.toFixed(1)} / 5.0
-              </span>
-              <span className="text-xs text-neutral-500">
-                ({reviewsData.reviewCount})
-              </span>
-            </div>
-          )}
-        </div>
-
-        {reviewMessage && (
-          <div
-            className={`mb-4 p-3 text-xs border ${
-              reviewMessage.type === 'ok'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : 'bg-red-50 border-red-200 text-red-700'
-            }`}
+      {/* Verified reviews live in a modal — stars under the title open it */}
+      {reviewsModalOpen && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pdp-reviews-modal-title"
+          data-testid="pdp-reviews-modal"
+        >
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-[#0B1526]/55 backdrop-blur-[3px]"
+            onClick={() => setReviewsModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 28, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+            className="relative w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] overflow-hidden bg-[#FBFBF9] sm:border border-black/10 shadow-2xl flex flex-col"
           >
-            {reviewMessage.text}
-          </div>
-        )}
-
-        {/* STRICTLY RENDER REVIEW FORM ONLY FOR VERIFIED PURCHASERS WHO HAVEN'T REVIEWED YET */}
-        {reviewsData.viewer.canReview ? (
-          <form
-            onSubmit={handleSubmitReview}
-            data-testid="verified-review-form"
-            className="mb-6 border border-[#142B4E]/25 bg-[#F8FAFC] p-5 space-y-4"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/10 pb-3">
-              <div className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
-                Rate Your Purchased Shirt
-              </div>
-              <span className="text-[11px] font-mono-tabular text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5">
-                Verified Order {reviewsData.viewer.orderNumber || ''}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-6">
-              <div>
-                <div className="text-[11px] text-neutral-600 mb-1">Star Rating *</div>
-                <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setRatingInput(star)}
-                      aria-label={`Rate ${star} stars`}
-                      className="p-1 cursor-pointer"
-                    >
-                      <Star
-                        className={`w-5 h-5 ${
-                          star <= ratingInput ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
-                        }`}
-                      />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="text-[11px] text-neutral-600 mb-1">How does this fit?</div>
-                <div className="flex items-center gap-1.5 text-[11px]">
-                  {(
-                    [
-                      ['runs_small', 'Runs Small'],
-                      ['true_to_size', 'True to Size'],
-                      ['runs_large', 'Runs Large'],
-                    ] as const
-                  ).map(([val, lbl]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setFitFeedback(val)}
-                      className={`px-2.5 py-1 border cursor-pointer ${
-                        fitFeedback === val
-                          ? 'bg-[#142B4E] text-white border-[#142B4E]'
-                          : 'bg-white text-neutral-700 border-black/15'
-                      }`}
-                    >
-                      {lbl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <input
-              type="text"
-              value={reviewTitle}
-              onChange={(e) => setReviewTitle(e.target.value)}
-              placeholder="Headline (e.g. Effortless drape and breathable linen)"
-              maxLength={140}
-              className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
-            />
-
-            <textarea
-              required
-              minLength={5}
-              rows={3}
-              value={reviewComment}
-              onChange={(e) => setReviewComment(e.target.value)}
-              placeholder="Share your experience with fabric feel, collar structure, and sleeve fit..."
-              className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
-            />
-
-            <button
-              type="submit"
-              disabled={reviewSubmitting}
-              className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
-            >
-              {reviewSubmitting ? 'Publishing Review...' : 'Submit Verified Review'}
-            </button>
-          </form>
-        ) : (
-          <div className="mb-5 px-4 py-3 bg-[#FAFAFA] border border-black/10 text-[11px] text-neutral-600">
-            {reviewsData.viewer.alreadyReviewed
-              ? 'Thank you — you have already submitted your verified review for this shirt (limit one review per customer per product).'
-              : 'Review submission is reserved exclusively for verified buyers via the rating link emailed after purchase or your signed-in order history.'}
-          </div>
-        )}
-
-        {reviewsData.reviews.length === 0 ? (
-          <div className="text-xs text-neutral-500 py-4">
-            No customer reviews yet for this shirt.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {reviewsData.reviews.map((rev) => (
-              <article key={rev.id} className="border border-black/10 bg-white p-4 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-0.5 text-amber-500">
-                    {[1, 2, 3, 4, 5].map((s) => (
-                      <Star
-                        key={s}
-                        className={`w-3.5 h-3.5 ${
-                          s <= rev.rating ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
-                        }`}
-                      />
-                    ))}
+            <div className="relative shrink-0 px-5 sm:px-7 pt-6 pb-5 border-b border-black/8 bg-gradient-to-br from-[#142B4E] via-[#1a3a66] to-[#0f213d] text-white overflow-hidden">
+              <div
+                className="pointer-events-none absolute inset-0 opacity-[0.12]"
+                style={{
+                  backgroundImage:
+                    'radial-gradient(circle at 18% 20%, #fff 0.6px, transparent 0.7px), radial-gradient(circle at 82% 70%, #fff 0.6px, transparent 0.7px)',
+                  backgroundSize: '18px 18px',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setReviewsModalOpen(false)}
+                aria-label="Close reviews"
+                className="absolute top-3 right-3 p-2 text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="relative flex items-start gap-4">
+                <img
+                  src={product.primary_image}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="w-14 h-14 object-cover bg-white/10 border border-white/15 shrink-0"
+                />
+                <div className="min-w-0 pt-0.5">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-white/65 mb-1 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    Verified Customer Reviews
                   </div>
-                  <span className="text-[10px] font-mono-tabular px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Verified Buyer
-                  </span>
+                  <h2
+                    id="pdp-reviews-modal-title"
+                    className="text-base sm:text-lg font-medium uppercase tracking-wide truncate"
+                  >
+                    {product.title}
+                  </h2>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-amber-300">
+                      {[1, 2, 3, 4, 5].map((s) => (
+                        <Star
+                          key={s}
+                          className={`w-3.5 h-3.5 ${
+                            reviewsData.reviewCount > 0 && s <= Math.round(reviewsData.averageRating)
+                              ? 'fill-amber-300 text-amber-300'
+                              : 'text-white/30'
+                          }`}
+                        />
+                      ))}
+                    </span>
+                    {reviewsData.reviewCount > 0 ? (
+                      <span className="text-xs font-mono-tabular text-white/90">
+                        {reviewsData.averageRating.toFixed(1)} / 5.0 · {reviewsData.reviewCount}{' '}
+                        {reviewsData.reviewCount === 1 ? 'review' : 'reviews'}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-white/70">No ratings yet</span>
+                    )}
+                  </div>
                 </div>
-                {rev.title && <h3 className="text-xs font-semibold text-[#1A1A1A]">{rev.title}</h3>}
-                <p className="text-xs text-neutral-600 leading-relaxed">{rev.comment}</p>
-                <div className="pt-1 flex items-center justify-between text-[11px] text-neutral-400">
-                  <span>{rev.customer_name}</span>
-                  <span>
-                    {rev.fit_feedback === 'runs_small'
-                      ? 'Fit: Runs Small'
-                      : rev.fit_feedback === 'runs_large'
-                      ? 'Fit: Runs Large'
-                      : 'Fit: True to Size'}
-                    {' · '}
-                    {rev.created_at.slice(0, 10)}
-                  </span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-5 space-y-5">
+              {reviewMessage && (
+                <div
+                  className={`p-3 text-xs border ${
+                    reviewMessage.type === 'ok'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-red-50 border-red-200 text-red-700'
+                  }`}
+                >
+                  {reviewMessage.text}
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+              )}
+
+              {reviewsData.viewer.canReview ? (
+                <form
+                  onSubmit={handleSubmitReview}
+                  data-testid="verified-review-form"
+                  className="border border-[#142B4E]/20 bg-white p-4 sm:p-5 space-y-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/8 pb-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
+                      Rate Your Purchased Shirt
+                    </div>
+                    <span className="text-[11px] font-mono-tabular text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5">
+                      Verified Order {reviewsData.viewer.orderNumber || ''}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-6">
+                    <div>
+                      <div className="text-[11px] text-neutral-600 mb-1">Star Rating *</div>
+                      <div className="flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => setRatingInput(star)}
+                            aria-label={`Rate ${star} stars`}
+                            className="p-1 cursor-pointer"
+                          >
+                            <Star
+                              className={`w-5 h-5 ${
+                                star <= ratingInput
+                                  ? 'fill-amber-400 text-amber-500'
+                                  : 'text-neutral-300'
+                              }`}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] text-neutral-600 mb-1">How does this fit?</div>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        {(
+                          [
+                            ['runs_small', 'Runs Small'],
+                            ['true_to_size', 'True to Size'],
+                            ['runs_large', 'Runs Large'],
+                          ] as const
+                        ).map(([val, lbl]) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setFitFeedback(val)}
+                            className={`px-2.5 py-1 border cursor-pointer ${
+                              fitFeedback === val
+                                ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                                : 'bg-white text-neutral-700 border-black/15'
+                            }`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={reviewTitle}
+                    onChange={(e) => setReviewTitle(e.target.value)}
+                    placeholder="Headline (e.g. Effortless drape and breathable linen)"
+                    maxLength={140}
+                    className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
+                  />
+
+                  <textarea
+                    required
+                    minLength={5}
+                    rows={3}
+                    value={reviewComment}
+                    onChange={(e) => setReviewComment(e.target.value)}
+                    placeholder="Share your experience with fabric feel, collar structure, and sleeve fit..."
+                    className="w-full px-3 py-2 text-xs border border-black/15 bg-white outline-none focus:border-[#142B4E]"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={reviewSubmitting}
+                    className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer disabled:opacity-60"
+                  >
+                    {reviewSubmitting ? 'Publishing Review...' : 'Submit Verified Review'}
+                  </button>
+                </form>
+              ) : (
+                <div className="px-4 py-3 bg-white border border-black/8 text-[11px] text-neutral-600">
+                  {reviewsData.viewer.alreadyReviewed
+                    ? 'Thank you — you have already submitted your verified review for this shirt (limit one review per customer per product).'
+                    : 'Every rating is linked to a confirmed order. Verified buyers can review via the post-purchase email link or signed-in order history.'}
+                </div>
+              )}
+
+              {reviewsData.reviews.length === 0 ? (
+                <div className="text-center py-10 px-4">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#142B4E]/8 text-[#142B4E] mb-3">
+                    <Star className="w-5 h-5" />
+                  </div>
+                  <p className="text-sm text-[#1A1A1A] font-medium">No customer reviews yet</p>
+                  <p className="text-xs text-neutral-500 mt-1 max-w-sm mx-auto">
+                    Be among the first verified purchasers to share fit and fabric notes for this shirt.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reviewsData.reviews.map((rev, idx) => (
+                    <motion.article
+                      key={rev.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(idx * 0.04, 0.24) }}
+                      className="border border-black/8 bg-white p-4 space-y-2 shadow-[0_1px_0_rgba(0,0,0,0.03)]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-0.5 text-amber-500">
+                          {[1, 2, 3, 4, 5].map((s) => (
+                            <Star
+                              key={s}
+                              className={`w-3.5 h-3.5 ${
+                                s <= rev.rating ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-[10px] font-mono-tabular px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Verified Buyer
+                        </span>
+                      </div>
+                      {rev.title && (
+                        <h3 className="text-xs font-semibold text-[#1A1A1A]">{rev.title}</h3>
+                      )}
+                      <p className="text-xs text-neutral-600 leading-relaxed">{rev.comment}</p>
+                      <div className="pt-1 flex items-center justify-between text-[11px] text-neutral-400">
+                        <span>{rev.customer_name}</span>
+                        <span>
+                          {rev.fit_feedback === 'runs_small'
+                            ? 'Fit: Runs Small'
+                            : rev.fit_feedback === 'runs_large'
+                              ? 'Fit: Runs Large'
+                              : 'Fit: True to Size'}
+                          {' · '}
+                          {rev.created_at.slice(0, 10)}
+                        </span>
+                      </div>
+                    </motion.article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Recommendations Row Using Hover Scrubber Cards */}
       {recommendations.length > 0 && (

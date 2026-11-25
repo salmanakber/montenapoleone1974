@@ -95,6 +95,10 @@ export const FirstOrderPopup: React.FC<FirstOrderPopupProps> = ({
       const code = String(data.discountCode || promoRules.discountCode || 'MONTE10');
       try {
         window.localStorage?.setItem(PROMO_CLAIMED_STORAGE_KEY, '1');
+        const normalized = email.trim().toLowerCase();
+        if (normalized.includes('@')) {
+          window.localStorage?.setItem('mn_cart_email', normalized);
+        }
       } catch {
         // ignore
       }

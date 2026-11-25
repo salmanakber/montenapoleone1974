@@ -39,6 +39,14 @@ export const Footer: React.FC<FooterProps> = ({
       });
       const data = await res.json();
       if (res.ok) {
+        try {
+          const normalized = email.trim().toLowerCase();
+          if (normalized.includes('@')) {
+            window.localStorage.setItem('mn_cart_email', normalized);
+          }
+        } catch {
+          // ignore
+        }
         if (data.alreadyClaimedOrUsed) {
           setStatusMessage('First-order offer has already been used for this email.');
           onPromoCodeAlreadyUsed?.();

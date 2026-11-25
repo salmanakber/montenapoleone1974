@@ -153,7 +153,16 @@ export default function App() {
   });
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const raw = window.localStorage.getItem('mn_cart_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as CartItem[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [wishlistIds, setWishlistIds] = useState<number[]>([]);
   const [drawerState, setDrawerState] = useState<{ open: boolean; mode: 'bag' | 'wishlist' }>({
     open: false,
@@ -165,6 +174,19 @@ export default function App() {
   // Auth token strictly in React memory (never localStorage)
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+
+  const getVisitorSessionId = useCallback(() => {
+    try {
+      let sid = window.sessionStorage.getItem('mn_visitor_sid') || '';
+      if (!sid) {
+        sid = `v-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;
+        window.sessionStorage.setItem('mn_visitor_sid', sid);
+      }
+      return sid;
+    } catch {
+      return `v-${Date.now()}`;
+    }
+  }, []);
 
   const fetchStorefront = useCallback(async (targetRegion: RegionCode) => {
     setLoading(true);
@@ -229,16 +251,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeView === 'admin') return;
-    let sid = '';
-    try {
-      sid = window.sessionStorage.getItem('mn_visitor_sid') || '';
-      if (!sid) {
-        sid = `v-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;
-        window.sessionStorage.setItem('mn_visitor_sid', sid);
-      }
-    } catch {
-      sid = `v-${Date.now()}`;
-    }
+    const sid = getVisitorSessionId();
     const sendHeartbeat = () => {
       let tz = '';
       let loc = '';
@@ -263,7 +276,48 @@ export default function App() {
     sendHeartbeat();
     const timer = window.setInterval(sendHeartbeat, 15000);
     return () => window.clearInterval(timer);
-  }, [regionCode, activeView, selectedCategory, selectedSlug]);
+  }, [regionCode, activeView, selectedCategory, selectedSlug, getVisitorSessionId]);
+
+  // Persist bag locally and sync to server for abandoned-cart emails
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('mn_cart_v1', JSON.stringify(cart));
+    } catch {
+      // ignore quota errors
+    }
+
+    if (activeView === 'admin') return;
+    const timer = window.setTimeout(() => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      let knownEmail = authUser?.email || '';
+      try {
+        knownEmail = knownEmail || window.localStorage.getItem('mn_cart_email') || '';
+      } catch {
+        // ignore
+      }
+      fetch('/api/cart/sync', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          sessionId: getVisitorSessionId(),
+          regionCode,
+          email: knownEmail || undefined,
+          customerName: authUser?.name || undefined,
+          items: cart.map((i) => ({
+            productId: i.productId,
+            slug: i.slug,
+            sku: i.sku,
+            title: i.title,
+            image: i.image,
+            unitPrice: i.unitPrice,
+            quantity: i.quantity,
+          })),
+        }),
+      }).catch(() => {});
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [cart, regionCode, authToken, authUser, activeView, getVisitorSessionId]);
 
   const markPromoClaimedOrUsed = useCallback(() => {
     setPromoClaimedOrUsed(true);
@@ -740,6 +794,8 @@ export default function App() {
             promoRules={promoRules}
             bulkDiscount={bulkDiscount}
             initialDiscountCode={activePromoCode}
+            cartSessionId={getVisitorSessionId()}
+            authEmail={authUser?.email || null}
             onClearCart={() => setCart([])}
             onBackToShop={() => navigate('catalog', { category: 'all' })}
             onRefreshStorefront={() => fetchStorefront(regionCode)}

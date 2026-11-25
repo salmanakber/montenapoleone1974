@@ -128,6 +128,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToStorefront,
 }) => {
   const [needsOwnerClaim, setNeedsOwnerClaim] = useState(false);
+  const [hasEnvPasscode, setHasEnvPasscode] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
 
   // Claim / Login forms
@@ -136,6 +137,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [claimName, setClaimName] = useState('');
   const [claimEmail, setClaimEmail] = useState('');
   const [claimPassword, setClaimPassword] = useState('');
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [resetPasscode, setResetPasscode] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -285,6 +289,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       .then((r) => r.json())
       .then((data) => {
         setNeedsOwnerClaim(Boolean(data.needsOwnerClaim));
+        setHasEnvPasscode(Boolean(data.hasEnvPasscode));
         if (data.user && authToken) {
           onAuthChange(authToken, data.user);
         }
@@ -486,6 +491,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
       if (data.user.role !== 'owner' && data.user.role !== 'staff') {
         setAuthError('This portal is restricted to Owner and Staff accounts.');
+        return;
+      }
+      onAuthChange(data.token, data.user);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleResetOwnerPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthBusy(true);
+    try {
+      const res = await fetch('/api/auth/reset-owner-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail || undefined,
+          adminPasscode: resetPasscode,
+          newPassword: resetNewPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthError(data.error || 'Password reset failed');
         return;
       }
       onAuthChange(data.token, data.user);
@@ -1098,6 +1128,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {authBusy ? 'Creating Owner...' : 'Claim Owner Account & Enter'}
               </button>
             </form>
+          ) : showPasswordReset ? (
+            <form onSubmit={handleResetOwnerPassword} className="space-y-4">
+              <p className="text-[11px] text-neutral-500 leading-relaxed">
+                Reset the Owner password using the server <span className="font-mono-tabular">ADMIN_PASSCODE</span>.
+                You will be signed in immediately after a successful reset.
+              </p>
+              <div>
+                <label htmlFor="reset-owner-email" className="block text-xs text-neutral-600 mb-1">
+                  Owner Email (optional update)
+                </label>
+                <input
+                  id="reset-owner-email"
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="owner@montenapoleone1974.com"
+                  className="w-full px-3 py-2 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+              <div>
+                <label htmlFor="reset-admin-passcode" className="block text-xs text-neutral-600 mb-1">
+                  ADMIN_PASSCODE
+                </label>
+                <input
+                  id="reset-admin-passcode"
+                  type="password"
+                  required
+                  value={resetPasscode}
+                  onChange={(e) => setResetPasscode(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+              <div>
+                <label htmlFor="reset-new-password" className="block text-xs text-neutral-600 mb-1">
+                  New Owner Password (min 6 characters)
+                </label>
+                <input
+                  id="reset-new-password"
+                  type="password"
+                  required
+                  minLength={6}
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-black/15 outline-none focus:border-[#142B4E]"
+                />
+              </div>
+              {authError && <div className="text-xs text-red-600">{authError}</div>}
+              <button
+                type="submit"
+                disabled={authBusy}
+                className="w-full py-3 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-wider font-medium cursor-pointer"
+              >
+                {authBusy ? 'Updating Password...' : 'Reset Owner Password & Enter'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordReset(false);
+                  setAuthError(null);
+                }}
+                className="w-full text-[11px] text-neutral-500 hover:text-[#142B4E] cursor-pointer"
+              >
+                Back to sign in
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
@@ -1134,6 +1229,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               >
                 {authBusy ? 'Signing In...' : 'Sign In to Backend'}
               </button>
+              {hasEnvPasscode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordReset(true);
+                    setAuthError(null);
+                  }}
+                  className="w-full text-[11px] text-neutral-500 hover:text-[#142B4E] cursor-pointer"
+                >
+                  Forgot password? Reset Owner with ADMIN_PASSCODE
+                </button>
+              )}
             </form>
           )}
           </div>

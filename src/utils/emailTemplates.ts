@@ -417,3 +417,145 @@ export function buildOrderEmailTemplate(params: {
 
   return { subject, html, text: textLines.join('\n\n') };
 }
+
+export interface AbandonedCartEmailItem {
+  title: string;
+  image?: string;
+  quantity: number;
+  unitPrice: number;
+  sku?: string;
+}
+
+export function buildAbandonedCartEmailTemplate(params: {
+  regionCode: RegionCode;
+  customerName?: string;
+  items: AbandonedCartEmailItem[];
+  subtotal: number;
+  checkoutUrl: string;
+  stage: 1 | 2;
+}): { subject: string; html: string; text: string } {
+  const { regionCode, items, subtotal, checkoutUrl, stage } = params;
+  const name = (params.customerName || '').trim() || 'there';
+  const copy = EMAIL_COPY[regionCode] || EMAIL_COPY.en;
+  const isFollowUp = stage >= 2;
+
+  const subjectByRegion: Record<RegionCode, { first: string; follow: string }> = {
+    en: {
+      first: 'Your tailored shirts are still waiting in your bag',
+      follow: 'Last call — finish your Monte Napoleone order',
+    },
+    no: {
+      first: 'Skjortene dine venter fortsatt i handlekurven',
+      follow: 'Siste påminnelse — fullfør bestillingen din',
+    },
+    it: {
+      first: 'Le tue camicie su misura ti aspettano nel carrello',
+      follow: 'Ultimo richiamo — completa il tuo ordine',
+    },
+    vn: {
+      first: 'Áo sơ mi của bạn vẫn đang chờ trong giỏ',
+      follow: 'Nhắc lần cuối — hoàn tất đơn hàng Monte Napoleone',
+    },
+  };
+
+  const introByRegion: Record<RegionCode, { first: string; follow: string }> = {
+    en: {
+      first:
+        'You left a few carefully chosen shirts in your bag. Your bespoke measurements are saved — complete checkout whenever you are ready.',
+      follow:
+        'Just a gentle follow-up: your bag is still reserved with your fit, collar, and cuff selections. Checkout takes only a moment.',
+    },
+    no: {
+      first:
+        'Du har lagt igjen noen utvalgte skjorter i handlekurven. Målene dine er lagret — fullfør gjerne når det passer.',
+      follow:
+        'En vennlig påminnelse: handlekurven din er fortsatt klar med passform, krage og mansjett. Det tar bare et øyeblikk å fullføre.',
+    },
+    it: {
+      first:
+        'Hai lasciato alcune camicie selezionate nel carrello. Le tue misure restano salvate — completa quando vuoi.',
+      follow:
+        'Un gentile sollecito: il carrello è ancora pronto con vestibilità, collo e polsino. Il checkout richiede solo un momento.',
+    },
+    vn: {
+      first:
+        'Bạn còn vài chiếc áo trong giỏ. Số đo may đo vẫn được lưu — hoàn tất thanh toán khi bạn sẵn sàng.',
+      follow:
+        'Nhắc nhẹ: giỏ hàng vẫn giữ form, cổ áo và cổ tay bạn đã chọn. Chỉ mất một chút thời gian để hoàn tất.',
+    },
+  };
+
+  const ctaByRegion: Record<RegionCode, string> = {
+    en: 'Return to Bag & Checkout',
+    no: 'Tilbake til handlekurven',
+    it: 'Torna al carrello',
+    vn: 'Quay lại giỏ hàng',
+  };
+
+  const subjects = subjectByRegion[regionCode] || subjectByRegion.en;
+  const intros = introByRegion[regionCode] || introByRegion.en;
+  const subject = isFollowUp ? subjects.follow : subjects.first;
+  const intro = isFollowUp ? intros.follow : intros.first;
+  const cta = ctaByRegion[regionCode] || ctaByRegion.en;
+
+  const itemsHtml = items
+    .map(
+      (item) => `
+      <tr>
+        <td style="padding:12px 0;border-bottom:1px solid #ececec;font-size:13px;color:#1a1a1a;">
+          <strong style="text-transform:uppercase;letter-spacing:0.04em;">${escHtml(item.title)}</strong>
+          <div style="font-size:11px;color:#666;margin-top:3px;">
+            Qty ${item.quantity}${item.sku ? ` · SKU ${escHtml(item.sku)}` : ''}
+          </div>
+        </td>
+        <td style="padding:12px 0;border-bottom:1px solid #ececec;text-align:right;font-size:13px;color:#1a1a1a;white-space:nowrap;vertical-align:top;">
+          ${escHtml(formatRegionalPrice(item.unitPrice * item.quantity, regionCode))}
+        </td>
+      </tr>`
+    )
+    .join('');
+
+  const html = `<!doctype html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:0;background:#F4F5F7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A1A1A;">
+  <div style="max-width:640px;margin:28px auto;background:#ffffff;border:1px solid #E5E7EB;">
+    <div style="background:#142B4E;color:#ffffff;padding:28px 32px;text-align:center;">
+      <div style="font-size:20px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;">MONTE NAPOLEONE</div>
+      <div style="font-size:11px;letter-spacing:0.35em;opacity:0.8;margin-top:4px;">1974</div>
+      <div style="font-size:11px;color:#CBD5E1;margin-top:10px;letter-spacing:0.06em;">${escHtml(copy.brandTagline)}</div>
+    </div>
+    <div style="padding:32px;">
+      <h1 style="margin:0 0 14px;font-size:20px;font-weight:600;color:#142B4E;">${escHtml(subject)}</h1>
+      <p style="font-size:14px;line-height:1.6;margin:0 0 10px;">${escHtml(copy.greeting(name))}</p>
+      <p style="font-size:14px;line-height:1.6;color:#374151;margin:0 0 18px;">${escHtml(intro)}</p>
+      <table style="width:100%;border-collapse:collapse;margin:8px 0 18px;">${itemsHtml}</table>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:2px solid #142B4E;margin-bottom:22px;">
+        <span style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">${escHtml(copy.subtotalLabel)}</span>
+        <span style="font-size:16px;font-weight:700;color:#142B4E;">${escHtml(formatRegionalPrice(subtotal, regionCode))}</span>
+      </div>
+      <a href="${escHtml(checkoutUrl)}" style="display:inline-block;padding:14px 26px;background:#142B4E;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">
+        ${escHtml(cta)}
+      </a>
+    </div>
+    <div style="background:#F8FAFC;border-top:1px solid #E5E7EB;padding:18px 32px;text-align:center;font-size:11px;color:#64748B;">
+      ${escHtml(copy.footerNote)}
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const text = [
+    `MONTE NAPOLEONE 1974 — ${subject}`,
+    copy.greeting(name),
+    intro,
+    ...items.map(
+      (i) =>
+        `- ${i.title} × ${i.quantity}: ${formatRegionalPrice(i.unitPrice * i.quantity, regionCode)}`
+    ),
+    `${copy.subtotalLabel}: ${formatRegionalPrice(subtotal, regionCode)}`,
+    `${cta}: ${checkoutUrl}`,
+  ].join('\n\n');
+
+  return { subject, html, text };
+}

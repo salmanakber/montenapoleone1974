@@ -26,6 +26,8 @@ interface CheckoutViewProps {
   promoRules?: PromotionPopupSettings;
   bulkDiscount?: BulkDiscountSettings;
   initialDiscountCode?: string;
+  cartSessionId?: string;
+  authEmail?: string | null;
   onClearCart: () => void;
   onBackToShop: () => void;
   onRefreshStorefront: () => void;
@@ -39,6 +41,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   promoRules = DEFAULT_PROMO_POPUP_SETTINGS,
   bulkDiscount = DEFAULT_BULK_DISCOUNT_SETTINGS,
   initialDiscountCode = '',
+  cartSessionId = '',
+  authEmail = null,
   onClearCart,
   onBackToShop,
   onRefreshStorefront,
@@ -47,7 +51,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const availableMethods = getAvailablePaymentMethods(region);
 
   const [customerName, setCustomerName] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerEmail, setCustomerEmail] = useState(authEmail || '');
   const [customerPhone, setCustomerPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingCity, setShippingCity] = useState('');
@@ -198,6 +202,44 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     };
   }, [region.code, totals.subtotal, totals.discountAmount, items]);
 
+  useEffect(() => {
+    if (authEmail && !customerEmail) {
+      setCustomerEmail(authEmail);
+    }
+  }, [authEmail, customerEmail]);
+
+  useEffect(() => {
+    const email = customerEmail.trim().toLowerCase();
+    if (!email.includes('@') || !cartSessionId) return;
+    try {
+      window.localStorage.setItem('mn_cart_email', email);
+    } catch {
+      // ignore
+    }
+    const timer = window.setTimeout(() => {
+      fetch('/api/cart/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: cartSessionId,
+          regionCode: region.code,
+          email,
+          customerName: customerName.trim() || undefined,
+          items: items.map((i) => ({
+            productId: i.productId,
+            slug: i.slug,
+            sku: i.sku,
+            title: i.title,
+            image: i.image,
+            unitPrice: i.unitPrice,
+            quantity: i.quantity,
+          })),
+        }),
+      }).catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [customerEmail, customerName, cartSessionId, region.code, items]);
+
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -230,6 +272,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
           discountCode: appliedDiscount,
           shippingMethod,
           paymentMethod,
+          cartSessionId: cartSessionId || undefined,
           items: items.map((i) => ({
             productId: i.productId,
             quantity: i.quantity,

@@ -33,6 +33,7 @@ import {
   buildGoogleAuthorizeUrl,
   buildWixAuthorizeUrl,
   createDhlWaybillNumber,
+  dispatchAbandonedCartEmail,
   dispatchLocalizedOrderEmail,
   exchangeGoogleOAuthCode,
   exchangeWixOAuthCode,
@@ -625,6 +626,86 @@ app.post('/api/analytics/visit', async (req, res) => {
   } catch {
     res.json({ ok: true, sessionId });
   }
+});
+
+app.post('/api/cart/sync', (req, res) => {
+  const b = req.body || {};
+  const sessionId = String(b.sessionId || '').trim().slice(0, 80);
+  if (!sessionId) {
+    res.status(400).json({ error: 'sessionId is required' });
+    return;
+  }
+
+  const token = extractBearerToken(req);
+  const authUser = getUserByToken(token);
+  const emailRaw = String(b.email || authUser?.email || '')
+    .trim()
+    .toLowerCase();
+  const email = emailRaw.includes('@') ? emailRaw.slice(0, 180) : null;
+  const customerName = String(b.customerName || authUser?.name || '')
+    .trim()
+    .slice(0, 120);
+  const regionCode = parseRegion(b.regionCode);
+  const origin = resolveRequestOrigin(req);
+  const checkoutUrl = `${origin}/${regionCode}/checkout`;
+
+  const rawItems = Array.isArray(b.items) ? b.items : [];
+  const items = rawItems
+    .slice(0, 40)
+    .map((it: Record<string, unknown>) => ({
+      productId: Number(it.productId) || 0,
+      slug: String(it.slug || '').slice(0, 120),
+      sku: String(it.sku || '').slice(0, 80),
+      title: String(it.title || 'Shirt').slice(0, 180),
+      image: String(it.image || '').slice(0, 400),
+      unitPrice: Number(it.unitPrice) || 0,
+      quantity: Math.max(1, Math.min(99, Number(it.quantity) || 1)),
+    }))
+    .filter((it) => it.productId > 0 || it.title);
+
+  const itemCount = items.reduce((sum, it) => sum + it.quantity, 0);
+  const subtotal = items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
+
+  if (itemCount === 0) {
+    db.prepare(
+      `UPDATE abandoned_carts
+       SET items_json = '[]', item_count = 0, subtotal = 0, status = 'empty', updated_at = datetime('now')
+       WHERE session_id = ? AND status = 'active'`
+    ).run(sessionId);
+    res.json({ ok: true, synced: true, empty: true });
+    return;
+  }
+
+  db.prepare(
+    `INSERT INTO abandoned_carts (
+      session_id, email, customer_name, region_code, items_json, subtotal, item_count, checkout_url, status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+    ON CONFLICT(session_id) DO UPDATE SET
+      email = COALESCE(excluded.email, abandoned_carts.email),
+      customer_name = CASE
+        WHEN excluded.customer_name != '' THEN excluded.customer_name
+        ELSE abandoned_carts.customer_name
+      END,
+      region_code = excluded.region_code,
+      items_json = excluded.items_json,
+      subtotal = excluded.subtotal,
+      item_count = excluded.item_count,
+      checkout_url = excluded.checkout_url,
+      status = 'active',
+      recovered_at = NULL,
+      updated_at = datetime('now')`
+  ).run(
+    sessionId,
+    email,
+    customerName,
+    regionCode,
+    JSON.stringify(items),
+    subtotal,
+    itemCount,
+    checkoutUrl
+  );
+
+  res.json({ ok: true, synced: true, itemCount, hasEmail: Boolean(email) });
 });
 
 app.post('/api/payments/vipps/checkout-prefill', async (req, res) => {
@@ -1257,6 +1338,26 @@ app.post('/api/checkout/orders', async (req, res) => {
       region,
       reviewLinks,
     }).catch(() => null);
+
+    const cartSessionId = String(body.cartSessionId || '').trim();
+    if (cartSessionId || customerEmail) {
+      try {
+        if (cartSessionId) {
+          db.prepare(
+            `UPDATE abandoned_carts
+             SET status = 'recovered', recovered_at = datetime('now'), item_count = 0, items_json = '[]', updated_at = datetime('now')
+             WHERE session_id = ?`
+          ).run(cartSessionId);
+        }
+        db.prepare(
+          `UPDATE abandoned_carts
+           SET status = 'recovered', recovered_at = datetime('now'), item_count = 0, items_json = '[]', updated_at = datetime('now')
+           WHERE LOWER(email) = LOWER(?) AND status = 'active'`
+        ).run(customerEmail);
+      } catch {
+        // ignore recovery bookkeeping failures
+      }
+    }
 
     res.status(201).json({
       order: hydratedOrder,
@@ -1983,6 +2084,65 @@ app.post('/api/auth/login', (req, res) => {
 
   const token = createSession(row.id);
   res.json({ token, user: mapUserRow(row) });
+});
+
+/** Emergency owner password reset when ADMIN_PASSCODE is configured in .env */
+app.post('/api/auth/reset-owner-password', (req, res) => {
+  const envPasscode = process.env.ADMIN_PASSCODE?.trim();
+  if (!envPasscode) {
+    res.status(403).json({
+      error: 'Set ADMIN_PASSCODE in server .env to enable emergency owner password reset.',
+    });
+    return;
+  }
+
+  const passcode = String(req.body?.adminPasscode || req.body?.passcode || '');
+  const newPassword = String(req.body?.newPassword || '');
+  const email = String(req.body?.email || '').trim().toLowerCase();
+
+  if (passcode !== envPasscode) {
+    res.status(401).json({ error: 'Invalid admin passcode.' });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: 'New password must be at least 6 characters.' });
+    return;
+  }
+
+  let ownerRow = db.prepare(`SELECT * FROM users WHERE role = 'owner' LIMIT 1`).get() as
+    | Parameters<typeof mapUserRow>[0]
+    | undefined;
+
+  const hash = hashPassword(newPassword);
+  if (!ownerRow) {
+    const ownerEmail = email || 'owner@montenapoleone1974.com';
+    const info = db
+      .prepare(
+        `INSERT INTO users (email, name, password_hash, role, permissions_json, assigned_regions_json, active)
+         VALUES (?, 'Owner', ?, 'owner', ?, ?, 1)`
+      )
+      .run(ownerEmail, hash, JSON.stringify(OWNER_PERMISSIONS), JSON.stringify(['en', 'no', 'it', 'vn']));
+    ownerRow = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid) as Parameters<
+      typeof mapUserRow
+    >[0];
+  } else {
+    if (email && email.includes('@') && email !== ownerRow.email) {
+      db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?').run(
+        email,
+        hash,
+        ownerRow.id
+      );
+    } else {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, ownerRow.id);
+    }
+    ownerRow = db.prepare('SELECT * FROM users WHERE id = ?').get(ownerRow.id) as Parameters<
+      typeof mapUserRow
+    >[0];
+  }
+
+  const token = createSession(ownerRow.id);
+  logAudit(mapUserRow(ownerRow), 'OWNER_PASSWORD_RESET', 'system', 'Owner password reset via ADMIN_PASSCODE');
+  res.json({ token, user: mapUserRow(ownerRow), message: 'Owner password updated.' });
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -6567,6 +6727,80 @@ app.get('/sitemap.xml', (req, res) => {
 // VITE MIDDLEWARE & STATIC PRODUCTION SERVING
 // ---------------------------------------------------------------------------
 
+async function processAbandonedCartReminders(): Promise<void> {
+  const firstDelayHours = Number(process.env.ABANDONED_CART_FIRST_HOURS || 4);
+  const followDelayHours = Number(process.env.ABANDONED_CART_FOLLOW_HOURS || 24);
+
+  type CartRow = {
+    id: number;
+    session_id: string;
+    email: string | null;
+    customer_name: string;
+    region_code: RegionCode;
+    items_json: string;
+    subtotal: number;
+    item_count: number;
+    checkout_url: string;
+    reminder_stage: number;
+  };
+
+  const candidates = db
+    .prepare(
+      `SELECT id, session_id, email, customer_name, region_code, items_json, subtotal, item_count,
+              checkout_url, reminder_stage
+       FROM abandoned_carts
+       WHERE status = 'active'
+         AND email IS NOT NULL
+         AND email != ''
+         AND item_count > 0
+         AND reminder_stage < 2
+         AND (
+           (reminder_stage = 0 AND datetime(updated_at) <= datetime('now', ?))
+           OR
+           (reminder_stage = 1 AND datetime(COALESCE(last_reminder_at, updated_at)) <= datetime('now', ?))
+         )
+       ORDER BY updated_at ASC
+       LIMIT 40`
+    )
+    .all(`-${Math.max(1, firstDelayHours)} hours`, `-${Math.max(2, followDelayHours)} hours`) as CartRow[];
+
+  for (const cart of candidates) {
+    const stage = (cart.reminder_stage + 1) as 1 | 2;
+    let items: Array<{
+      title: string;
+      image?: string;
+      quantity: number;
+      unitPrice: number;
+      sku?: string;
+    }> = [];
+    try {
+      items = JSON.parse(cart.items_json || '[]');
+    } catch {
+      items = [];
+    }
+    if (!items.length || !cart.email) continue;
+
+    const result = await dispatchAbandonedCartEmail({
+      recipientEmail: cart.email,
+      customerName: cart.customer_name,
+      regionCode: parseRegion(cart.region_code),
+      items,
+      subtotal: cart.subtotal,
+      checkoutUrl: cart.checkout_url || 'https://montenapoleone1974.com/en/checkout',
+      stage,
+    });
+
+    if (result.status === 'error') continue;
+
+    db.prepare(
+      `UPDATE abandoned_carts
+       SET reminder_stage = ?, last_reminder_at = datetime('now'),
+           status = CASE WHEN ? >= 2 THEN 'reminded' ELSE status END
+       WHERE id = ?`
+    ).run(stage, stage, cart.id);
+  }
+}
+
 async function startServer() {
   const PORT = 3000;
   if (process.env.NODE_ENV === 'production') {
@@ -6816,6 +7050,15 @@ When the customer confirms they want to view a shirt, add a shirt to their bag, 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Monte Napoleone 1974 server listening on http://localhost:${PORT}`);
   });
+
+  // Abandoned cart reminders: first email ~4h after last cart activity, follow-up ~24h later
+  const runCartJob = () => {
+    processAbandonedCartReminders().catch((err) => {
+      console.error('[abandoned-cart]', err instanceof Error ? err.message : err);
+    });
+  };
+  setTimeout(runCartJob, 20_000);
+  setInterval(runCartJob, 15 * 60 * 1000);
 }
 
 startServer();

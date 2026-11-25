@@ -374,6 +374,24 @@ export function initializeDatabase(): void {
       UNIQUE(order_number, product_id),
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS abandoned_carts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT UNIQUE NOT NULL,
+      email TEXT,
+      customer_name TEXT NOT NULL DEFAULT '',
+      region_code TEXT NOT NULL DEFAULT 'en',
+      items_json TEXT NOT NULL DEFAULT '[]',
+      subtotal REAL NOT NULL DEFAULT 0,
+      item_count INTEGER NOT NULL DEFAULT 0,
+      checkout_url TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      reminder_stage INTEGER NOT NULL DEFAULT 0,
+      last_reminder_at TEXT,
+      recovered_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   ensureColumn('categories', 'parent_id', 'INTEGER REFERENCES categories(id) ON DELETE SET NULL');

@@ -631,7 +631,12 @@ export interface EmailLogRecord {
   order_number: string | null;
   recipient_email: string;
   region_code: RegionCode;
-  template_type: 'order_confirmation' | 'shipping_tracking' | 'review_request' | 'test';
+  template_type:
+    | 'order_confirmation'
+    | 'shipping_tracking'
+    | 'review_request'
+    | 'abandoned_cart'
+    | 'test';
   subject: string;
   html_preview: string;
   status: 'sent' | 'sandbox_logged' | 'error';

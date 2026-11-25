@@ -11,7 +11,9 @@ import type {
 } from '../src/types.ts';
 import { calculateDhlShippingCost, generateBankReference } from '../src/utils/commerce.ts';
 import {
+  buildAbandonedCartEmailTemplate,
   buildOrderEmailTemplate,
+  type AbandonedCartEmailItem,
   type OrderEmailTemplateType,
   type ReviewEmailLinkItem,
 } from '../src/utils/emailTemplates.ts';
@@ -433,6 +435,86 @@ export async function dispatchLocalizedOrderEmail(params: {
     recipient,
     params.order.region_code,
     params.type,
+    subject,
+    html,
+    status,
+    providerId,
+    errorMessage
+  );
+
+  return { status, providerId, subject, errorMessage };
+}
+
+export async function dispatchAbandonedCartEmail(params: {
+  recipientEmail: string;
+  customerName?: string;
+  regionCode: RegionCode;
+  items: AbandonedCartEmailItem[];
+  subtotal: number;
+  checkoutUrl: string;
+  stage: 1 | 2;
+}): Promise<{
+  status: 'sent' | 'sandbox_logged' | 'error';
+  providerId: string | null;
+  subject: string;
+  errorMessage: string | null;
+}> {
+  const { subject, html, text } = buildAbandonedCartEmailTemplate({
+    regionCode: params.regionCode,
+    customerName: params.customerName,
+    items: params.items,
+    subtotal: params.subtotal,
+    checkoutUrl: params.checkoutUrl,
+    stage: params.stage,
+  });
+  const apiKey = getResolvedSecret('RESEND_API_KEY');
+  const fromEmail =
+    getResolvedSecret('RESEND_FROM_EMAIL') || 'Monte Napoleone 1974 <orders@montenapoleone1974.com>';
+
+  let status: 'sent' | 'sandbox_logged' | 'error' = 'sandbox_logged';
+  let providerId: string | null = null;
+  let errorMessage: string | null = null;
+
+  if (!apiKey) {
+    errorMessage = 'RESEND_API_KEY not configured — abandoned cart email archived locally.';
+  } else {
+    try {
+      const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [params.recipientEmail],
+          subject,
+          html,
+          text,
+        }),
+      });
+      const json = (await resp.json().catch(() => ({}))) as { id?: string; message?: string };
+      if (!resp.ok) {
+        status = 'error';
+        errorMessage = json.message || `Resend HTTP ${resp.status}`;
+      } else {
+        status = 'sent';
+        providerId = json.id || null;
+      }
+    } catch (err) {
+      status = 'error';
+      errorMessage = err instanceof Error ? err.message : 'Resend network error';
+    }
+  }
+
+  db.prepare(
+    `INSERT INTO email_logs (
+      order_number, recipient_email, region_code, template_type, subject, html_preview, status, provider_id, error_message
+    ) VALUES (?, ?, ?, 'abandoned_cart', ?, ?, ?, ?, ?)`
+  ).run(
+    `CART-R${params.stage}`,
+    params.recipientEmail,
+    params.regionCode,
     subject,
     html,
     status,
