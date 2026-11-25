@@ -797,31 +797,8 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     });
   }
 
-  const variantsRows = db
-    .prepare('SELECT * FROM product_variants WHERE active = 1')
-    .all() as Array<Record<string, unknown>>;
-  const variantsByProd = new Map<number, Array<Record<string, unknown>>>();
-  for (const v of variantsRows) {
-    const pid = Number(v.product_id);
-    const list = variantsByProd.get(pid) || [];
-    list.push({
-      id: Number(v.id),
-      product_id: pid,
-      fit: String(v.fit),
-      size_label: String(v.size_label),
-      sku_variant: String(v.sku_variant),
-      price_en: v.price_en !== null ? Number(v.price_en) : null,
-      price_no: v.price_no !== null ? Number(v.price_no) : null,
-      price_it: v.price_it !== null ? Number(v.price_it) : null,
-      price_vn: v.price_vn !== null ? Number(v.price_vn) : null,
-      stock_en: Number(v.stock_en),
-      stock_no: Number(v.stock_no),
-      stock_it: Number(v.stock_it),
-      stock_vn: Number(v.stock_vn),
-      active: Boolean(v.active),
-    });
-    variantsByProd.set(pid, list);
-  }
+  // Variant matrix omitted from bootstrap on purpose (was ~900KB / caused endless loading).
+  // PDP loads full product + variants via GET /api/storefront/product/:slug
 
   const tailoringSpecs = db
     .prepare('SELECT * FROM tailoring_size_specs ORDER BY fit ASC, size_label ASC')
@@ -833,29 +810,7 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
     const pid = Number(p.id);
     const rStats = reviewStatsMap.get(pid);
-    // Slim variants for bootstrap: only active-region price/stock (keeps payload small so storefront boots fast)
-    const slimVariants = (variantsByProd.get(pid) || []).map((v) => {
-      const priceRaw = v[`price_${regionCode}` as keyof typeof v];
-      const stockRaw = v[`stock_${regionCode}` as keyof typeof v];
-      const price = typeof priceRaw === 'number' ? priceRaw : priceRaw != null ? Number(priceRaw) : null;
-      const stock = Number(stockRaw ?? 0);
-      return {
-        id: Number(v.id),
-        product_id: pid,
-        fit: String(v.fit),
-        size_label: String(v.size_label),
-        sku_variant: String(v.sku_variant),
-        price_en: regionCode === 'en' ? price : null,
-        price_no: regionCode === 'no' ? price : null,
-        price_it: regionCode === 'it' ? price : null,
-        price_vn: regionCode === 'vn' ? price : null,
-        stock_en: regionCode === 'en' ? stock : 0,
-        stock_no: regionCode === 'no' ? stock : 0,
-        stock_it: regionCode === 'it' ? stock : 0,
-        stock_vn: regionCode === 'vn' ? stock : 0,
-        active: true,
-      };
-    });
+    const gallery = JSON.parse(String(p.gallery_json)) as string[];
     return {
       id: pid,
       sku: String(p.sku),
@@ -869,14 +824,14 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       preorder_allowed: Boolean(p.preorder_allowed),
       primary_image: String(p.primary_image),
       secondary_image: String(p.secondary_image),
-      gallery: JSON.parse(String(p.gallery_json)) as string[],
+      gallery: gallery.slice(0, 4),
       collars: JSON.parse(String(p.collars_json)) as string[],
       cuffs: JSON.parse(String(p.cuffs_json)) as string[],
       sizes: JSON.parse(String(p.sizes_json)) as string[],
       active: Boolean(p.active),
       title: String(p.title),
       subtitle: String(p.subtitle),
-      description: String(p.description || '').slice(0, 280),
+      description: String(p.description || '').slice(0, 180),
       price: Number(p.price),
       compare_at_price: p.compare_at_price !== null ? Number(p.compare_at_price) : null,
       stock_qty: Number(p.stock_qty),
@@ -887,7 +842,7 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       seo_keywords: '',
       review_count: rStats?.reviewCount || 0,
       average_rating: rStats?.averageRating || 0,
-      variants: slimVariants,
+      variants: [],
     };
   });
 
