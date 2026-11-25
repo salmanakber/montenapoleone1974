@@ -112,7 +112,7 @@ const GlobeSceneContent: React.FC<{
   isSoftwareGl: boolean;
   onSelectPoint: (pt: GlobePointDatum) => void;
   onSelectCountry: (feat: WorldCountryFeature) => void;
-  onHoverChange: (hovered: boolean) => void;
+  onHoverPoint: (pt: GlobePointDatum | null) => void;
 }> = ({
   pointsData,
   arcsData,
@@ -124,7 +124,7 @@ const GlobeSceneContent: React.FC<{
   isSoftwareGl,
   onSelectPoint,
   onSelectCountry,
-  onHoverChange,
+  onHoverPoint,
 }) => {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const controlsRef = useRef<any>(null);
@@ -212,13 +212,15 @@ const GlobeSceneContent: React.FC<{
         pointAltitude={(d) => {
           const item = d as GlobePointDatum;
           return item.kind === 'order'
-            ? 0.045 + Math.min(0.055, item.orders * 0.012)
-            : 0.014;
+            ? 0.048 + Math.min(0.055, item.orders * 0.012)
+            : item.isActive
+            ? 0.032
+            : 0.016;
         }}
         pointRadius={(d) => {
           const item = d as GlobePointDatum;
-          if (item.kind === 'order') return 0.95;
-          return item.isActive ? 0.72 : 0.52;
+          if (item.kind === 'order') return 0.92;
+          return item.isActive ? 0.84 : 0.56;
         }}
         ringsData={ringsData}
         ringLat={(d) => (d as GlobeRingDatum).lat}
@@ -245,8 +247,12 @@ const GlobeSceneContent: React.FC<{
         arcDashLength={0.45}
         arcDashGap={0.35}
         arcDashAnimateTime={isSoftwareGl ? 0 : 2800}
-        onHover={(layer) => {
-          onHoverChange(layer === 'points');
+        onHover={(layer, elemData) => {
+          if (layer === 'points' && elemData) {
+            onHoverPoint(elemData as GlobePointDatum);
+          } else {
+            onHoverPoint(null);
+          }
         }}
         onClick={(layer, elemData, event) => {
           event?.stopPropagation?.();
@@ -284,20 +290,48 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
   activeVisitorsCount = 0,
   liveViewMetrics,
 }) => {
+  const globeContainerRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const [hoveredPoint, setHoveredPoint] = useState(false);
+  const [hoveredPointData, setHoveredPointData] = useState<GlobePointDatum | null>(null);
   const [selectedPopup, setSelectedPopup] = useState<SelectedGlobePopup | null>(null);
   const [zoomTrigger, setZoomTrigger] = useState({ seq: 0, delta: 1 });
   const isSoftwareGl = useMemo(() => detectSoftwareWebGL(), []);
 
   useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) {
+        setFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
     if (!fullscreen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFullscreen(false);
+      if (e.key === 'Escape') {
+        setFullscreen(false);
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
+
+  const handleToggleFullscreen = () => {
+    setFullscreen((prev) => {
+      const next = !prev;
+      if (next) {
+        globeContainerRef.current?.requestFullscreen?.().catch(() => {});
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+      return next;
+    });
+  };
 
   // Combine country metrics + live visitor session markers
   const { pointsData, arcsData, ringsData, activeCountryCodes, activeCountryNames } = useMemo(() => {
@@ -307,31 +341,44 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
     const codes = new Set<string>();
     const names = new Set<string>();
 
-    // Visitor country pins aggregated with city context
+    const orderCoordsByCc = new Map<string, { orders: number; revenue: number }>();
+    for (const c of countries) {
+      const cc =
+        c.region_code === 'no' ? 'NO' : c.region_code === 'it' ? 'IT' : c.region_code === 'vn' ? 'VN' : 'US';
+      orderCoordsByCc.set(cc, { orders: c.orders, revenue: c.revenue_usd_equiv });
+    }
+
+    // Visitor country pins aggregated with city & order context (offset cleanly from order pin)
     for (const vc of visitorCountries) {
       if (!Number.isFinite(vc.lat) || !Number.isFinite(vc.lng)) continue;
-      codes.add(vc.country_code.toUpperCase());
+      const ccUpper = vc.country_code.toUpperCase();
+      codes.add(ccUpper);
       names.add(vc.country.toLowerCase());
       const matchingVisitors = visitors.filter(
-        (v) => v.country_code.toUpperCase() === vc.country_code.toUpperCase()
+        (v) => v.country_code.toUpperCase() === ccUpper
       );
+      const ordMeta = orderCoordsByCc.get(ccUpper);
+      const hasOrderHub = Boolean(ordMeta && (ordMeta.orders > 0 || ordMeta.revenue > 0));
+      const vLat = hasOrderHub ? vc.lat - 0.5 : vc.lat;
+      const vLng = hasOrderHub ? vc.lng - 0.6 : vc.lng;
+
       pts.push({
         id: `vc-${vc.country_code}`,
         kind: 'visitor',
-        lat: vc.lat,
-        lng: vc.lng,
+        lat: vLat,
+        lng: vLng,
         country: vc.country,
-        countryCode: vc.country_code.toUpperCase(),
+        countryCode: ccUpper,
         city: vc.sample_cities?.[0] || matchingVisitors[0]?.city || vc.country,
         activeCount: vc.active_count,
         totalCount: vc.total_count,
-        orders: 0,
-        revenueUsd: 0,
+        orders: ordMeta?.orders || 0,
+        revenueUsd: ordMeta?.revenue || 0,
         currentPath: matchingVisitors[0]?.current_path || '/',
         isActive: vc.active_count > 0,
       });
       if (vc.active_count > 0) {
-        rings.push({ lat: vc.lat, lng: vc.lng, kind: 'visitor' });
+        rings.push({ lat: vLat, lng: vLng, kind: 'visitor' });
       }
       if (Math.abs(vc.lat - TREVISO_HUB.lat) > 2 || Math.abs(vc.lng - TREVISO_HUB.lng) > 2) {
         arcs.push({
@@ -402,18 +449,55 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
 
   const maxTimelineCount = Math.max(1, ...metrics.pageViewsTimeline.map((b) => b.count));
 
-  const handleSelectPoint = useCallback((pt: GlobePointDatum) => {
-    setSelectedPopup({
-      kind: pt.kind,
-      title: `${pt.country} (${pt.countryCode})`,
-      subtitle: pt.city || pt.country,
-      activeVisitors: pt.activeCount,
-      totalSessions: pt.totalCount,
-      orders: pt.orders,
-      revenueUsd: pt.revenueUsd,
-      path: pt.currentPath,
-    });
-  }, []);
+  const pointToPopup = useCallback(
+    (pt: GlobePointDatum): SelectedGlobePopup => {
+      const cc = pt.countryCode.toUpperCase();
+      const vcMatch = visitorCountries.find((v) => v.country_code.toUpperCase() === cc);
+      return {
+        kind: pt.kind,
+        title: `${pt.country} (${cc})`,
+        subtitle: pt.city || vcMatch?.sample_cities?.[0] || pt.country,
+        activeVisitors: pt.activeCount || vcMatch?.active_count || 0,
+        totalSessions: pt.totalCount || vcMatch?.total_count || 0,
+        orders: pt.orders,
+        revenueUsd: pt.revenueUsd,
+        path: pt.currentPath,
+      };
+    },
+    [visitorCountries]
+  );
+
+  const handleSelectPoint = useCallback(
+    (pt: GlobePointDatum) => {
+      setSelectedPopup(pointToPopup(pt));
+    },
+    [pointToPopup]
+  );
+
+  const handleSelectVisitorCountry = useCallback(
+    (vc: VisitorCountryRollup) => {
+      const cc = vc.country_code.toUpperCase();
+      const ordMatch = countries.find(
+        (c) =>
+          (c.region_code === 'no' && cc === 'NO') ||
+          (c.region_code === 'it' && cc === 'IT') ||
+          (c.region_code === 'vn' && cc === 'VN') ||
+          (c.region_code === 'en' && cc === 'US')
+      );
+      const matchingVisitor = visitors.find((v) => v.country_code.toUpperCase() === cc);
+      setSelectedPopup({
+        kind: 'visitor',
+        title: `${vc.country} (${cc})`,
+        subtitle: vc.sample_cities?.join(', ') || matchingVisitor?.city || vc.country,
+        activeVisitors: vc.active_count,
+        totalSessions: vc.total_count,
+        orders: ordMatch?.orders || 0,
+        revenueUsd: ordMatch?.revenue_usd_equiv || 0,
+        path: matchingVisitor?.current_path || '/',
+      });
+    },
+    [countries, visitors]
+  );
 
   const handleSelectCountry = useCallback(
     (feat: WorldCountryFeature) => {
@@ -428,8 +512,8 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
       );
       if (!vc && !ordMatch) return;
       setSelectedPopup({
-        kind: 'country',
-        title: vc?.country || feat.properties.name,
+        kind: vc && vc.active_count > 0 ? 'visitor' : 'country',
+        title: `${vc?.country || feat.properties.name} (${code})`,
         subtitle: vc?.sample_cities?.join(', ') || ordMatch?.hub_label || code,
         activeVisitors: vc?.active_count || 0,
         totalSessions: vc?.total_count || 0,
@@ -439,6 +523,9 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
     },
     [visitorCountries, countries]
   );
+
+  const activePopup: SelectedGlobePopup | null =
+    selectedPopup || (hoveredPointData ? pointToPopup(hoveredPointData) : null);
 
   const nowFormatted = new Date().toLocaleTimeString('en-US', {
     hour: 'numeric',
@@ -466,10 +553,11 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
 
   return (
     <div
+      ref={globeContainerRef}
       data-testid="live-view-globe-container"
       className={
         fullscreen
-          ? 'fixed inset-4 z-50 bg-[#F4F6F9] border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden'
+          ? 'fixed inset-0 z-[120] w-screen h-screen bg-[#F4F6F9] rounded-none border-0 flex flex-col overflow-hidden'
           : 'relative bg-[#F4F6F9] border border-slate-200 rounded-xl overflow-hidden shadow-sm'
       }
     >
@@ -483,18 +571,18 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
           <div className="flex items-center gap-4 mt-1.5 text-[11px] text-slate-700">
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-teal-500 ring-2 ring-teal-200" />
-              <span>Visitor</span>
+              <span>Visitor ({metrics.visitorsRightNow} live)</span>
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-blue-200" />
-              <span>Order</span>
+              <span>Order ({metrics.totalOrders})</span>
             </span>
           </div>
         </div>
 
         <button
           type="button"
-          onClick={() => setFullscreen((prev) => !prev)}
+          onClick={handleToggleFullscreen}
           data-testid="globe-fullscreen-btn"
           className="pointer-events-auto px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
         >
@@ -506,7 +594,7 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
       {/* Main 3D Globe Stage */}
       <div
         className={`relative w-full ${fullscreen ? 'flex-1 min-h-[380px]' : 'h-[390px] sm:h-[440px]'} ${
-          hoveredPoint ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+          hoveredPointData ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
         }`}
       >
         <GlobeWebGLErrorBoundary fallback={svgFallback}>
@@ -523,61 +611,108 @@ export const Globe3DMap: React.FC<Globe3DMapProps> = ({
               activeCountryCodes={activeCountryCodes}
               activeCountryNames={activeCountryNames}
               zoomTrigger={zoomTrigger}
-              paused={Boolean(selectedPopup)}
+              paused={Boolean(selectedPopup || hoveredPointData)}
               isSoftwareGl={isSoftwareGl}
               onSelectPoint={handleSelectPoint}
               onSelectCountry={handleSelectCountry}
-              onHoverChange={setHoveredPoint}
+              onHoverPoint={setHoveredPointData}
             />
           </Canvas>
         </GlobeWebGLErrorBoundary>
 
-        {/* Clicked Marker / Country Popover Inside Map (zero backdrop-blur over WebGL) */}
-        {selectedPopup && (
+        {/* Interactive Rich Popover Directly Inside Map (zero backdrop-blur over WebGL) */}
+        {activePopup && (
           <div
             data-testid="globe-marker-popover"
-            className="absolute top-3 left-5 z-20 w-72 bg-white border border-slate-200 rounded-xl shadow-lg p-3.5 text-xs space-y-2"
+            className="absolute top-3 left-5 z-20 w-76 bg-white border border-slate-200 rounded-xl shadow-lg p-3.5 text-xs space-y-2"
           >
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="flex items-center gap-1.5 font-semibold text-slate-900">
                   <span
-                    className={`w-2 h-2 rounded-full ${
-                      selectedPopup.kind === 'order' ? 'bg-blue-500' : 'bg-teal-500'
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      activePopup.kind === 'order' ? 'bg-blue-500' : 'bg-teal-500'
                     }`}
                   />
-                  <span>{selectedPopup.title}</span>
+                  <span>{activePopup.title}</span>
+                  {activePopup.activeVisitors > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded text-[9px] uppercase font-semibold">
+                      Live Now
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">{selectedPopup.subtitle}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{activePopup.subtitle}</div>
               </div>
-              <button
-                type="button"
-                aria-label="Close marker popup"
-                onClick={() => setSelectedPopup(null)}
-                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              {selectedPopup && (
+                <button
+                  type="button"
+                  aria-label="Close marker popup"
+                  onClick={() => setSelectedPopup(null)}
+                  className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100 text-[11px]">
               <div>
                 <div className="text-slate-400">Active Visitors</div>
                 <div className="font-mono-tabular font-semibold text-teal-700">
-                  {selectedPopup.activeVisitors} live ({selectedPopup.totalSessions} total)
+                  {activePopup.activeVisitors} live ({activePopup.totalSessions} total)
                 </div>
               </div>
               <div>
                 <div className="text-slate-400">Orders / Sales</div>
                 <div className="font-mono-tabular font-semibold text-blue-700">
-                  {selectedPopup.orders} · ${selectedPopup.revenueUsd.toLocaleString('en-US')}
+                  {activePopup.orders} · ${activePopup.revenueUsd.toLocaleString('en-US')}
                 </div>
               </div>
             </div>
-            {selectedPopup.path && (
+            {activePopup.path && (
               <div className="text-[10px] font-mono-tabular text-slate-500 truncate pt-1 border-t border-slate-100">
-                Page: {selectedPopup.path}
+                Active page: {activePopup.path}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Clickable Live Visitor Countries Quick Strip Inside Bottom-Left of Globe */}
+        {visitorCountries.length > 0 && (
+          <div
+            data-testid="globe-live-countries-bar"
+            className="absolute bottom-3 left-5 z-20 flex flex-wrap items-center gap-1.5 max-w-[75%]"
+          >
+            {visitorCountries.slice(0, 6).map((vc) => {
+              const cc = vc.country_code.toUpperCase();
+              const isSelected = activePopup?.title?.includes(`(${cc})`);
+              return (
+                <button
+                  key={vc.country_code}
+                  type="button"
+                  data-testid={`globe-country-pill-${cc}`}
+                  onClick={() => handleSelectVisitorCountry(vc)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium border shadow-xs inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-teal-600 text-white border-teal-700'
+                      : 'bg-white text-slate-700 border-slate-200 hover:border-teal-500'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      vc.active_count > 0
+                        ? isSelected
+                          ? 'bg-white'
+                          : 'bg-teal-500'
+                        : 'bg-slate-300'
+                    }`}
+                  />
+                  <span>{vc.country}</span>
+                  <span className={`font-mono-tabular text-[10px] ${isSelected ? 'text-teal-100' : 'text-slate-400'}`}>
+                    {vc.active_count} live
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 

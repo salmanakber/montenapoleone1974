@@ -1039,49 +1039,58 @@ const COUNTRY_GEO_COORDS: Record<
   AE: { country: 'United Arab Emirates', city: 'Dubai', lat: 25.2048, lng: 55.2708 },
 };
 
+const TIMEZONE_TO_COUNTRY_CODE: Record<string, { cc: string; city: string; lat: number; lng: number }> = {
+  'Europe/Oslo': { cc: 'NO', city: 'Oslo', lat: 59.9139, lng: 10.7522 },
+  'Europe/Rome': { cc: 'IT', city: 'Milan', lat: 45.4642, lng: 9.19 },
+  'Asia/Ho_Chi_Minh': { cc: 'VN', city: 'Ho Chi Minh City', lat: 10.8231, lng: 106.6297 },
+  'Asia/Saigon': { cc: 'VN', city: 'Ho Chi Minh City', lat: 10.8231, lng: 106.6297 },
+  'Asia/Hanoi': { cc: 'VN', city: 'Hanoi', lat: 21.0278, lng: 105.8342 },
+  'Europe/London': { cc: 'GB', city: 'London', lat: 51.5072, lng: -0.1276 },
+  'Europe/Berlin': { cc: 'DE', city: 'Berlin', lat: 52.52, lng: 13.405 },
+  'Europe/Paris': { cc: 'FR', city: 'Paris', lat: 48.8566, lng: 2.3522 },
+  'Europe/Stockholm': { cc: 'SE', city: 'Stockholm', lat: 59.3293, lng: 18.0686 },
+  'Europe/Copenhagen': { cc: 'DK', city: 'Copenhagen', lat: 55.6761, lng: 12.5683 },
+  'Europe/Zurich': { cc: 'CH', city: 'Zurich', lat: 47.3769, lng: 8.5417 },
+  'Europe/Amsterdam': { cc: 'NL', city: 'Amsterdam', lat: 52.3676, lng: 4.9041 },
+  'Europe/Madrid': { cc: 'ES', city: 'Madrid', lat: 40.4168, lng: -3.7038 },
+  'Europe/Vienna': { cc: 'AT', city: 'Vienna', lat: 48.2082, lng: 16.3738 },
+  'Europe/Brussels': { cc: 'BE', city: 'Brussels', lat: 50.8503, lng: 4.3517 },
+  'America/New_York': { cc: 'US', city: 'New York', lat: 40.7128, lng: -74.006 },
+  'America/Chicago': { cc: 'US', city: 'Chicago', lat: 41.8781, lng: -87.6298 },
+  'America/Denver': { cc: 'US', city: 'Denver', lat: 39.7392, lng: -104.9903 },
+  'America/Los_Angeles': { cc: 'US', city: 'Los Angeles', lat: 34.0522, lng: -118.2437 },
+  'America/Toronto': { cc: 'CA', city: 'Toronto', lat: 43.6532, lng: -79.3832 },
+  'America/Vancouver': { cc: 'CA', city: 'Vancouver', lat: 49.2827, lng: -123.1207 },
+  'Australia/Sydney': { cc: 'AU', city: 'Sydney', lat: -33.8688, lng: 151.2093 },
+  'Asia/Tokyo': { cc: 'JP', city: 'Tokyo', lat: 35.6762, lng: 139.6503 },
+  'Asia/Singapore': { cc: 'SG', city: 'Singapore', lat: 1.3521, lng: 103.8198 },
+  'Asia/Seoul': { cc: 'KR', city: 'Seoul', lat: 37.5665, lng: 126.978 },
+  'Asia/Dubai': { cc: 'AE', city: 'Dubai', lat: 25.2048, lng: 55.2708 },
+};
+
+const ipGeoCache = new Map<
+  string,
+  { expiresAt: number; data: { country: string; country_code: string; city: string; lat: number; lng: number } }
+>();
+
 export async function resolveVisitorGeo(
   ipAddress: string | undefined,
   regionCode: RegionCode,
-  proxyCountryHeader?: string | undefined
+  proxyCountryHeader?: string | undefined,
+  clientTimezone?: string | undefined,
+  clientLocale?: string | undefined
 ): Promise<{ country: string; country_code: string; city: string; lat: number; lng: number }> {
-  const cleanIp = (ipAddress || '').split(',')[0].trim();
+  const cleanIp = (ipAddress || '').split(',')[0].trim().replace(/^::ffff:/, '');
   const isPrivate =
     !cleanIp ||
     cleanIp === '::1' ||
     cleanIp.startsWith('127.') ||
     cleanIp.startsWith('10.') ||
     cleanIp.startsWith('192.168.') ||
-    cleanIp.startsWith('172.16.') ||
-    cleanIp.startsWith('172.17.') ||
-    cleanIp.startsWith('172.18.') ||
-    cleanIp.startsWith('172.19.') ||
-    cleanIp.startsWith('::ffff:127.');
+    cleanIp.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(cleanIp);
 
-  const geoToken = getResolvedSecret('GEOIP_API_KEY');
-  if (!isPrivate && geoToken) {
-    try {
-      const resp = await fetch(`https://ipinfo.io/${encodeURIComponent(cleanIp)}?token=${encodeURIComponent(geoToken)}`);
-      if (resp.ok) {
-        const d = (await resp.json()) as { city?: string; country?: string; loc?: string };
-        const [latStr, lngStr] = (d.loc || '').split(',');
-        const lat = Number(latStr);
-        const lng = Number(lngStr);
-        const cc = String(d.country || '').toUpperCase();
-        if (Number.isFinite(lat) && Number.isFinite(lng) && cc) {
-          return {
-            country: COUNTRY_GEO_COORDS[cc]?.country || cc,
-            country_code: cc,
-            city: d.city || COUNTRY_GEO_COORDS[cc]?.city || cc,
-            lat,
-            lng,
-          };
-        }
-      }
-    } catch {
-      // fall through gracefully
-    }
-  }
-
+  // 1. Trust verified CDN / Cloud proxy country headers first when present
   const headerCode = String(proxyCountryHeader || '')
     .trim()
     .toUpperCase()
@@ -1091,6 +1100,101 @@ export async function resolveVisitorGeo(
     return {
       country: match.country,
       country_code: headerCode,
+      city: match.city,
+      lat: match.lat,
+      lng: match.lng,
+    };
+  }
+
+  // 2. Public IP GeoIP lookup (cached 1h per IP; uses ipinfo token if configured, else ipwho.is)
+  if (!isPrivate) {
+    const cached = ipGeoCache.get(cleanIp);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+
+    const geoToken = getResolvedSecret('GEOIP_API_KEY');
+    if (geoToken) {
+      try {
+        const resp = await fetch(
+          `https://ipinfo.io/${encodeURIComponent(cleanIp)}?token=${encodeURIComponent(geoToken)}`,
+          { signal: AbortSignal.timeout(2500) }
+        );
+        if (resp.ok) {
+          const d = (await resp.json()) as { city?: string; country?: string; loc?: string };
+          const [latStr, lngStr] = (d.loc || '').split(',');
+          const lat = Number(latStr);
+          const lng = Number(lngStr);
+          const cc = String(d.country || '').toUpperCase();
+          if (Number.isFinite(lat) && Number.isFinite(lng) && cc) {
+            const resolved = {
+              country: COUNTRY_GEO_COORDS[cc]?.country || cc,
+              country_code: cc,
+              city: d.city || COUNTRY_GEO_COORDS[cc]?.city || cc,
+              lat,
+              lng,
+            };
+            ipGeoCache.set(cleanIp, { expiresAt: Date.now() + 3600_000, data: resolved });
+            return resolved;
+          }
+        }
+      } catch {
+        // fall through to public IP lookup
+      }
+    }
+
+    try {
+      const resp = await fetch(`https://ipwho.is/${encodeURIComponent(cleanIp)}`, {
+        signal: AbortSignal.timeout(2500),
+      });
+      if (resp.ok) {
+        const d = (await resp.json()) as {
+          success?: boolean;
+          country?: string;
+          country_code?: string;
+          city?: string;
+          latitude?: number;
+          longitude?: number;
+        };
+        const cc = String(d.country_code || '').toUpperCase();
+        if (d.success !== false && cc && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude))) {
+          const resolved = {
+            country: d.country || COUNTRY_GEO_COORDS[cc]?.country || cc,
+            country_code: cc,
+            city: d.city || COUNTRY_GEO_COORDS[cc]?.city || cc,
+            lat: Number(d.latitude),
+            lng: Number(d.longitude),
+          };
+          ipGeoCache.set(cleanIp, { expiresAt: Date.now() + 3600_000, data: resolved });
+          return resolved;
+        }
+      }
+    } catch {
+      // fall through to timezone/locale inference
+    }
+  }
+
+  // 3. Browser IANA Timezone & Locale inference (works cleanly locally or when CDN headers are absent)
+  const tzClean = String(clientTimezone || '').trim();
+  if (tzClean && TIMEZONE_TO_COUNTRY_CODE[tzClean]) {
+    const tzMatch = TIMEZONE_TO_COUNTRY_CODE[tzClean];
+    const base = COUNTRY_GEO_COORDS[tzMatch.cc];
+    return {
+      country: base?.country || tzMatch.cc,
+      country_code: tzMatch.cc,
+      city: tzMatch.city || base?.city || tzMatch.cc,
+      lat: tzMatch.lat,
+      lng: tzMatch.lng,
+    };
+  }
+
+  const localeParts = String(clientLocale || '').trim().split(/[-_]/);
+  const localeCountry = localeParts.length >= 2 ? localeParts[1].toUpperCase().slice(0, 2) : '';
+  if (localeCountry && COUNTRY_GEO_COORDS[localeCountry]) {
+    const match = COUNTRY_GEO_COORDS[localeCountry];
+    return {
+      country: match.country,
+      country_code: localeCountry,
       city: match.city,
       lat: match.lat,
       lng: match.lng,

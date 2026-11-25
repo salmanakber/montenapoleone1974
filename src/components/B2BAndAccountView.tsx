@@ -195,10 +195,26 @@ export const B2BView: React.FC<B2BViewProps> = ({
     [categories]
   );
 
+  const [canScrollB2BCarousel, setCanScrollB2BCarousel] = useState(false);
+
   const b2bTopCategories = useMemo(
     () => b2bVisibleCategories.filter((c) => !c.parent_id),
     [b2bVisibleCategories]
   );
+
+  useEffect(() => {
+    const el = b2bCatCarouselRef.current;
+    if (!el) return;
+    const update = () => setCanScrollB2BCarousel(el.scrollWidth > el.clientWidth + 4);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [b2bTopCategories.length]);
 
   const activeB2BCategory = useMemo(
     () => b2bVisibleCategories.find((c) => c.slug === selectedCategory) || null,
@@ -930,32 +946,34 @@ export const B2BView: React.FC<B2BViewProps> = ({
       {/* VIEW 3: DEFAULT MONTE CONNECTED B2B PRICE-FREE 4-COL CATALOG */}
       {!submittedId && !showCheckoutSummary && !activeProduct && (
         <div className="space-y-6">
-          {/* Mobile Horizontal Carousel / Desktop Auto-Adjusted Category Bar */}
+          {/* 70% Viewport Width Horizontally Scrollable B2B Category Bar with Full-Height Active State */}
           <div className="flex flex-col items-center gap-2.5">
             <div
               data-testid="b2b-category-carousel"
-              className="w-full max-w-full flex items-center gap-1.5 bg-white border border-black/10 shadow-sm rounded-xl p-1.5 md:px-4"
+              className="w-full lg:w-[70%] max-w-full mx-auto flex items-stretch bg-white border border-black/15 shadow-sm rounded-xl overflow-hidden"
             >
-              <button
-                type="button"
-                onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
-                aria-label="Scroll B2B categories left"
-                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
+              {canScrollB2BCarousel && (
+                <button
+                  type="button"
+                  onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
+                  aria-label="Scroll B2B categories left"
+                  className="px-2.5 flex items-center justify-center border-r border-black/10 text-neutral-600 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              )}
 
               <nav
                 ref={b2bCatCarouselRef}
                 aria-label="B2B shirt categories"
-                className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5 md:flex-wrap md:justify-center md:overflow-visible"
+                className="flex-1 flex items-stretch overflow-x-auto no-scrollbar scroll-smooth snap-x"
               >
                 <button
                   type="button"
                   onClick={() => setSelectedCategory('all')}
-                  className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`snap-start flex-none sm:flex-1 min-w-fit px-5 py-3.5 text-xs flex items-center justify-center border-r border-black/10 last:border-r-0 transition-colors whitespace-nowrap cursor-pointer ${
                     selectedCategory === 'all'
-                      ? 'bg-[#142B4E] text-white font-medium'
+                      ? 'bg-[#142B4E] text-white font-semibold'
                       : 'text-neutral-700 hover:bg-neutral-100'
                   }`}
                 >
@@ -966,9 +984,9 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     key={cat.slug}
                     type="button"
                     onClick={() => setSelectedCategory(cat.slug)}
-                    className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`snap-start flex-none sm:flex-1 min-w-fit px-5 py-3.5 text-xs flex items-center justify-center border-r border-black/10 last:border-r-0 transition-colors whitespace-nowrap cursor-pointer ${
                       selectedCategory === cat.slug || activeB2BParent?.id === cat.id
-                        ? 'bg-[#142B4E] text-white font-medium'
+                        ? 'bg-[#142B4E] text-white font-semibold'
                         : 'text-neutral-700 hover:bg-neutral-100'
                     }`}
                   >
@@ -977,14 +995,16 @@ export const B2BView: React.FC<B2BViewProps> = ({
                 ))}
               </nav>
 
-              <button
-                type="button"
-                onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
-                aria-label="Scroll B2B categories right"
-                className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              {canScrollB2BCarousel && (
+                <button
+                  type="button"
+                  onClick={() => b2bCatCarouselRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
+                  aria-label="Scroll B2B categories right"
+                  className="px-2.5 flex items-center justify-center border-l border-black/10 text-neutral-600 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             {b2bChildCategories.length > 0 && activeB2BParent && (

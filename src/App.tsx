@@ -240,6 +240,14 @@ export default function App() {
       sid = `v-${Date.now()}`;
     }
     const sendHeartbeat = () => {
+      let tz = '';
+      let loc = '';
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        loc = navigator.language || '';
+      } catch {
+        // ignore
+      }
       fetch('/api/analytics/visit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,6 +255,8 @@ export default function App() {
           sessionId: sid,
           regionCode,
           path: window.location.pathname || activeView,
+          timezone: tz,
+          locale: loc,
         }),
       }).catch(() => {});
     };

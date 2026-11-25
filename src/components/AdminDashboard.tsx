@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowRight,
   BarChart3,
   Boxes,
   Building2,
@@ -12,6 +13,7 @@ import {
   FolderTree,
   Gift,
   Globe,
+  GripVertical,
   Image as ImageIcon,
   KeyRound,
   Layers,
@@ -242,9 +244,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Product & Menu Editor Modal
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editGallerySlots, setEditGallerySlots] = useState<string[]>(['', '', '']);
+  const [dragGalleryIdx, setDragGalleryIdx] = useState<number | null>(null);
+  const [dragOverGalleryIdx, setDragOverGalleryIdx] = useState<number | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
+  const [syncingExternalMedia, setSyncingExternalMedia] = useState(false);
+  const [mediaSyncMsg, setMediaSyncMsg] = useState<string | null>(null);
   const [mediaPickerTarget, setMediaPickerTarget] = useState<
-    'primary' | 'secondary' | 'tailoring' | 'menu' | 'hero' | null
+    'primary' | 'secondary' | 'tailoring' | 'menu' | 'hero' | { type: 'gallery'; index: number } | null
   >(null);
   const [tailoringPickerCb, setTailoringPickerCb] = useState<((url: string) => void) | null>(null);
 
@@ -551,7 +558,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const data = await res.json();
       if (res.ok) {
         setCsvResultMsg(
-          `WooCommerce Import complete: ${data.importedCount} product(s) (${data.createdCount} created, ${data.updatedCount} updated, ${data.categoriesCreated} categories, ${data.variantsSynced ?? 0} size variants synced${data.translatedWithAi ? ' · AI EN/NO/IT/VN localized' : ' · EN/NO/IT/VN localized'}).`
+          `WooCommerce Import complete: ${data.importedCount} product(s) (${data.createdCount} created, ${data.updatedCount} updated, ${data.categoriesCreated} categories, ${data.variantsSynced ?? 0} size variants, ${data.mediaDownloadedCount ?? 0} images downloaded to Media Library, ${data.mediaReusedCount ?? 0} cached${data.translatedWithAi ? ' · AI EN/NO/IT/VN localized' : ' · EN/NO/IT/VN localized'}).`
         );
         loadAdminData();
         onRefreshStorefront();
@@ -794,6 +801,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleSyncExternalProductMedia = async () => {
+    if (!authToken || syncingExternalMedia) return;
+    setSyncingExternalMedia(true);
+    setMediaSyncMsg(null);
+    try {
+      const res = await fetch('/api/admin/media/sync-external-products', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const msg = `Synced external product media: ${data.downloadedCount} downloaded into Media Library (${data.reusedCount} cached, ${data.updatedProducts} product(s) updated).`;
+        setMediaSyncMsg(msg);
+        setCsvResultMsg((prev) => (prev ? `${prev} · ${msg}` : msg));
+        await loadAdminData();
+        onRefreshStorefront();
+      } else {
+        setMediaSyncMsg(data.error || 'Could not sync external product images.');
+      }
+    } catch {
+      setMediaSyncMsg('Network error syncing external product images.');
+    } finally {
+      setSyncingExternalMedia(false);
+    }
+  };
+
+  const handleMoveGallerySlot = (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || toIdx < 0 || toIdx >= editGallerySlots.length) return;
+    setEditGallerySlots((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  };
+
   const handleSaveProductEdit = async () => {
     if (!authToken || !editingProduct) return;
     const assigned =
@@ -807,8 +850,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           .map((v) => v.size_label)
       )
     );
+    const cleanedGallerySlots = editGallerySlots.map((u) => u.trim()).filter(Boolean);
+    const orderedGallery = Array.from(
+      new Set([editingProduct.primary_image, ...cleanedGallerySlots].filter(Boolean))
+    );
+    const nextSecondary =
+      cleanedGallerySlots[0] || editingProduct.secondary_image || editingProduct.primary_image;
+
     const payload: Product = {
       ...editingProduct,
+      secondary_image: nextSecondary,
+      gallery: orderedGallery,
       category_slug: assigned[0],
       category_slugs: assigned,
       sizes: activeVariantSizes.length > 0 ? activeVariantSizes : editingProduct.sizes,
@@ -1758,6 +1810,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       >
                         {isWooCommerceCsvHeader(csvText) ? 'Import WooCommerce Products' : 'Apply Bulk Import'}
                       </button>
+                      <button
+                        type="button"
+                        data-testid="sync-external-media-btn"
+                        disabled={syncingExternalMedia}
+                        onClick={handleSyncExternalProductMedia}
+                        className="px-3.5 py-1.5 border border-[#142B4E] text-[#142B4E] bg-white hover:bg-[#142B4E]/5 uppercase tracking-wider font-medium cursor-pointer disabled:opacity-50"
+                      >
+                        {syncingExternalMedia ? 'Downloading Images...' : 'Download External Images to Media'}
+                      </button>
                     </div>
                     {csvResultMsg && <span className="text-[#4F8A47] font-medium">{csvResultMsg}</span>}
                   </div>
@@ -2011,6 +2072,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       if (!cloned.variants || cloned.variants.length === 0) {
                                         cloned.variants = variants.filter((v) => v.product_id === p.id);
                                       }
+                                      const rawGallery = Array.isArray(cloned.gallery) ? cloned.gallery : [];
+                                      const extraGallery = rawGallery.filter(
+                                        (u) => Boolean(u) && u !== cloned.primary_image
+                                      );
+                                      if (
+                                        extraGallery.length === 0 &&
+                                        cloned.secondary_image &&
+                                        cloned.secondary_image !== cloned.primary_image
+                                      ) {
+                                        extraGallery.push(cloned.secondary_image);
+                                      }
+                                      while (extraGallery.length < 3) {
+                                        extraGallery.push('');
+                                      }
+                                      setEditGallerySlots(extraGallery);
+                                      setDragGalleryIdx(null);
+                                      setDragOverGalleryIdx(null);
                                       setEditVarFitInput('');
                                       setEditVarSizeInput('');
                                       setEditingProduct(cloned);
@@ -2664,7 +2742,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           {/* WORDPRESS-STYLE MEDIA LIBRARY */}
           {safeActiveTab === 'media' && authToken && hasPermission(authUser, 'manage_media') && (
-            <MediaLibraryPanel authToken={authToken} media={media} onRefresh={loadAdminData} />
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 pb-3">
+                <div>
+                  <h1 className="text-base font-semibold uppercase tracking-wide">
+                    Media Library & Imported Product Assets
+                  </h1>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    Local uploaded and WooCommerce-downloaded images saved cleanly in server folders.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="media-tab-sync-external-btn"
+                  disabled={syncingExternalMedia}
+                  onClick={handleSyncExternalProductMedia}
+                  className="px-4 py-2 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-xs uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingExternalMedia ? 'animate-spin' : ''}`} />
+                  <span>
+                    {syncingExternalMedia
+                      ? 'Downloading Product Images...'
+                      : 'Sync External Product Images to Media'}
+                  </span>
+                </button>
+              </div>
+              {mediaSyncMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+                  {mediaSyncMsg}
+                </div>
+              )}
+              <MediaLibraryPanel authToken={authToken} media={media} onRefresh={loadAdminData} />
+            </div>
           )}
 
           {/* B2B INQUIRIES, QUOTE PRICING & CONVERSION TO OFFICIAL B2B ORDER */}
@@ -3340,41 +3449,179 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div className="flex items-center gap-3 border border-neutral-200 p-3">
-                <img
-                  src={editingProduct.primary_image}
-                  alt="Primary"
-                  referrerPolicy="no-referrer"
-                  className="w-16 h-16 object-cover bg-[#E6E6E6]"
-                />
+            <div
+              data-testid="edit-product-gallery-editor"
+              className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-4 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <div className="font-medium">Primary Studio Photo</div>
+                  <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                    Primary Image &amp; Draggable Gallery Images (3+ Slots)
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-0.5">
+                    Drag gallery cards (or use ← / → controls) to reorder how photos appear on the product page. Gallery #1 doubles as the hover editorial photo.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditGallerySlots((prev) => [...prev, ''])}
+                  className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] bg-white hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
+                >
+                  + Add Gallery Slot
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                {/* Primary Main Image Card */}
+                <div className="lg:col-span-4 bg-white border-2 border-[#142B4E] p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2 py-0.5 bg-[#142B4E] text-white text-[10px] uppercase tracking-wider font-semibold">
+                      Primary Image
+                    </span>
+                    <span className="text-[10px] text-neutral-500 font-mono-tabular">Lead Photo</span>
+                  </div>
+                  <div className="aspect-[4/5] w-full bg-[#ECECEC] overflow-hidden border border-neutral-200 flex items-center justify-center">
+                    {editingProduct.primary_image ? (
+                      <img
+                        src={editingProduct.primary_image}
+                        alt="Primary product"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-[11px] text-neutral-400">No primary photo</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={editingProduct.primary_image || ''}
+                    onChange={(e) =>
+                      setEditingProduct((prev) =>
+                        prev ? { ...prev, primary_image: e.target.value } : prev
+                      )
+                    }
+                    placeholder="/uploads/..."
+                    className="w-full px-2 py-1 border border-neutral-300 text-[11px] font-mono-tabular bg-white"
+                  />
                   <button
                     type="button"
                     onClick={() => setMediaPickerTarget('primary')}
-                    className="mt-1 text-[#142B4E] hover:underline cursor-pointer"
+                    className="w-full py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
                   >
-                    Choose from Media Library
+                    Choose Primary from Media
                   </button>
                 </div>
-              </div>
-              <div className="flex items-center gap-3 border border-neutral-200 p-3">
-                <img
-                  src={editingProduct.secondary_image}
-                  alt="Secondary"
-                  referrerPolicy="no-referrer"
-                  className="w-16 h-16 object-cover bg-[#E6E6E6]"
-                />
-                <div>
-                  <div className="font-medium">Secondary Editorial Photo</div>
-                  <button
-                    type="button"
-                    onClick={() => setMediaPickerTarget('secondary')}
-                    className="mt-1 text-[#142B4E] hover:underline cursor-pointer"
-                  >
-                    Choose from Media Library
-                  </button>
+
+                {/* Draggable Gallery Slots (minimum 3) */}
+                <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {editGallerySlots.map((slotUrl, idx) => (
+                    <div
+                      key={`gallery-slot-${idx}`}
+                      data-testid={`gallery-slot-${idx}`}
+                      draggable
+                      onDragStart={() => setDragGalleryIdx(idx)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (dragOverGalleryIdx !== idx) setDragOverGalleryIdx(idx);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
+                          handleMoveGallerySlot(dragGalleryIdx, idx);
+                        }
+                        setDragGalleryIdx(null);
+                        setDragOverGalleryIdx(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragGalleryIdx(null);
+                        setDragOverGalleryIdx(null);
+                      }}
+                      className={`bg-white border p-2.5 space-y-2 transition-all cursor-grab active:cursor-grabbing ${
+                        dragOverGalleryIdx === idx
+                          ? 'border-[#142B4E] ring-2 ring-[#142B4E]/30 bg-slate-50'
+                          : 'border-neutral-200 hover:border-neutral-400'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="inline-flex items-center gap-1 font-semibold text-[11px] text-[#142B4E]">
+                          <GripVertical className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          <span>Gallery #{idx + 1}</span>
+                        </div>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveGallerySlot(idx, idx - 1)}
+                            aria-label={`Move gallery image ${idx + 1} left`}
+                            className="p-1 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <ArrowLeft className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === editGallerySlots.length - 1}
+                            onClick={() => handleMoveGallerySlot(idx, idx + 1)}
+                            aria-label={`Move gallery image ${idx + 1} right`}
+                            className="p-1 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditGallerySlots((prev) =>
+                                prev.length > 3
+                                  ? prev.filter((_, j) => j !== idx)
+                                  : prev.map((v, j) => (j === idx ? '' : v))
+                              )
+                            }
+                            aria-label={`Clear gallery slot ${idx + 1}`}
+                            className="p-1 text-red-500 hover:text-red-700 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                        {slotUrl ? (
+                          <img
+                            src={slotUrl}
+                            alt={`Gallery ${idx + 1}`}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
+                        ) : (
+                          <span className="text-[10px] text-neutral-400 text-center px-2">
+                            Empty Gallery Slot
+                          </span>
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={slotUrl}
+                        onChange={(e) =>
+                          setEditGallerySlots((prev) =>
+                            prev.map((v, j) => (j === idx ? e.target.value : v))
+                          )
+                        }
+                        placeholder="Image URL..."
+                        className="w-full px-2 py-1 border border-neutral-300 text-[10px] font-mono-tabular bg-white"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
+                        className="w-full py-1 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer bg-[#FAFAFA]"
+                      >
+                        Choose from Media
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -3996,6 +4243,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   ? 'Hero Banner'
                   : mediaPickerTarget === 'primary'
                   ? 'Primary'
+                  : typeof mediaPickerTarget === 'object' && mediaPickerTarget?.type === 'gallery'
+                  ? `Gallery Slot #${mediaPickerTarget.index + 1}`
                   : 'Secondary'}{' '}
                 Image from Media Library
               </h3>
@@ -4024,6 +4273,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   tailoringPickerCb
                 ) {
                   tailoringPickerCb(asset.url);
+                } else if (
+                  typeof mediaPickerTarget === 'object' &&
+                  mediaPickerTarget?.type === 'gallery'
+                ) {
+                  const targetIdx = mediaPickerTarget.index;
+                  setEditGallerySlots((prev) => {
+                    const next = [...prev];
+                    while (next.length <= targetIdx) next.push('');
+                    next[targetIdx] = asset.url;
+                    return next;
+                  });
+                  if (targetIdx === 0 && editingProduct) {
+                    setEditingProduct((prev) =>
+                      prev ? { ...prev, secondary_image: asset.url } : prev
+                    );
+                  }
                 } else if (editingProduct) {
                   setEditingProduct((prev) =>
                     prev

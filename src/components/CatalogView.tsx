@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { CategoryRecord, Product, RegionConfig } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
@@ -36,6 +36,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 }) => {
   const [visibleLimit, setVisibleLimit] = useState(6);
   const carouselRef = useRef<HTMLDivElement>(null);
+  const [canScrollCarousel, setCanScrollCarousel] = useState(false);
 
   const scrollCarousel = (dir: -1 | 1) => {
     carouselRef.current?.scrollBy({ left: dir * 240, behavior: 'smooth' });
@@ -103,29 +104,45 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     });
   }, [products, selectedCategory, matchingCategorySlugs, searchQuery]);
 
+  useEffect(() => {
+    const el = carouselRef.current;
+    if (!el) return;
+    const update = () => setCanScrollCarousel(el.scrollWidth > el.clientWidth + 4);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [topCategories.length]);
+
   const displayedProducts = filteredProducts.slice(0, visibleLimit);
 
   return (
     <main className="pt-20 pb-20 max-w-[1720px] mx-auto px-1.5 sm:px-3 min-h-[75vh]">
-      {/* Mobile Horizontal Snap-Scroll Carousel / Desktop Auto-Adjusted Category Bar */}
-      <div className="flex flex-col items-center gap-2.5 mb-3">
+      {/* 70% Viewport Width Horizontally Scrollable Category Bar with Full-Height Active State */}
+      <div className="flex flex-col items-center gap-2.5 mb-4">
         <div
           data-testid="b2c-category-carousel"
-          className="w-full max-w-full flex items-center gap-1.5 bg-white border border-black/10 shadow-sm rounded-xl p-1.5 md:px-4"
+          className="w-full lg:w-[70%] max-w-full mx-auto flex items-stretch bg-white border border-black/15 shadow-sm rounded-xl overflow-hidden"
         >
-          <button
-            type="button"
-            onClick={() => scrollCarousel(-1)}
-            aria-label="Scroll categories left"
-            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
+          {canScrollCarousel && (
+            <button
+              type="button"
+              onClick={() => scrollCarousel(-1)}
+              aria-label="Scroll categories left"
+              className="px-2.5 flex items-center justify-center border-r border-black/10 text-neutral-600 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          )}
 
           <nav
             ref={carouselRef}
             aria-label="Product categories"
-            className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth snap-x py-0.5 md:flex-wrap md:justify-center md:overflow-visible"
+            className="flex-1 flex items-stretch overflow-x-auto no-scrollbar scroll-smooth snap-x"
           >
             <button
               type="button"
@@ -133,9 +150,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 onSelectCategory('all');
                 setVisibleLimit(9);
               }}
-              className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`snap-start flex-none sm:flex-1 min-w-fit px-5 py-3.5 text-xs flex items-center justify-center border-r border-black/10 last:border-r-0 transition-colors whitespace-nowrap cursor-pointer ${
                 selectedCategory === 'all'
-                  ? 'bg-[#142B4E] text-white font-medium'
+                  ? 'bg-[#142B4E] text-white font-semibold'
                   : 'text-neutral-700 hover:bg-neutral-100'
               }`}
             >
@@ -156,9 +173,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       setVisibleLimit(9);
                     }
                   }}
-                  className={`snap-start px-3.5 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`snap-start flex-none sm:flex-1 min-w-fit px-5 py-3.5 text-xs flex items-center justify-center border-r border-black/10 last:border-r-0 transition-colors whitespace-nowrap cursor-pointer ${
                     active
-                      ? 'bg-[#142B4E] text-white font-medium'
+                      ? 'bg-[#142B4E] text-white font-semibold'
                       : 'text-neutral-700 hover:bg-neutral-100'
                   }`}
                 >
@@ -168,14 +185,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             })}
           </nav>
 
-          <button
-            type="button"
-            onClick={() => scrollCarousel(1)}
-            aria-label="Scroll categories right"
-            className="p-1.5 rounded-lg text-neutral-500 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer md:hidden"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          {canScrollCarousel && (
+            <button
+              type="button"
+              onClick={() => scrollCarousel(1)}
+              aria-label="Scroll categories right"
+              className="px-2.5 flex items-center justify-center border-l border-black/10 text-neutral-600 hover:text-[#142B4E] hover:bg-neutral-100 shrink-0 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {childCategories.length > 0 && activeParentCategory && (

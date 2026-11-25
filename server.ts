@@ -576,17 +576,28 @@ app.post('/api/analytics/visit', async (req, res) => {
   const sessionId = rawSid || crypto.randomBytes(12).toString('hex');
   const regionCode = parseRegion(b.regionCode);
   const pathUrl = String(b.path || '/').slice(0, 120);
-  const forwarded = String(req.headers['x-forwarded-for'] || req.ip || '');
+  const forwarded = String(
+    req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.ip || ''
+  );
   const proxyCountryHeader = String(
     req.headers['cf-ipcountry'] ||
       req.headers['x-vercel-ip-country'] ||
       req.headers['x-country-code'] ||
       req.headers['x-appengine-country'] ||
+      req.headers['x-geo-country'] ||
       ''
   ).trim();
+  const clientTimezone = String(b.timezone || '').trim().slice(0, 80);
+  const clientLocale = String(b.locale || req.headers['accept-language'] || '').trim().slice(0, 40);
 
   try {
-    const geo = await resolveVisitorGeo(forwarded, regionCode, proxyCountryHeader);
+    const geo = await resolveVisitorGeo(
+      forwarded,
+      regionCode,
+      proxyCountryHeader,
+      clientTimezone,
+      clientLocale
+    );
     db.prepare(
       `INSERT INTO visitor_sessions (
         session_id, country, country_code, city, region_code, lat, lng, current_path, last_seen_at
@@ -3749,6 +3760,234 @@ app.post('/api/admin/import/products', requireStaffOrOwner, (req: AuthedRequest,
   res.json({ ok: true, updatedCount, skippedCount });
 });
 
+function isSafeRemoteImageUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    const host = parsed.hostname.toLowerCase();
+    if (
+      !host ||
+      host === 'localhost' ||
+      host === '::1' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function mirrorExternalImagesToLocalMedia(
+  urls: string[],
+  uploadedBy: string
+): Promise<{ urlMap: Map<string, string>; downloadedCount: number; reusedCount: number }> {
+  const uniqueUrls = Array.from(
+    new Set(urls.map((u) => String(u || '').trim()).filter((u) => isSafeRemoteImageUrl(u)))
+  );
+  const urlMap = new Map<string, string>();
+  let downloadedCount = 0;
+  let reusedCount = 0;
+  if (uniqueUrls.length === 0) return { urlMap, downloadedCount, reusedCount };
+
+  const existingByUrl = new Map<string, string>();
+  const existingRows = db
+    .prepare('SELECT filename, url, caption FROM media')
+    .all() as Array<{ filename: string; url: string; caption?: string }>;
+  for (const er of existingRows) {
+    if (er.caption && er.url) existingByUrl.set(er.caption, er.url);
+  }
+
+  const extFromMime = (mime: string): string => {
+    if (mime.includes('png')) return '.png';
+    if (mime.includes('webp')) return '.webp';
+    if (mime.includes('avif')) return '.avif';
+    if (mime.includes('gif')) return '.gif';
+    return '.jpg';
+  };
+
+  const pendingToFetch: Array<{ sourceUrl: string; filename: string }> = [];
+
+  for (const src of uniqueUrls) {
+    const knownLocal = existingByUrl.get(src);
+    if (knownLocal && knownLocal.startsWith('/uploads/')) {
+      const diskPath = path.resolve(UPLOADS_DIR, path.basename(knownLocal));
+      if (diskPath.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(diskPath)) {
+        urlMap.set(src, knownLocal);
+        reusedCount++;
+        continue;
+      }
+    }
+
+    const parsed = new URL(src);
+    const hash = crypto.createHash('sha1').update(src).digest('hex').slice(0, 8);
+    const baseRaw =
+      path
+        .basename(parsed.pathname)
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase() || 'shirt-image';
+    const hasExt = /\.(jpe?g|png|webp|avif|gif)$/i.test(baseRaw);
+    const safeFilename = `woo-${hash}-${hasExt ? baseRaw : `${baseRaw}.jpg`}`.slice(0, 110);
+    const diskPath = path.resolve(UPLOADS_DIR, safeFilename);
+    const localUrl = `/uploads/${safeFilename}`;
+
+    if (fs.existsSync(diskPath)) {
+      const stat = fs.statSync(diskPath);
+      if (stat.size > 0) {
+        urlMap.set(src, localUrl);
+        reusedCount++;
+        const cleanOriginal = safeFilename.replace(/^woo-[a-f0-9]+-/i, '');
+        db.prepare(
+          `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
+           SELECT ?, ?, ?, 'products', 'image/jpeg', ?, 1200, 1500, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
+        ).run(
+          safeFilename,
+          cleanOriginal,
+          localUrl,
+          stat.size,
+          cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+          src,
+          uploadedBy,
+          localUrl
+        );
+        continue;
+      }
+    }
+
+    pendingToFetch.push({ sourceUrl: src, filename: safeFilename });
+  }
+
+  const CONCURRENCY = 20;
+  for (let i = 0; i < pendingToFetch.length; i += CONCURRENCY) {
+    const batch = pendingToFetch.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async ({ sourceUrl, filename }) => {
+        try {
+          const resp = await fetch(sourceUrl, {
+            signal: AbortSignal.timeout(5500),
+            headers: { 'User-Agent': 'MonteNapoleoneCatalogSync/1.0' },
+          });
+          if (!resp.ok) return;
+          const contentType = String(resp.headers.get('content-type') || 'image/jpeg').toLowerCase();
+          if (!contentType.startsWith('image/')) return;
+          const arrayBuf = await resp.arrayBuffer();
+          if (arrayBuf.byteLength === 0 || arrayBuf.byteLength > 8 * 1024 * 1024) return;
+          const finalFilename = /\.(jpe?g|png|webp|avif|gif)$/i.test(filename)
+            ? filename
+            : `${filename}${extFromMime(contentType)}`;
+          const diskPath = path.resolve(UPLOADS_DIR, finalFilename);
+          if (!diskPath.startsWith(UPLOADS_DIR + path.sep)) return;
+          fs.writeFileSync(diskPath, Buffer.from(arrayBuf));
+          const localUrl = `/uploads/${finalFilename}`;
+          urlMap.set(sourceUrl, localUrl);
+          downloadedCount++;
+
+          const cleanOriginal = finalFilename.replace(/^woo-[a-f0-9]+-/i, '');
+          db.prepare(
+            `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
+             SELECT ?, ?, ?, 'products', ?, ?, 1200, 1500, ?, ?, ?
+             WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
+          ).run(
+            finalFilename,
+            cleanOriginal,
+            localUrl,
+            contentType.split(';')[0].trim(),
+            arrayBuf.byteLength,
+            cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+            sourceUrl,
+            uploadedBy,
+            localUrl
+          );
+        } catch {
+          // keep original URL gracefully if remote host rejects or times out
+        }
+      })
+    );
+  }
+
+  return { urlMap, downloadedCount, reusedCount };
+}
+
+// Mirror existing external product primary/secondary/gallery URLs into local uploads + Media Library
+app.post('/api/admin/media/sync-external-products', requireStaffOrOwner, async (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_media') && !hasPermission(user, 'manage_products')) {
+    res.status(403).json({ error: 'Media sync permission required.' });
+    return;
+  }
+
+  const productRows = db
+    .prepare('SELECT id, primary_image, secondary_image, gallery_json FROM products')
+    .all() as Array<{ id: number; primary_image: string; secondary_image: string; gallery_json: string }>;
+
+  const allUrls: string[] = [];
+  for (const pr of productRows) {
+    if (isSafeRemoteImageUrl(pr.primary_image)) allUrls.push(pr.primary_image);
+    if (isSafeRemoteImageUrl(pr.secondary_image)) allUrls.push(pr.secondary_image);
+    try {
+      const g = JSON.parse(pr.gallery_json || '[]') as string[];
+      if (Array.isArray(g)) {
+        for (const u of g) {
+          if (isSafeRemoteImageUrl(u)) allUrls.push(u);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const { urlMap, downloadedCount, reusedCount } = await mirrorExternalImagesToLocalMedia(
+    allUrls,
+    user.email
+  );
+
+  let updatedProducts = 0;
+  const updateStmt = db.prepare(
+    'UPDATE products SET primary_image = ?, secondary_image = ?, gallery_json = ? WHERE id = ?'
+  );
+  const tx = db.transaction(() => {
+    for (const pr of productRows) {
+      const nextPrimary = urlMap.get(pr.primary_image) || pr.primary_image;
+      const nextSecondary = urlMap.get(pr.secondary_image) || pr.secondary_image;
+      let gallery: string[] = [];
+      try {
+        const parsedG = JSON.parse(pr.gallery_json || '[]');
+        if (Array.isArray(parsedG)) {
+          gallery = parsedG.map((u) => urlMap.get(String(u)) || String(u));
+        }
+      } catch {
+        gallery = [];
+      }
+      if (
+        nextPrimary !== pr.primary_image ||
+        nextSecondary !== pr.secondary_image ||
+        JSON.stringify(gallery) !== pr.gallery_json
+      ) {
+        updateStmt.run(nextPrimary, nextSecondary, JSON.stringify(gallery), pr.id);
+        updatedProducts++;
+      }
+    }
+  });
+  tx();
+
+  logAudit(
+    user,
+    'MEDIA_EXTERNAL_SYNCED',
+    `${updatedProducts} products`,
+    `Downloaded ${downloadedCount} new image(s), reused ${reusedCount} cached image(s)`
+  );
+  res.json({ ok: true, downloadedCount, reusedCount, updatedProducts });
+});
+
 // Full WooCommerce CSV Product + Variations + Hierarchical Category + Multi-Language Rewriter
 app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: AuthedRequest, res) => {
   const user = req.authUser!;
@@ -3906,6 +4145,20 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     }
   }
 
+  const allRemoteImageUrls: string[] = [];
+  for (const r of rows) {
+    if (Array.isArray(r.images)) {
+      for (const imgUrl of r.images) {
+        if (imgUrl) allRemoteImageUrls.push(imgUrl);
+      }
+    }
+  }
+  const {
+    urlMap: mirroredImageMap,
+    downloadedCount: mediaDownloadedCount,
+    reusedCount: mediaReusedCount,
+  } = await mirrorExternalImagesToLocalMedia(allRemoteImageUrls, user.email);
+
   let createdProducts = 0;
   let updatedProducts = 0;
   let createdCategories = 0;
@@ -3967,9 +4220,12 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
       const regionPrices = convertBasePriceAcrossRegions(basePrice, sourceRc);
       const regionCompare = compareAt ? convertBasePriceAcrossRegions(compareAt, sourceRc) : null;
 
-      const primaryImg = row.images?.[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
-      const secondaryImg = row.images?.[1] || primaryImg;
-      const galleryArr = row.images && row.images.length > 0 ? row.images : [primaryImg];
+      const mappedImages = (row.images || [])
+        .map((u) => mirroredImageMap.get(String(u).trim()) || String(u).trim())
+        .filter(Boolean);
+      const primaryImg = mappedImages[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
+      const secondaryImg = mappedImages[1] || primaryImg;
+      const galleryArr = mappedImages.length > 0 ? mappedImages : [primaryImg];
       const sizes =
         Array.isArray(row.sizes) && row.sizes.length > 0
           ? row.sizes
@@ -4162,7 +4418,7 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     user,
     'WOOCOMMERCE_CSV_IMPORTED',
     `${rows.length} SKUs`,
-    `Created ${createdProducts}, updated ${updatedProducts}, categories ${createdCategories}, variants ${variantsSynced}${translatedWithAi ? ' (AI multilingual)' : ''}`
+    `Created ${createdProducts}, updated ${updatedProducts}, categories ${createdCategories}, variants ${variantsSynced}, media ${mediaDownloadedCount} saved (${mediaReusedCount} cached)${translatedWithAi ? ' (AI multilingual)' : ''}`
   );
   res.json({
     ok: true,
@@ -4171,6 +4427,8 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     updatedCount: updatedProducts,
     categoriesCreated: createdCategories,
     variantsSynced,
+    mediaDownloadedCount,
+    mediaReusedCount,
     translatedWithAi,
     createdProducts,
     updatedProducts,
