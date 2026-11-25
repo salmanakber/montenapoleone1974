@@ -538,7 +538,7 @@ export default function App() {
   const handleQuickAddToBag = (
     product: Product,
     size?: string,
-    fit: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit' = 'Regular Fit'
+    fit: string = 'Regular Fit'
   ) => {
     const resolvedSize =
       size && product.sizes.includes(size) ? size : product.sizes[Math.floor(product.sizes.length / 2)] || '40 / M';

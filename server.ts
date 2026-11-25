@@ -2333,6 +2333,9 @@ app.get('/api/admin/overview', requireStaffOrOwner, (_req, res) => {
 app.get('/api/admin/products', requireStaffOrOwner, (_req, res) => {
   const products = db.prepare('SELECT * FROM products ORDER BY id DESC').all() as Array<Record<string, unknown>>;
   const locs = db.prepare('SELECT * FROM product_localizations').all() as Array<Record<string, unknown>>;
+  const allVariants = db
+    .prepare('SELECT * FROM product_variants ORDER BY product_id ASC, fit ASC, size_label ASC')
+    .all() as Array<Record<string, unknown>>;
 
   const byProduct = new Map<number, Record<string, unknown>>();
   for (const loc of locs) {
@@ -2340,6 +2343,14 @@ app.get('/api/admin/products', requireStaffOrOwner, (_req, res) => {
     const map = byProduct.get(pid) || {};
     map[String(loc.region_code)] = loc;
     byProduct.set(pid, map);
+  }
+
+  const variantsByProduct = new Map<number, Array<Record<string, unknown>>>();
+  for (const v of allVariants) {
+    const pid = Number(v.product_id);
+    const list = variantsByProduct.get(pid) || [];
+    list.push({ ...v, active: Boolean(v.active) });
+    variantsByProduct.set(pid, list);
   }
 
   res.json({
@@ -2359,6 +2370,7 @@ app.get('/api/admin/products', requireStaffOrOwner, (_req, res) => {
         cuffs: JSON.parse(String(p.cuffs_json)),
         sizes: JSON.parse(String(p.sizes_json)),
         localizations: byProduct.get(Number(p.id)) || {},
+        variants: variantsByProduct.get(Number(p.id)) || [],
       };
     }),
   });
@@ -2469,9 +2481,20 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
           : parseCategorySlugs(b.category_slug || existing.category_slug, existing.category_slugs_json);
       const nextPrimaryCat = nextCatSlugs[0] || String(existing.category_slug);
 
+      const nextSizes =
+        Array.isArray(b.sizes) && b.sizes.length > 0
+          ? b.sizes.map((s: unknown) => String(s).trim()).filter(Boolean)
+          : (() => {
+              try {
+                return JSON.parse(String(existing.sizes_json || '[]')) as string[];
+              } catch {
+                return [];
+              }
+            })();
+
       db.prepare(
         `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, is_featured = ?, is_b2b_eligible = ?,
-         is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?
+         is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?
          WHERE id = ?`
       ).run(
         nextPrimaryCat,
@@ -2486,8 +2509,70 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         Array.isArray(b.gallery) && b.gallery.length > 0
           ? JSON.stringify(b.gallery)
           : String(existing.gallery_json),
+        JSON.stringify(nextSizes),
         productId
       );
+    }
+
+    if (
+      Array.isArray(b.variants) &&
+      (user.role === 'owner' || user.permissions.manage_products || user.permissions.manage_pricing || user.permissions.manage_inventory)
+    ) {
+      db.prepare('DELETE FROM product_variants WHERE product_id = ?').run(productId);
+      const upsertVar = db.prepare(
+        `INSERT INTO product_variants (
+          product_id, fit, size_label, sku_variant, price_en, price_no, price_it, price_vn,
+          stock_en, stock_no, stock_it, stock_vn, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(product_id, fit, size_label) DO UPDATE SET
+          sku_variant = excluded.sku_variant,
+          price_en = excluded.price_en,
+          price_no = excluded.price_no,
+          price_it = excluded.price_it,
+          price_vn = excluded.price_vn,
+          stock_en = excluded.stock_en,
+          stock_no = excluded.stock_no,
+          stock_it = excluded.stock_it,
+          stock_vn = excluded.stock_vn,
+          active = excluded.active`
+      );
+      const collectedSizes: string[] = [];
+      for (const rawV of b.variants as Array<Record<string, unknown>>) {
+        const fit = String(rawV.fit || '').trim();
+        const sizeLabel = String(rawV.size_label || '').trim();
+        if (!fit || !sizeLabel) continue;
+        if (!collectedSizes.includes(sizeLabel)) collectedSizes.push(sizeLabel);
+        const fitToken = fit.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 5) || 'REG';
+        const sizeToken = sizeLabel.replace(/[^A-Za-z0-9]+/g, '').toUpperCase() || 'M';
+        const skuVariant = String(rawV.sku_variant || `${String(existing.sku)}-${fitToken}-${sizeToken}`).trim();
+        const parseNullablePrice = (val: unknown) => {
+          if (val === null || val === undefined || val === '') return null;
+          const n = Number(val);
+          return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const parseStockVal = (val: unknown) => {
+          const n = Math.floor(Number(val ?? 10));
+          return Number.isFinite(n) && n >= 0 ? n : 0;
+        };
+        upsertVar.run(
+          productId,
+          fit,
+          sizeLabel,
+          skuVariant,
+          parseNullablePrice(rawV.price_en),
+          parseNullablePrice(rawV.price_no),
+          parseNullablePrice(rawV.price_it),
+          parseNullablePrice(rawV.price_vn),
+          parseStockVal(rawV.stock_en),
+          parseStockVal(rawV.stock_no),
+          parseStockVal(rawV.stock_it),
+          parseStockVal(rawV.stock_vn),
+          rawV.active === false ? 0 : 1
+        );
+      }
+      if (collectedSizes.length > 0 && (!Array.isArray(b.sizes) || b.sizes.length === 0)) {
+        db.prepare('UPDATE products SET sizes_json = ? WHERE id = ?').run(JSON.stringify(collectedSizes), productId);
+      }
     }
 
     const locs = b.localizations || {};
@@ -2523,8 +2608,47 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
   });
 
   tx();
-  logAudit(user, 'PRODUCT_UPDATED', String(existing.sku), 'Updated regional localization, SEO metadata, pricing & stock');
+  logAudit(user, 'PRODUCT_UPDATED', String(existing.sku), 'Updated regional localization, variations, SEO metadata, pricing & stock');
   res.json({ ok: true });
+});
+
+app.post('/api/admin/products/bulk-delete', requirePermission('manage_products'), (req: AuthedRequest, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? req.body.productIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
+    : [];
+
+  if (productIds.length === 0) {
+    res.status(400).json({ error: 'Select at least one product to delete.' });
+    return;
+  }
+
+  let deletedCount = 0;
+  const deletedSkus: string[] = [];
+  const tx = db.transaction(() => {
+    for (const pid of productIds) {
+      const existing = db.prepare('SELECT id, sku FROM products WHERE id = ?').get(pid) as
+        | { id: number; sku: string }
+        | undefined;
+      if (!existing) continue;
+      db.prepare('DELETE FROM stock_movements WHERE product_id = ?').run(pid);
+      const info = db.prepare('DELETE FROM products WHERE id = ?').run(pid);
+      if (info.changes > 0) {
+        deletedCount++;
+        deletedSkus.push(existing.sku);
+      }
+    }
+  });
+
+  tx();
+  if (req.authUser) {
+    logAudit(
+      req.authUser,
+      'PRODUCTS_BULK_DELETED',
+      `${deletedCount} SKUs`,
+      deletedSkus.slice(0, 12).join(', ')
+    );
+  }
+  res.json({ ok: true, deletedCount });
 });
 
 app.patch('/api/admin/inventory', requirePermission('manage_inventory'), (req: AuthedRequest, res) => {
@@ -2996,6 +3120,39 @@ app.delete('/api/admin/media/:id', requirePermission('manage_media'), (req: Auth
     logAudit(req.authUser, 'MEDIA_DELETED', String(existing.original_name), `Media #${id}`);
   }
   res.json({ ok: true });
+});
+
+app.post('/api/admin/media/bulk-delete', requirePermission('manage_media'), (req: AuthedRequest, res) => {
+  const mediaIds = Array.isArray(req.body?.mediaIds)
+    ? req.body.mediaIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
+    : [];
+
+  if (mediaIds.length === 0) {
+    res.status(400).json({ error: 'Select at least one media asset to delete.' });
+    return;
+  }
+
+  let deletedCount = 0;
+  const tx = db.transaction(() => {
+    for (const id of mediaIds) {
+      const existing = db.prepare('SELECT * FROM media WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+      if (!existing) continue;
+      if (String(existing.url).startsWith('/uploads/')) {
+        const resolved = path.resolve(UPLOADS_DIR, String(existing.filename));
+        if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
+          fs.unlinkSync(resolved);
+        }
+      }
+      const info = db.prepare('DELETE FROM media WHERE id = ?').run(id);
+      if (info.changes > 0) deletedCount++;
+    }
+  });
+
+  tx();
+  if (req.authUser) {
+    logAudit(req.authUser, 'MEDIA_BULK_DELETED', `${deletedCount} assets`, `IDs: ${mediaIds.slice(0, 12).join(',')}`);
+  }
+  res.json({ ok: true, deletedCount });
 });
 
 // Staff & RBAC Management (Owner Only)
@@ -3974,11 +4131,11 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
         const fitList =
           Array.isArray(row.fits) && row.fits.length > 0
             ? row.fits
-            : (['Regular Fit'] as const);
+            : ['Regular Fit'];
         for (const fit of fitList) {
           for (const sz of sizes) {
             const num = (sz.match(/\d{2}/) || [slugifyCategoryName(sz).toUpperCase()])[0];
-            const fitTag = fit === 'Slim Fit' ? 'SLM' : fit === 'Contemporary Fit' ? 'CTM' : 'REG';
+            const fitTag = fit.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 5) || 'REG';
             upsertVar.run(
               productId,
               fit,
@@ -4149,14 +4306,47 @@ app.post('/api/admin/variants/bulk', requireStaffOrOwner, (req: AuthedRequest, r
   }
 
   const b = req.body || {};
-  const productIds: number[] = Array.isArray(b.productIds)
+  const explicitProductIds: number[] = Array.isArray(b.productIds)
     ? b.productIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
     : [];
-  const fits: string[] = Array.isArray(b.fits) && b.fits.length > 0 ? b.fits.map(String) : ['Regular Fit'];
-  const sizes: string[] = Array.isArray(b.sizes) && b.sizes.length > 0 ? b.sizes.map(String) : ['40 / M'];
+  const categorySlugsInput: string[] = Array.isArray(b.categorySlugs)
+    ? b.categorySlugs.map((x: unknown) => String(x || '').trim()).filter(Boolean)
+    : [];
 
-  if (productIds.length === 0) {
-    res.status(400).json({ error: 'Select at least one product to update variations.' });
+  let resolvedProductIds: number[] = [...explicitProductIds];
+  if (categorySlugsInput.length > 0) {
+    const allCats = db.prepare('SELECT id, slug, parent_id FROM categories').all() as Array<{
+      id: number;
+      slug: string;
+      parent_id: number | null;
+    }>;
+    const expandedSlugs = new Set<string>(categorySlugsInput);
+    const idQueue = allCats.filter((c) => expandedSlugs.has(c.slug)).map((c) => c.id);
+    while (idQueue.length > 0) {
+      const cid = idQueue.shift()!;
+      for (const child of allCats) {
+        if (child.parent_id === cid && !expandedSlugs.has(child.slug)) {
+          expandedSlugs.add(child.slug);
+          idQueue.push(child.id);
+        }
+      }
+    }
+    const allProds = db
+      .prepare('SELECT id, category_slug, category_slugs_json FROM products WHERE active = 1')
+      .all() as Array<{ id: number; category_slug: string; category_slugs_json: string }>;
+    for (const prod of allProds) {
+      const slugs = parseCategorySlugs(prod.category_slug, prod.category_slugs_json);
+      if (slugs.some((s) => expandedSlugs.has(s)) && !resolvedProductIds.includes(prod.id)) {
+        resolvedProductIds.push(prod.id);
+      }
+    }
+  }
+
+  const fits: string[] = Array.isArray(b.fits) && b.fits.length > 0 ? b.fits.map((f: unknown) => String(f).trim()).filter(Boolean) : ['Regular Fit'];
+  const sizes: string[] = Array.isArray(b.sizes) && b.sizes.length > 0 ? b.sizes.map((s: unknown) => String(s).trim()).filter(Boolean) : ['40 / M'];
+
+  if (resolvedProductIds.length === 0) {
+    res.status(400).json({ error: 'Select at least one product or category with matching products to update variations.' });
     return;
   }
 
@@ -4165,7 +4355,7 @@ app.post('/api/admin/variants/bulk', requireStaffOrOwner, (req: AuthedRequest, r
 
   let affected = 0;
   const tx = db.transaction(() => {
-    for (const pid of productIds) {
+    for (const pid of resolvedProductIds) {
       const prod = db.prepare('SELECT id, sku, sizes_json FROM products WHERE id = ?').get(pid) as
         | { id: number; sku: string; sizes_json: string }
         | undefined;
@@ -4183,9 +4373,9 @@ app.post('/api/admin/variants/bulk', requireStaffOrOwner, (req: AuthedRequest, r
       }
 
       for (const fit of fits) {
-        const fitCode = fit === 'Slim Fit' ? 'SLM' : fit === 'Contemporary Fit' ? 'CNT' : 'REG';
+        const fitCode = fit.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 5) || 'REG';
         for (const sizeLabel of sizes) {
-          const num = (sizeLabel.match(/\d{2}/) || ['40'])[0];
+          const num = (sizeLabel.match(/\d{2}/) || [sizeLabel.replace(/[^A-Za-z0-9]+/g, '').toUpperCase() || '40'])[0];
           const skuVariant = `${prod.sku}-${fitCode}-${num}`;
           const existing = db
             .prepare('SELECT * FROM product_variants WHERE product_id = ? AND fit = ? AND size_label = ?')
@@ -4226,8 +4416,13 @@ app.post('/api/admin/variants/bulk', requireStaffOrOwner, (req: AuthedRequest, r
   });
 
   tx();
-  logAudit(user, 'VARIANTS_BULK_UPDATED', `${affected} variants`, `Fits: ${fits.join(', ')} · Sizes: ${sizes.join(', ')}`);
-  res.json({ ok: true, affected });
+  logAudit(
+    user,
+    'VARIANTS_BULK_UPDATED',
+    `${affected} variants (${resolvedProductIds.length} products)`,
+    `Fits: ${fits.join(', ')} · Sizes: ${sizes.join(', ')}${categorySlugsInput.length > 0 ? ` · Categories: ${categorySlugsInput.join(', ')}` : ''}`
+  );
+  res.json({ ok: true, affected, matchedProducts: resolvedProductIds.length });
 });
 
 app.get('/api/admin/stock/movements', requirePermission('manage_inventory'), (_req, res) => {
@@ -4825,6 +5020,8 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
     .all() as Array<Record<string, unknown>>;
   const visitorLocations = visitorRows.map((v) => ({
     ...v,
+    current_path: String(v.current_path || '/'),
+    last_seen_at: String(v.last_seen_at || ''),
     is_active: Boolean(v.is_active),
   }));
 
@@ -4865,6 +5062,36 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
     }))
     .sort((a, b) => b.active_count - a.active_count || b.total_count - a.total_count);
 
+  const totalSessionsRow = db.prepare('SELECT COUNT(*) AS c FROM visitor_sessions').get() as { c: number };
+  const activeVisitorsCount = visitorLocations.filter((v) => v.is_active).length;
+  const countryMetricsList = Array.from(countryMap.values());
+  const totalSalesUsd = countryMetricsList.reduce((sum, c) => sum + c.revenue_usd_equiv, 0);
+  const totalOrdersCount = countryMetricsList.reduce((sum, c) => sum + c.orders, 0);
+  const activeProductPaths = visitorLocations.filter(
+    (v) => v.is_active && (String(v.current_path || '').includes('/product') || String(v.current_path || '').includes('/catalog'))
+  ).length;
+  const activeCheckoutPaths = visitorLocations.filter(
+    (v) => v.is_active && (String(v.current_path || '').includes('/checkout') || String(v.current_path || '').includes('/cart'))
+  ).length;
+  const pendingOrdersCount = (db
+    .prepare(`SELECT COUNT(*) AS c FROM orders WHERE order_status IN ('pending', 'processing')`)
+    .get() as { c: number }).c;
+
+  const nowMs = Date.now();
+  const pageViewsTimeline = Array.from({ length: 10 }, (_, idx) => {
+    const minutesAgo = 9 - idx;
+    const bucketStart = nowMs - (minutesAgo + 1) * 60 * 1000;
+    const bucketEnd = nowMs - minutesAgo * 60 * 1000;
+    const sessionHits = visitorLocations.filter((v) => {
+      const ts = Date.parse(String(v.last_seen_at || '').replace(' ', 'T') + (String(v.last_seen_at || '').includes('Z') ? '' : 'Z'));
+      return Number.isFinite(ts) && ts >= bucketStart && ts <= bucketEnd;
+    }).length;
+    return {
+      label: minutesAgo === 0 ? 'Now' : `${minutesAgo}m`,
+      count: sessionHits,
+    };
+  });
+
   res.json({
     byRegion: Array.from(byRegionMap.values()),
     byPaymentMethod: Array.from(payMap.values()),
@@ -4876,10 +5103,20 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
       out_of_stock: outOfStock,
       total_movements: totalMovements,
     },
-    byCountry: Array.from(countryMap.values()),
+    byCountry: countryMetricsList,
     visitorLocations,
     byVisitorCountry,
-    activeVisitorsCount: visitorLocations.filter((v) => v.is_active).length,
+    activeVisitorsCount,
+    liveViewMetrics: {
+      visitorsRightNow: activeVisitorsCount,
+      totalSessions: Number(totalSessionsRow.c || 0),
+      totalSalesUsd,
+      totalOrders: totalOrdersCount,
+      activeCarts: activeProductPaths,
+      checkingOut: activeCheckoutPaths,
+      purchasedRecent: pendingOrdersCount,
+      pageViewsTimeline,
+    },
     dailySeries: Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
     byCategory: Array.from(categoryMap.values()).sort((a, b) => b.units_sold - a.units_sold),
   });

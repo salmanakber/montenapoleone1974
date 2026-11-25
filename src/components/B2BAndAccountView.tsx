@@ -137,9 +137,21 @@ export const B2BView: React.FC<B2BViewProps> = ({
     [activeProduct, tailoringOptions]
   );
 
-  const [bodyFit, setBodyFit] = useState<'SLIM FIT' | 'REGULAR FIT' | 'CONTEMPORARY FIT'>(
-    'REGULAR FIT'
-  );
+  const resolvedB2BFits = useMemo(() => {
+    const variantFits = Array.from(
+      new Set(
+        (activeProduct?.variants || [])
+          .filter((v) => v.active !== false)
+          .map((v) => v.fit.toUpperCase())
+          .filter(Boolean)
+      )
+    );
+    return variantFits.length > 0
+      ? variantFits
+      : ['SLIM FIT', 'REGULAR FIT', 'CONTEMPORARY FIT'];
+  }, [activeProduct]);
+
+  const [bodyFit, setBodyFit] = useState<string>('REGULAR FIT');
   const [collarType, setCollarType] = useState(
     () => resolvedCollars.find((c) => c.isDefault)?.name || resolvedCollars[0]?.name || 'Spread'
   );
@@ -153,7 +165,10 @@ export const B2BView: React.FC<B2BViewProps> = ({
     const defCuff = resolvedCuffs.find((c) => c.isDefault)?.name || resolvedCuffs[0]?.name;
     if (defCollar) setCollarType(defCollar);
     if (defCuff) setCuffType(defCuff);
-  }, [activeProduct?.id, resolvedCollars, resolvedCuffs]);
+    setBodyFit((prev) =>
+      resolvedB2BFits.includes(prev) ? prev : resolvedB2BFits[0] || 'REGULAR FIT'
+    );
+  }, [activeProduct?.id, resolvedCollars, resolvedCuffs, resolvedB2BFits]);
 
   // Corporate Shipping Details & Order Summary Form
   const [companyName, setCompanyName] = useState('');
@@ -720,8 +735,8 @@ export const B2BView: React.FC<B2BViewProps> = ({
                     {copy.pdp.sizeGuide}
                   </button>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['SLIM FIT', 'REGULAR FIT', 'CONTEMPORARY FIT'] as const).map((fitOpt) => {
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {resolvedB2BFits.map((fitOpt) => {
                     const selected = bodyFit === fitOpt;
                     return (
                       <button
@@ -744,61 +759,95 @@ export const B2BView: React.FC<B2BViewProps> = ({
 
               {/* Collar Type & Cuff Type */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="border border-black/15 p-4 bg-white space-y-2">
+                <div className="border border-black/15 p-4 bg-white space-y-2.5">
                   <div className="text-xs font-semibold uppercase tracking-wider">
                     {copy.b2b.collarType}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {resolvedCollars.map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onClick={() => setCollarType(c.name)}
-                        className={`p-2 text-[11px] border text-left flex items-center gap-2 cursor-pointer ${
-                          collarType === c.name
-                            ? 'border-[#142B4E] bg-[#142B4E]/5 font-semibold text-[#142B4E]'
-                            : 'border-black/10 hover:border-black/30'
-                        }`}
-                      >
-                        {c.imageUrl && (
-                          <img
-                            src={c.imageUrl}
-                            alt={c.name}
-                            className="w-7 h-7 object-cover rounded border border-black/10 shrink-0"
-                          />
-                        )}
-                        <span className="truncate">{c.name}</span>
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {resolvedCollars.map((c) => {
+                      const active = collarType === c.name;
+                      return (
+                        <button
+                          key={c.name}
+                          type="button"
+                          onClick={() => setCollarType(c.name)}
+                          className={`group overflow-hidden border text-center flex flex-col bg-white transition-all cursor-pointer ${
+                            active
+                              ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
+                              : 'border-black/10 hover:border-black/30'
+                          }`}
+                        >
+                          <div className="relative w-full h-28 sm:h-32 bg-[#F4F3F1] overflow-hidden border-b border-black/10 flex items-center justify-center p-1">
+                            {c.imageUrl ? (
+                              <img
+                                src={c.imageUrl}
+                                alt={c.name}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-neutral-400 text-[10px]">
+                                {c.name}
+                              </div>
+                            )}
+                            {active && (
+                              <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[#142B4E] text-white flex items-center justify-center shadow">
+                                <Check className="w-2.5 h-2.5" />
+                              </span>
+                            )}
+                          </div>
+                          <div className="px-2 py-2 text-[11px] font-medium truncate w-full text-[#1A1A1A]">
+                            {c.name}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <div className="border border-black/15 p-4 bg-white space-y-2">
+                <div className="border border-black/15 p-4 bg-white space-y-2.5">
                   <div className="text-xs font-semibold uppercase tracking-wider">
                     {copy.b2b.cuffType}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {resolvedCuffs.map((cf) => (
-                      <button
-                        key={cf.name}
-                        type="button"
-                        onClick={() => setCuffType(cf.name)}
-                        className={`p-2 text-[11px] border text-left flex items-center gap-2 cursor-pointer ${
-                          cuffType === cf.name
-                            ? 'border-[#142B4E] bg-[#142B4E]/5 font-semibold text-[#142B4E]'
-                            : 'border-black/10 hover:border-black/30'
-                        }`}
-                      >
-                        {cf.imageUrl && (
-                          <img
-                            src={cf.imageUrl}
-                            alt={cf.name}
-                            className="w-7 h-7 object-cover rounded border border-black/10 shrink-0"
-                          />
-                        )}
-                        <span className="truncate">{cf.name}</span>
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {resolvedCuffs.map((cf) => {
+                      const active = cuffType === cf.name;
+                      return (
+                        <button
+                          key={cf.name}
+                          type="button"
+                          onClick={() => setCuffType(cf.name)}
+                          className={`group overflow-hidden border text-center flex flex-col bg-white transition-all cursor-pointer ${
+                            active
+                              ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
+                              : 'border-black/10 hover:border-black/30'
+                          }`}
+                        >
+                          <div className="relative w-full h-28 sm:h-32 bg-[#F4F3F1] overflow-hidden border-b border-black/10 flex items-center justify-center p-1">
+                            {cf.imageUrl ? (
+                              <img
+                                src={cf.imageUrl}
+                                alt={cf.name}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-neutral-400 text-[10px]">
+                                {cf.name}
+                              </div>
+                            )}
+                            {active && (
+                              <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[#142B4E] text-white flex items-center justify-center shadow">
+                                <Check className="w-2.5 h-2.5" />
+                              </span>
+                            )}
+                          </div>
+                          <div className="px-2 py-2 text-[11px] font-medium truncate w-full text-[#1A1A1A]">
+                            {cf.name}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -885,7 +934,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
           <div className="flex flex-col items-center gap-2.5">
             <div
               data-testid="b2b-category-carousel"
-              className="w-full max-w-4xl md:w-auto md:max-w-5xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1 md:px-2"
+              className="w-full max-w-full flex items-center gap-1.5 bg-white border border-black/10 shadow-sm rounded-xl p-1.5 md:px-4"
             >
               <button
                 type="button"

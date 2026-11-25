@@ -760,17 +760,27 @@ function stripWooHtml(raw: string): string {
     .trim();
 }
 
-function normalizeWooFit(raw: string): 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit' {
-  const s = (raw || '').toLowerCase();
-  if (s.includes('slim')) return 'Slim Fit';
-  if (s.includes('contemp') || s.includes('modern')) return 'Contemporary Fit';
-  return 'Regular Fit';
+function normalizeWooFit(raw: string): string {
+  const trimmed = (raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!trimmed || trimmed === '-') return 'Regular Fit';
+  const s = trimmed.toLowerCase();
+  if (s === 'slim' || s === 'slim fit' || s === 'slimfit') return 'Slim Fit';
+  if (s === 'contemporary' || s === 'contemporary fit') return 'Contemporary Fit';
+  if (s === 'regular' || s === 'regular fit') return 'Regular Fit';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
 }
 
 function normalizeWooSizeLabel(raw: string): string {
-  const clean = (raw || '').trim();
-  if (!clean) return '40 / M';
-  // Preserve "S / 38" or "38 / S" style; expand bare numbers if common Italian shirt neck sizes
+  const clean = (raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean || clean === '-') return '';
+  const slashPair = clean.match(/^([A-Za-z0-9]+)\s*\/\s*([A-Za-z0-9]+)$/);
+  if (slashPair) {
+    return `${slashPair[1].toUpperCase()} / ${slashPair[2].toUpperCase()}`;
+  }
+  // Expand bare 2-digit European collar sizes into consistent label
   const numericOnly = clean.match(/^(\d{2})$/);
   if (numericOnly) {
     const map: Record<string, string> = {
@@ -789,7 +799,42 @@ function normalizeWooSizeLabel(raw: string): string {
     };
     return map[numericOnly[1]] || clean;
   }
-  return clean;
+  return clean.toUpperCase() === clean ? clean : clean.replace(/^([a-z0-9]+)/i, (m) => m.toUpperCase());
+}
+
+function extractImageUrlList(...rawFields: string[]): string[] {
+  const urls: string[] = [];
+  for (const field of rawFields) {
+    if (!field) continue;
+    const parts = field
+      .split(/[;|,\r\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => /^https?:\/\//i.test(s) || s.startsWith('/'));
+    for (const u of parts) {
+      if (!urls.includes(u)) urls.push(u);
+    }
+  }
+  return urls;
+}
+
+function parseInlineVariationAttributePairs(raw: string): { fits: string[]; sizes: string[] } {
+  const fits: string[] = [];
+  const sizes: string[] = [];
+  if (!raw) return { fits, sizes };
+  const clean = stripWooHtml(raw);
+  const fitRegex = /(?:body[-_\s]?fit|passform|vestibilit[aà]|fit)\s*:\s*([^/|;]+?)(?=(?:\s+(?:size|størrelse|taglia|kích|body[-_\s]?fit|fit)\s*:|\/|\||;|$))/gi;
+  let m: RegExpExecArray | null;
+  while ((m = fitRegex.exec(clean)) !== null) {
+    const nf = normalizeWooFit(m[1]);
+    if (nf && !fits.includes(nf)) fits.push(nf);
+  }
+  const sizeRegex = /(?:size|størrelse|taglia|collar|neck)\s*:\s*([^|;]+?)(?=(?:\s*(?:\/|\s)?\s*(?:body[-_\s]?fit|passform|vestibilit[aà]|fit|size)\s*:|\||;|$))/gi;
+  while ((m = sizeRegex.exec(clean)) !== null) {
+    const rawSizeToken = m[1].replace(/\/+$/, '').trim();
+    const ns = normalizeWooSizeLabel(rawSizeToken);
+    if (ns && !sizes.includes(ns)) sizes.push(ns);
+  }
+  return { fits, sizes };
 }
 
 export function buildDeterministicMultilingualCopy(input: {
@@ -847,14 +892,18 @@ export function buildDeterministicMultilingualCopy(input: {
 export function isWooCommerceCsvHeader(csvText: string): boolean {
   const table = parseFullCsvTable(csvText);
   if (table.length === 0) return false;
-  const headers = table[0].map((h) => h.toLowerCase());
+  const headers = table[0].map((h) => h.toLowerCase().trim());
   return (
-    (headers.includes('name') || headers.includes('post_title')) &&
+    (headers.includes('name') || headers.includes('post_title') || headers.includes('product id')) &&
     (headers.includes('regular price') ||
       headers.includes('regular_price') ||
+      headers.includes('price') ||
       headers.includes('categories') ||
       headers.includes('images') ||
+      headers.includes('image url') ||
+      headers.includes('gallery image urls') ||
       headers.includes('parent') ||
+      headers.includes('parent sku') ||
       headers.includes('type'))
   );
 }
@@ -885,19 +934,27 @@ export function parseWooCommerceCsv(
     return -1;
   };
 
-  const idIdx = col('id');
-  const typeIdx = col('type');
-  const skuIdx = col('sku', 'id');
-  const parentIdx = col('parent');
+  const idIdx = col('product id', 'id');
+  const typeIdx = col('type', 'product type');
+  const skuIdx = col('sku');
+  const parentIdx = col('parent sku', 'parent', 'parent_sku');
   const nameIdx = col('name', 'post_title', 'title');
-  const regularPriceIdx = col('regular price', 'regular_price', 'price');
+  const formattedNameIdx = col('formatted name', 'formatted_name');
+  const regularPriceIdx = col('regular price', 'regular_price', 'price', 'display price');
+  const fallbackPriceIdx = col('price', 'display price');
   const salePriceIdx = col('sale price', 'sale_price');
   const categoriesIdx = col('categories', 'tax:product_cat');
-  const imagesIdx = col('images', 'image');
-  const stockIdx = col('stock', 'stock quantity', 'stock_qty');
+  const imageUrlIdx = col('image url', 'images', 'image', 'featured image');
+  const galleryUrlsIdx = col('gallery image urls', 'gallery images', 'gallery_image_urls', 'gallery');
+  const stockIdx = col('stock quantity', 'stock', 'stock_qty', 'total stock');
+  const totalStockIdx = col('total stock');
   const descIdx = col('description', 'post_content');
   const shortDescIdx = col('short description', 'post_excerpt', 'short_description');
   const publishedIdx = col('published');
+  const statusIdx = col('status', 'post_status');
+  const varAttrsIdx = col('variation attributes', 'variation_attributes');
+  const bodyFitColIdx = col('body-fit', 'pa_body-fit', 'attribute:pa_body-fit', 'fit');
+  const sizeColIdx = col('size', 'pa_size', 'attribute:pa_size');
 
   if (nameIdx === -1) {
     return {
@@ -907,7 +964,7 @@ export function parseWooCommerceCsv(
     };
   }
 
-  // Detect Attribute 1..6 name & value(s) columns
+  // Detect Attribute 1..8 name & value(s) columns (classic WooCommerce exporter)
   const attrCols: Array<{ nameIdx: number; valIdx: number }> = [];
   for (let n = 1; n <= 8; n++) {
     const aName = col(`attribute ${n} name`, `attribute:${n} name`, `attribute_${n}_name`);
@@ -934,13 +991,50 @@ export function parseWooCommerceCsv(
   const parents: ParentEntry[] = [];
   const parentById = new Map<string, ParentEntry>();
   const parentBySku = new Map<string, ParentEntry>();
+  const parentByName = new Map<string, ParentEntry>();
   const pendingVariations: Array<{ rowNum: number; cells: string[] }> = [];
 
   const extractAttributes = (cells: string[]) => {
     const sizes: string[] = [];
-    const fits: Array<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'> = [];
+    const fits: string[] = [];
     const fabricParts: string[] = [];
 
+    // 1. Direct WP All Export / custom Woo columns (`body-fit`, `size`)
+    if (bodyFitColIdx !== -1) {
+      const rawFit = (cells[bodyFitColIdx] || '').trim();
+      if (rawFit && rawFit !== '-') {
+        for (const p of rawFit.split(/[,|]+/).map((s) => s.trim()).filter(Boolean)) {
+          const nf = normalizeWooFit(p);
+          if (nf && !fits.includes(nf)) fits.push(nf);
+        }
+      }
+    }
+    if (sizeColIdx !== -1) {
+      const rawSize = (cells[sizeColIdx] || '').trim();
+      if (rawSize && rawSize !== '-') {
+        for (const p of rawSize.split(/[,|]+/).map((s) => s.trim()).filter(Boolean)) {
+          const ns = normalizeWooSizeLabel(p);
+          if (ns && !sizes.includes(ns)) sizes.push(ns);
+        }
+      }
+    }
+
+    // 2. Variation Attributes or Formatted Name (<span class="description">body-fit: ... size: ...</span>)
+    const inlineSources = [
+      varAttrsIdx !== -1 ? cells[varAttrsIdx] || '' : '',
+      formattedNameIdx !== -1 ? cells[formattedNameIdx] || '' : '',
+    ];
+    for (const src of inlineSources) {
+      const parsed = parseInlineVariationAttributePairs(src);
+      for (const f of parsed.fits) {
+        if (!fits.includes(f)) fits.push(f);
+      }
+      for (const s of parsed.sizes) {
+        if (!sizes.includes(s)) sizes.push(s);
+      }
+    }
+
+    // 3. Attribute N name/value pairs
     for (const pair of attrCols) {
       const aName = pair.nameIdx !== -1 ? (cells[pair.nameIdx] || '').trim() : '';
       const aValRaw = pair.valIdx !== -1 ? (cells[pair.valIdx] || '').trim() : '';
@@ -961,7 +1055,7 @@ export function parseWooCommerceCsv(
       ) {
         for (const p of parts) {
           const norm = normalizeWooSizeLabel(p);
-          if (!sizes.includes(norm)) sizes.push(norm);
+          if (norm && !sizes.includes(norm)) sizes.push(norm);
         }
       } else if (
         lowerName.includes('fit') ||
@@ -970,7 +1064,7 @@ export function parseWooCommerceCsv(
       ) {
         for (const p of parts) {
           const nf = normalizeWooFit(p);
-          if (!fits.includes(nf)) fits.push(nf);
+          if (nf && !fits.includes(nf)) fits.push(nf);
         }
       } else if (
         lowerName.includes('fabric') ||
@@ -1007,51 +1101,81 @@ export function parseWooCommerceCsv(
 
     const wooId = idIdx !== -1 ? (cells[idIdx] || '').trim() : '';
     const rawSku = skuIdx !== -1 ? (cells[skuIdx] || '').trim() : '';
-    const sku = rawSku || `WOO-${slugifyCategoryName(title).toUpperCase().slice(0, 12)}-${r}`;
+    const sku = rawSku || (wooId ? `WC-${wooId}` : `WOO-${slugifyCategoryName(title).toUpperCase().slice(0, 12)}-${r}`);
 
     const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const fbRaw = fallbackPriceIdx !== -1 ? Number((cells[fallbackPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
     const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const regularPrice = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : saleRaw > 0 ? saleRaw : 0;
-    const salePrice = Number.isFinite(saleRaw) && saleRaw > 0 && (regularPrice === 0 || saleRaw < regularPrice) ? saleRaw : null;
+    const regularPrice =
+      Number.isFinite(regRaw) && regRaw > 0
+        ? regRaw
+        : Number.isFinite(fbRaw) && fbRaw > 0
+        ? fbRaw
+        : Number.isFinite(saleRaw) && saleRaw > 0
+        ? saleRaw
+        : 0;
+    const salePrice =
+      Number.isFinite(saleRaw) && saleRaw > 0 && (regularPrice === 0 || saleRaw < regularPrice) ? saleRaw : null;
 
-    const stockStr = stockIdx !== -1 ? (cells[stockIdx] || '').trim() : '';
+    const stockStr =
+      stockIdx !== -1 && (cells[stockIdx] || '').trim() !== ''
+        ? (cells[stockIdx] || '').trim()
+        : totalStockIdx !== -1
+        ? (cells[totalStockIdx] || '').trim()
+        : '';
     const stockNum = stockStr !== '' ? Math.floor(Number(stockStr)) : NaN;
     const stockQty = Number.isFinite(stockNum) && stockNum >= 0 ? stockNum : 0;
 
     const rawCats = categoriesIdx !== -1 ? cells[categoriesIdx] || '' : '';
-    const categoryPaths = rawCats
+    const rawCategoryItems = rawCats
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
 
-    for (const pathStr of categoryPaths) {
-      const segments = pathStr
-        .split('>')
+    const normalizedCategoryPaths: string[] = [];
+    for (const pathStr of rawCategoryItems) {
+      const rawSegments = pathStr
+        .split(/\s*>\s*|\s{2,}/)
         .map((s) => s.trim())
         .filter(Boolean);
+      const filteredSegments =
+        rawSegments.filter((s) => s.toLowerCase() !== 'uncategorized').length > 0
+          ? rawSegments.filter((s) => s.toLowerCase() !== 'uncategorized')
+          : rawSegments;
+      if (filteredSegments.length === 0) continue;
+      normalizedCategoryPaths.push(filteredSegments.join(' > '));
+
       let parentSlug: string | null = null;
-      for (const seg of segments) {
+      for (const seg of filteredSegments) {
         const slug = slugifyCategoryName(seg);
-        if (!categoryMap.has(slug)) {
+        const existing = categoryMap.get(slug);
+        if (!existing) {
           categoryMap.set(slug, { slug, name: seg, parentSlug });
+        } else if (!existing.parentSlug && parentSlug) {
+          existing.parentSlug = parentSlug;
         }
         parentSlug = slug;
       }
     }
 
-    const rawImgs = imagesIdx !== -1 ? cells[imagesIdx] || '' : '';
-    const images = rawImgs
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => /^https?:\/\//i.test(s) || s.startsWith('/'));
+    const images = extractImageUrlList(
+      imageUrlIdx !== -1 ? cells[imageUrlIdx] || '' : '',
+      galleryUrlsIdx !== -1 ? cells[galleryUrlsIdx] || '' : ''
+    );
 
     const attrs = extractAttributes(cells);
     const shortDesc = shortDescIdx !== -1 ? stripWooHtml(cells[shortDescIdx] || '') : '';
     const desc = descIdx !== -1 ? stripWooHtml(cells[descIdx] || '') : '';
     const fabricSpec = attrs.fabricSpec || '100% Italian 2-Ply Cotton';
 
-    const publishedVal = publishedIdx !== -1 ? (cells[publishedIdx] || '1').trim() : '1';
-    const published = publishedVal !== '0' && publishedVal.toLowerCase() !== 'false';
+    let published = true;
+    if (publishedIdx !== -1 && (cells[publishedIdx] || '').trim() !== '') {
+      const pv = (cells[publishedIdx] || '').trim().toLowerCase();
+      published = pv !== '0' && pv !== 'false';
+    } else if (statusIdx !== -1 && (cells[statusIdx] || '').trim() !== '') {
+      const sv = (cells[statusIdx] || '').trim().toLowerCase();
+      published = sv === 'publish' || sv === 'published' || sv === '1' || sv === 'true';
+    }
 
     const rowObj: WooProductImportRow = {
       sku,
@@ -1062,7 +1186,7 @@ export function parseWooCommerceCsv(
       regularPrice: regularPrice > 0 ? regularPrice : 175,
       salePrice,
       stockQty: stockStr !== '' ? stockQty : rawType === 'variable' ? 0 : 15,
-      categoryPaths,
+      categoryPaths: normalizedCategoryPaths,
       images,
       fabricSpec,
       sizes: attrs.sizes.length > 0 ? attrs.sizes : [],
@@ -1076,42 +1200,43 @@ export function parseWooCommerceCsv(
     parents.push(entry);
     if (wooId) parentById.set(wooId, entry);
     if (sku) parentBySku.set(sku.toLowerCase(), entry);
+    if (rawSku) parentBySku.set(rawSku.toLowerCase(), entry);
+    if (title) parentByName.set(title.toLowerCase(), entry);
   }
 
   // Attach variation rows to their parent variable product
   for (const vItem of pendingVariations) {
     const cells = vItem.cells;
     const parentRef = parentIdx !== -1 ? (cells[parentIdx] || '').trim() : '';
-    if (!parentRef) {
-      errors.push(`Row ${vItem.rowNum}: variation row missing Parent reference.`);
-      continue;
-    }
+    const vNameRaw = (cells[nameIdx] || '').trim();
     const cleanRefId = parentRef.replace(/^id:/i, '').trim();
     const targetParent =
-      parentById.get(parentRef) ||
-      parentById.get(cleanRefId) ||
-      parentBySku.get(parentRef.toLowerCase()) ||
-      parentBySku.get(cleanRefId.toLowerCase());
+      (parentRef &&
+        (parentById.get(parentRef) ||
+          parentById.get(cleanRefId) ||
+          parentBySku.get(parentRef.toLowerCase()) ||
+          parentBySku.get(cleanRefId.toLowerCase()) ||
+          parentByName.get(parentRef.toLowerCase()))) ||
+      (vNameRaw ? parentByName.get(vNameRaw.toLowerCase()) : undefined);
 
     if (!targetParent) {
-      errors.push(`Row ${vItem.rowNum}: variation parent "${parentRef}" not found.`);
+      errors.push(`Row ${vItem.rowNum}: variation parent "${parentRef || vNameRaw}" not found.`);
       continue;
     }
 
     const attrs = extractAttributes(cells);
-    const fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit' =
-      attrs.fits[0] || targetParent.row.fits[0] || 'Regular Fit';
+    const fit = attrs.fits[0] || targetParent.row.fits[0] || 'Regular Fit';
     let sizeLabel = attrs.sizes[0] || '';
     if (!sizeLabel) {
-      // Fallback: derive from variation name suffix e.g. "White Poplin - 40 / M"
-      const vName = (cells[nameIdx] || '').trim();
-      const dashPart = vName.includes(' - ') ? vName.split(' - ').pop() || '' : '';
-      sizeLabel = normalizeWooSizeLabel(dashPart);
+      const dashPart = vNameRaw.includes(' - ') ? vNameRaw.split(' - ').pop() || '' : '';
+      sizeLabel = normalizeWooSizeLabel(dashPart) || targetParent.row.sizes[0] || '40 / M';
     }
 
     const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const fbRaw = fallbackPriceIdx !== -1 ? Number((cells[fallbackPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
     const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const vReg = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : targetParent.row.regularPrice;
+    const vRegCandidate = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : Number.isFinite(fbRaw) && fbRaw > 0 ? fbRaw : 0;
+    const vReg = vRegCandidate > 0 ? vRegCandidate : targetParent.row.regularPrice;
     const vSale = Number.isFinite(saleRaw) && saleRaw > 0 && saleRaw < vReg ? saleRaw : null;
 
     const vStockStr = stockIdx !== -1 ? (cells[stockIdx] || '').trim() : '';
@@ -1119,16 +1244,21 @@ export function parseWooCommerceCsv(
     const vStock = Number.isFinite(vStockNum) && vStockNum >= 0 ? vStockNum : 12;
 
     const rawVarSku = skuIdx !== -1 ? (cells[skuIdx] || '').trim() : '';
+    const fitToken = fit
+      .replace(/[^A-Za-z0-9]+/g, '')
+      .toUpperCase()
+      .slice(0, 6);
+    const sizeToken = sizeLabel.replace(/[^A-Za-z0-9]+/g, '').toUpperCase();
     const skuVariant =
-      rawVarSku ||
-      `${targetParent.row.sku}-${fit === 'Slim Fit' ? 'SLIM' : fit === 'Contemporary Fit' ? 'CONT' : 'REG'}-${sizeLabel.replace(/[^A-Za-z0-9]+/g, '')}`;
+      rawVarSku && rawVarSku.toLowerCase() !== targetParent.row.sku.toLowerCase()
+        ? rawVarSku
+        : `${targetParent.row.sku}-${fitToken || 'REG'}-${sizeToken || vItem.rowNum}`;
 
-    // Variation image fallback if parent had fewer gallery shots
-    const rawVarImgs = imagesIdx !== -1 ? cells[imagesIdx] || '' : '';
-    const varImgs = rawVarImgs
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => /^https?:\/\//i.test(s) || s.startsWith('/'));
+    // Variation image & gallery fallback into parent product gallery
+    const varImgs = extractImageUrlList(
+      imageUrlIdx !== -1 ? cells[imageUrlIdx] || '' : '',
+      galleryUrlsIdx !== -1 ? cells[galleryUrlsIdx] || '' : ''
+    );
     for (const vi of varImgs) {
       if (!targetParent.row.images.includes(vi)) targetParent.row.images.push(vi);
     }
@@ -1142,7 +1272,15 @@ export function parseWooCommerceCsv(
       stockQty: vStock,
     };
     targetParent.row.productType = 'variable';
-    targetParent.row.variations.push(varRow);
+    if (
+      !targetParent.row.variations.some(
+        (existing) =>
+          existing.fit.toLowerCase() === varRow.fit.toLowerCase() &&
+          existing.sizeLabel.toLowerCase() === varRow.sizeLabel.toLowerCase()
+      )
+    ) {
+      targetParent.row.variations.push(varRow);
+    }
     if (!targetParent.row.sizes.includes(sizeLabel)) targetParent.row.sizes.push(sizeLabel);
     if (!targetParent.row.fits.includes(fit)) targetParent.row.fits.push(fit);
   }

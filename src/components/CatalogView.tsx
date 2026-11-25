@@ -111,7 +111,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       <div className="flex flex-col items-center gap-2.5 mb-3">
         <div
           data-testid="b2c-category-carousel"
-          className="w-full max-w-4xl md:w-auto md:max-w-5xl flex items-center gap-1 bg-white border border-black/10 shadow-sm rounded-xl p-1 md:px-2"
+          className="w-full max-w-full flex items-center gap-1.5 bg-white border border-black/10 shadow-sm rounded-xl p-1.5 md:px-4"
         >
           <button
             type="button"

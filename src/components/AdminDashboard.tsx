@@ -24,10 +24,12 @@ import {
   RefreshCw,
   Ruler,
   Scissors,
+  Search,
   Shield,
   ShoppingBag,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   TrendingUp,
   Truck,
   Upload,
@@ -224,6 +226,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [csvPreview, setCsvPreview] = useState<{ rows: CsvImportRow[]; errors: string[] } | null>(null);
   const [csvResultMsg, setCsvResultMsg] = useState<string | null>(null);
 
+  // Products pagination, search & bulk delete
+  const [productSearch, setProductSearch] = useState('');
+  const [productPage, setProductPage] = useState(1);
+  const [productPageSize, setProductPageSize] = useState<10 | 25 | 50>(10);
+  const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
+  const [productBulkBusy, setProductBulkBusy] = useState(false);
+  const [productBulkMsg, setProductBulkMsg] = useState<string | null>(null);
+
+  // Per-Product Variations editor inside Edit Modal
+  const [editVarFitInput, setEditVarFitInput] = useState('');
+  const [editVarSizeInput, setEditVarSizeInput] = useState('');
+  const [editVarSelectedFits, setEditVarSelectedFits] = useState<string[]>(['Regular Fit', 'Slim Fit']);
+  const [editVarSelectedSizes, setEditVarSelectedSizes] = useState<string[]>(['38 / S', '40 / M', '42 / L']);
+
   // Product & Menu Editor Modal
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
@@ -396,6 +412,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   useEffect(() => {
     setOrderPage(1);
   }, [orderRegionFilter, orderStatusFilter, paymentStatusFilter, orderChannelFilter, orderSearch, orderSort, orderPageSize]);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [productSearch, productPageSize]);
 
   useEffect(() => {
     if (!authToken || !authUser) return;
@@ -745,16 +765,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleBulkDeleteProducts = async () => {
+    if (!authToken || selectedProductIds.length === 0 || productBulkBusy) return;
+    setProductBulkBusy(true);
+    setProductBulkMsg(null);
+    try {
+      const res = await fetch('/api/admin/products/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ productIds: selectedProductIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setProductBulkMsg(data.error || 'Bulk delete failed.');
+        return;
+      }
+      setProductBulkMsg(`Deleted ${data.deletedCount ?? selectedProductIds.length} product(s).`);
+      setSelectedProductIds([]);
+      await loadAdminData();
+      onRefreshStorefront();
+    } catch {
+      setProductBulkMsg('Network error deleting products.');
+    } finally {
+      setProductBulkBusy(false);
+    }
+  };
+
   const handleSaveProductEdit = async () => {
     if (!authToken || !editingProduct) return;
     const assigned =
       Array.isArray(editingProduct.category_slugs) && editingProduct.category_slugs.length > 0
         ? editingProduct.category_slugs
         : [editingProduct.category_slug || 'business'];
+    const activeVariantSizes = Array.from(
+      new Set(
+        (editingProduct.variants || [])
+          .filter((v) => v.active !== false && v.size_label)
+          .map((v) => v.size_label)
+      )
+    );
     const payload: Product = {
       ...editingProduct,
       category_slug: assigned[0],
       category_slugs: assigned,
+      sizes: activeVariantSizes.length > 0 ? activeVariantSizes : editingProduct.sizes,
     };
     const res = await fetch(`/api/admin/products/${editingProduct.id}`, {
       method: 'PUT',
@@ -1706,28 +1763,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
 
                   {wooPreview && wooPreview.rows.length > 0 && (
-                    <div className="border border-neutral-200 bg-white overflow-x-auto">
+                    <div className="border border-neutral-200 bg-white overflow-x-auto max-h-80 overflow-y-auto">
                       <table className="w-full text-[11px] text-left">
-                        <thead className="bg-[#F1F5F9] text-neutral-600 uppercase">
+                        <thead className="bg-[#F1F5F9] text-neutral-600 uppercase sticky top-0">
                           <tr>
+                            <th className="p-2">Image</th>
                             <th className="p-2">SKU</th>
                             <th className="p-2">Type</th>
                             <th className="p-2">Title</th>
                             <th className="p-2">Categories</th>
+                            <th className="p-2">Fits</th>
                             <th className="p-2">Sizes</th>
                             <th className="p-2">Variations</th>
+                            <th className="p-2">Gallery</th>
                             <th className="p-2">Price ({wooSourceRegion.toUpperCase()})</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-neutral-100">
-                          {wooPreview.rows.slice(0, 12).map((wr) => (
+                          {wooPreview.rows.slice(0, 20).map((wr) => (
                             <tr key={wr.sku}>
+                              <td className="p-2">
+                                {wr.images && wr.images.length > 0 ? (
+                                  <img
+                                    src={wr.images[0]}
+                                    alt={wr.sku}
+                                    referrerPolicy="no-referrer"
+                                    className="w-8 h-8 object-cover border border-neutral-200 bg-[#E6E6E6]"
+                                  />
+                                ) : (
+                                  <span className="text-neutral-400">—</span>
+                                )}
+                              </td>
                               <td className="p-2 font-mono-tabular font-semibold">{wr.sku}</td>
                               <td className="p-2 uppercase">{wr.productType || 'simple'}</td>
                               <td className="p-2">{wr.title}</td>
                               <td className="p-2 text-neutral-600">{wr.categoryPaths.join(' | ')}</td>
+                              <td className="p-2">{(wr.fits || []).join(', ') || '—'}</td>
                               <td className="p-2">{(wr.sizes || []).join(', ')}</td>
-                              <td className="p-2">{wr.variations?.length || 0}</td>
+                              <td className="p-2 font-mono-tabular">{wr.variations?.length || 0}</td>
+                              <td className="p-2 font-mono-tabular">{wr.images?.length || 0} img(s)</td>
                               <td className="p-2 font-mono-tabular">{wr.salePrice || wr.regularPrice}</td>
                             </tr>
                           ))}
@@ -1752,82 +1826,246 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               )}
 
-              <div className="border border-neutral-200 bg-white overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-[#F7F7F7] border-b border-neutral-200 text-neutral-600 uppercase text-[11px]">
-                    <tr>
-                      <th className="p-3">Shirt</th>
-                      <th className="p-3">EN (USD)</th>
-                      <th className="p-3">NO (NOK)</th>
-                      <th className="p-3">IT (EUR)</th>
-                      <th className="p-3">VN (VND)</th>
-                      <th className="p-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-100">
-                    {products.map((p) => {
-                      const locs = p.localizations;
-                      return (
-                        <tr key={p.id} className="hover:bg-neutral-50">
-                          <td className="p-3">
-                            <div className="flex items-center gap-3">
-                              <img
-                                src={p.primary_image}
-                                alt={p.sku}
-                                referrerPolicy="no-referrer"
-                                className="w-10 h-10 object-cover bg-[#E6E6E6] shrink-0"
+              {(() => {
+                const pq = productSearch.trim().toLowerCase();
+                const filteredProducts = products.filter((p) => {
+                  if (!pq) return true;
+                  return (
+                    p.sku.toLowerCase().includes(pq) ||
+                    (p.localizations?.en?.title || p.title).toLowerCase().includes(pq) ||
+                    p.category_slug.toLowerCase().includes(pq) ||
+                    (p.category_slugs || []).some((s) => s.toLowerCase().includes(pq))
+                  );
+                });
+                const totalProductPages = Math.max(
+                  1,
+                  Math.ceil(filteredProducts.length / productPageSize)
+                );
+                const safeProductPage = Math.min(productPage, totalProductPages);
+                const pagedProducts = filteredProducts.slice(
+                  (safeProductPage - 1) * productPageSize,
+                  safeProductPage * productPageSize
+                );
+                const allPageSelected =
+                  pagedProducts.length > 0 &&
+                  pagedProducts.every((p) => selectedProductIds.includes(p.id));
+
+                return (
+                  <div className="space-y-3">
+                    {/* Products Search, Pagination Size & Bulk Delete Bar */}
+                    <div
+                      data-testid="admin-products-toolbar"
+                      className="flex flex-wrap items-center justify-between gap-3 bg-[#FAFAFA] border border-neutral-200 p-3 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="relative w-60 sm:w-72">
+                          <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="search"
+                            value={productSearch}
+                            onChange={(e) => setProductSearch(e.target.value)}
+                            placeholder="Search SKU, title, or category..."
+                            className="w-full pl-8 pr-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
+                          />
+                        </div>
+                        <select
+                          aria-label="Products per page"
+                          value={productPageSize}
+                          onChange={(e) => setProductPageSize(Number(e.target.value) as 10 | 25 | 50)}
+                          className="px-2.5 py-1.5 border border-neutral-300 bg-white outline-none"
+                        >
+                          <option value={10}>10 / page</option>
+                          <option value={25}>25 / page</option>
+                          <option value={50}>50 / page</option>
+                        </select>
+                        <span className="text-[11px] font-mono-tabular text-neutral-500">
+                          Showing {pagedProducts.length} of {filteredProducts.length} product(s)
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {productBulkMsg && (
+                          <span className="text-[#4F8A47] font-medium mr-2">{productBulkMsg}</span>
+                        )}
+                        {hasPermission(authUser, 'manage_products') && (
+                          <button
+                            type="button"
+                            data-testid="admin-products-bulk-delete-btn"
+                            disabled={selectedProductIds.length === 0 || productBulkBusy}
+                            onClick={handleBulkDeleteProducts}
+                            className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-neutral-300 text-white text-[11px] uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>
+                              {productBulkBusy
+                                ? 'Deleting...'
+                                : `Delete Selected (${selectedProductIds.length})`}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="border border-neutral-200 bg-white overflow-x-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-[#F7F7F7] border-b border-neutral-200 text-neutral-600 uppercase text-[11px]">
+                          <tr>
+                            <th className="p-3 w-8">
+                              <input
+                                type="checkbox"
+                                aria-label="Select all products on page"
+                                checked={allPageSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedProductIds((prev) =>
+                                      Array.from(new Set([...prev, ...pagedProducts.map((p) => p.id)]))
+                                    );
+                                  } else {
+                                    const pageIds = new Set(pagedProducts.map((p) => p.id));
+                                    setSelectedProductIds((prev) =>
+                                      prev.filter((id) => !pageIds.has(id))
+                                    );
+                                  }
+                                }}
                               />
-                              <div>
-                                <div className="font-medium">{locs?.en?.title || p.sku}</div>
-                                <div className="text-[11px] font-mono-tabular text-neutral-500">
-                                  {p.sku} ·{' '}
-                                  {(p.category_slugs && p.category_slugs.length > 0
-                                    ? p.category_slugs
-                                    : [p.category_slug]
-                                  ).join(', ')}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          {(['en', 'no', 'it', 'vn'] as const).map((rc) => {
-                            const loc = locs?.[rc];
+                            </th>
+                            <th className="p-3">Shirt</th>
+                            <th className="p-3">EN (USD)</th>
+                            <th className="p-3">NO (NOK)</th>
+                            <th className="p-3">IT (EUR)</th>
+                            <th className="p-3">VN (VND)</th>
+                            <th className="p-3 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100">
+                          {pagedProducts.map((p) => {
+                            const locs = p.localizations;
+                            const isChecked = selectedProductIds.includes(p.id);
                             return (
-                              <td key={rc} className="p-3 font-mono-tabular">
-                                {loc ? (
-                                  <div>
-                                    <div className="font-medium">{formatRegionalPrice(loc.price, rc)}</div>
-                                    <div className="text-[11px] text-neutral-500">
-                                      Stock: {loc.stock_qty}
+                              <tr key={p.id} className={isChecked ? 'bg-red-50/40' : 'hover:bg-neutral-50'}>
+                                <td className="p-3">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select product ${p.sku}`}
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      setSelectedProductIds((prev) =>
+                                        e.target.checked
+                                          ? [...prev, p.id]
+                                          : prev.filter((id) => id !== p.id)
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className="p-3">
+                                  <div className="flex items-center gap-3">
+                                    <img
+                                      src={p.primary_image}
+                                      alt={p.sku}
+                                      referrerPolicy="no-referrer"
+                                      className="w-10 h-10 object-cover bg-[#E6E6E6] shrink-0"
+                                    />
+                                    <div>
+                                      <div className="font-medium">{locs?.en?.title || p.sku}</div>
+                                      <div className="text-[11px] font-mono-tabular text-neutral-500">
+                                        {p.sku} ·{' '}
+                                        {(p.category_slugs && p.category_slugs.length > 0
+                                          ? p.category_slugs
+                                          : [p.category_slug]
+                                        ).join(', ')}
+                                        {p.variants && p.variants.length > 0 && (
+                                          <span className="ml-1.5 text-[#142B4E]">
+                                            · {p.variants.length} var(s)
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
-                                ) : (
-                                  '—'
-                                )}
-                              </td>
+                                </td>
+                                {(['en', 'no', 'it', 'vn'] as const).map((rc) => {
+                                  const loc = locs?.[rc];
+                                  return (
+                                    <td key={rc} className="p-3 font-mono-tabular">
+                                      {loc ? (
+                                        <div>
+                                          <div className="font-medium">{formatRegionalPrice(loc.price, rc)}</div>
+                                          <div className="text-[11px] text-neutral-500">
+                                            Stock: {loc.stock_qty}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        '—'
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td className="p-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const cloned: Product = JSON.parse(JSON.stringify(p));
+                                      cloned.category_slugs =
+                                        Array.isArray(cloned.category_slugs) && cloned.category_slugs.length > 0
+                                          ? cloned.category_slugs
+                                          : [cloned.category_slug || 'business'];
+                                      if (!cloned.variants || cloned.variants.length === 0) {
+                                        cloned.variants = variants.filter((v) => v.product_id === p.id);
+                                      }
+                                      setEditVarFitInput('');
+                                      setEditVarSizeInput('');
+                                      setEditingProduct(cloned);
+                                    }}
+                                    className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
+                                  >
+                                    Edit Regions
+                                  </button>
+                                </td>
+                              </tr>
                             );
                           })}
-                          <td className="p-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const cloned: Product = JSON.parse(JSON.stringify(p));
-                                cloned.category_slugs =
-                                  Array.isArray(cloned.category_slugs) && cloned.category_slugs.length > 0
-                                    ? cloned.category_slugs
-                                    : [cloned.category_slug || 'business'];
-                                setEditingProduct(cloned);
-                              }}
-                              className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
-                            >
-                              Edit Regions
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                          {pagedProducts.length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="p-6 text-center text-neutral-500">
+                                No products match "{productSearch}".
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Products Pagination Footer */}
+                    {totalProductPages > 1 && (
+                      <div
+                        data-testid="admin-products-pagination"
+                        className="flex flex-wrap items-center justify-between gap-3 text-xs pt-1"
+                      >
+                        <div className="font-mono-tabular text-neutral-500">
+                          Page {safeProductPage} of {totalProductPages} ({filteredProducts.length} total SKUs)
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={safeProductPage <= 1}
+                            onClick={() => setProductPage((p) => Math.max(1, p - 1))}
+                            className="px-3 py-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            type="button"
+                            disabled={safeProductPage >= totalProductPages}
+                            onClick={() => setProductPage((p) => Math.min(totalProductPages, p + 1))}
+                            className="px-3 py-1.5 border border-neutral-300 bg-white hover:bg-neutral-50 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -1854,6 +2092,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 authToken={authToken}
                 authUser={authUser}
                 products={products}
+                categories={categories}
                 variants={variants}
                 onRefresh={() => {
                   loadAdminData();
@@ -3215,6 +3454,360 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   });
                 })()}
               </div>
+            </div>
+
+            {/* Per-Product Variations: Body Fits, Custom Fits & Sizes */}
+            <div
+              data-testid="edit-product-variations-section"
+              className="border border-neutral-200 p-4 bg-[#FAFAFA] space-y-3 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                    Product Variations · Body Fits & Sizes ({(editingProduct.variants || []).length})
+                  </span>
+                  <div className="text-[11px] text-neutral-500 mt-0.5">
+                    Add custom body fits or sizes directly for this product, or adjust individual SKU pricing and stock.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const existing = editingProduct.variants || [];
+                    const baseEnPrice = editingProduct.localizations?.en?.price ?? null;
+                    const baseNoPrice = editingProduct.localizations?.no?.price ?? null;
+                    const baseItPrice = editingProduct.localizations?.it?.price ?? null;
+                    const baseVnPrice = editingProduct.localizations?.vn?.price ?? null;
+                    const nextVars = [...existing];
+                    for (const fitVal of editVarSelectedFits) {
+                      for (const szVal of editVarSelectedSizes) {
+                        const dup = nextVars.some(
+                          (v) =>
+                            v.fit.toLowerCase() === fitVal.toLowerCase() &&
+                            v.size_label.toLowerCase() === szVal.toLowerCase()
+                        );
+                        if (!dup) {
+                          const fitSlug = fitVal
+                            .replace(/[^a-z0-9]/gi, '')
+                            .slice(0, 4)
+                            .toUpperCase();
+                          const szSlug = szVal
+                            .split('/')[0]
+                            .trim()
+                            .replace(/[^a-z0-9]/gi, '')
+                            .toUpperCase();
+                          nextVars.push({
+                            product_id: editingProduct.id,
+                            fit: fitVal,
+                            size_label: szVal,
+                            sku_variant: `${editingProduct.sku}-${fitSlug}-${szSlug || 'VAR'}`,
+                            price_en: baseEnPrice,
+                            price_no: baseNoPrice,
+                            price_it: baseItPrice,
+                            price_vn: baseVnPrice,
+                            stock_en: 10,
+                            stock_no: 10,
+                            stock_it: 10,
+                            stock_vn: 10,
+                            active: true,
+                          });
+                        }
+                      }
+                    }
+                    setEditingProduct((prev) =>
+                      prev ? { ...prev, variants: nextVars } : prev
+                    );
+                  }}
+                  className="px-3 py-1.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
+                >
+                  + Generate Selected Fit × Size Rows
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white border border-neutral-200 p-3">
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                    Fits for Generator
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from(
+                      new Set([
+                        'Regular Fit',
+                        'Slim Fit',
+                        'Contemporary Fit',
+                        ...(editingProduct.variants || []).map((v) => v.fit),
+                        ...editVarSelectedFits,
+                      ])
+                    ).map((fitVal) => {
+                      const active = editVarSelectedFits.includes(fitVal);
+                      return (
+                        <button
+                          key={fitVal}
+                          type="button"
+                          onClick={() =>
+                            setEditVarSelectedFits((prev) =>
+                              prev.includes(fitVal)
+                                ? prev.filter((x) => x !== fitVal)
+                                : [...prev, fitVal]
+                            )
+                          }
+                          className={`px-2.5 py-1 border text-[11px] cursor-pointer ${
+                            active
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white text-neutral-700 border-neutral-300'
+                          }`}
+                        >
+                          {fitVal}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={editVarFitInput}
+                      onChange={(e) => setEditVarFitInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const clean = editVarFitInput.trim();
+                          if (clean && !editVarSelectedFits.includes(clean)) {
+                            setEditVarSelectedFits((prev) => [...prev, clean]);
+                          }
+                          setEditVarFitInput('');
+                        }
+                      }}
+                      placeholder="Custom fit (e.g. Comfort Fit)"
+                      className="flex-1 px-2 py-1 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = editVarFitInput.trim();
+                        if (clean && !editVarSelectedFits.includes(clean)) {
+                          setEditVarSelectedFits((prev) => [...prev, clean]);
+                        }
+                        setEditVarFitInput('');
+                      }}
+                      className="px-2.5 py-1 border border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer"
+                    >
+                      + Fit
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                    Sizes for Generator
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                    {Array.from(
+                      new Set([
+                        '37 / XS',
+                        '38 / S',
+                        '39 / M',
+                        '40 / M',
+                        '41 / L',
+                        '42 / L',
+                        '43 / XL',
+                        '44 / XXL',
+                        '45 / 3XL',
+                        ...(editingProduct.sizes || []),
+                        ...(editingProduct.variants || []).map((v) => v.size_label),
+                        ...editVarSelectedSizes,
+                      ])
+                    ).map((szVal) => {
+                      const active = editVarSelectedSizes.includes(szVal);
+                      return (
+                        <button
+                          key={szVal}
+                          type="button"
+                          onClick={() =>
+                            setEditVarSelectedSizes((prev) =>
+                              prev.includes(szVal)
+                                ? prev.filter((x) => x !== szVal)
+                                : [...prev, szVal]
+                            )
+                          }
+                          className={`px-2 py-1 border font-mono-tabular text-[11px] cursor-pointer ${
+                            active
+                              ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                              : 'bg-white text-neutral-700 border-neutral-300'
+                          }`}
+                        >
+                          {szVal}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={editVarSizeInput}
+                      onChange={(e) => setEditVarSizeInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const clean = editVarSizeInput.trim();
+                          if (clean && !editVarSelectedSizes.includes(clean)) {
+                            setEditVarSelectedSizes((prev) => [...prev, clean]);
+                          }
+                          setEditVarSizeInput('');
+                        }
+                      }}
+                      placeholder="Custom size (e.g. 46 / 4XL)"
+                      className="flex-1 px-2 py-1 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = editVarSizeInput.trim();
+                        if (clean && !editVarSelectedSizes.includes(clean)) {
+                          setEditVarSelectedSizes((prev) => [...prev, clean]);
+                        }
+                        setEditVarSizeInput('');
+                      }}
+                      className="px-2.5 py-1 border border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer"
+                    >
+                      + Size
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {(editingProduct.variants || []).length > 0 && (
+                <div className="border border-neutral-200 bg-white overflow-x-auto max-h-56 overflow-y-auto">
+                  <table className="w-full text-[11px] text-left">
+                    <thead className="bg-[#F7F7F7] border-b border-neutral-200 text-neutral-600 uppercase sticky top-0">
+                      <tr>
+                        <th className="p-2">Fit</th>
+                        <th className="p-2">Size</th>
+                        <th className="p-2">Variant SKU</th>
+                        <th className="p-2">EN Price</th>
+                        <th className="p-2">EN Stock</th>
+                        <th className="p-2">Active</th>
+                        <th className="p-2 text-right">Remove</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {(editingProduct.variants || []).map((v, idx) => (
+                        <tr key={`${v.fit}-${v.size_label}-${idx}`}>
+                          <td className="p-1.5">
+                            <input
+                              value={v.fit}
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = { ...next[idx], fit: e.target.value };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                              className="w-28 px-1.5 py-1 border border-neutral-200 bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              value={v.size_label}
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = { ...next[idx], size_label: e.target.value };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                              className="w-20 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              value={v.sku_variant}
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = { ...next[idx], sku_variant: e.target.value };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                              className="w-32 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="number"
+                              step="any"
+                              value={v.price_en ?? ''}
+                              placeholder="Base"
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = {
+                                    ...next[idx],
+                                    price_en: e.target.value === '' ? null : Number(e.target.value),
+                                  };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                              className="w-16 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="number"
+                              value={v.stock_en}
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = { ...next[idx], stock_en: Number(e.target.value) };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                              className="w-14 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={v.active !== false}
+                              onChange={(e) =>
+                                setEditingProduct((prev) => {
+                                  if (!prev) return prev;
+                                  const next = [...(prev.variants || [])];
+                                  next[idx] = { ...next[idx], active: e.target.checked };
+                                  return { ...prev, variants: next };
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="p-1.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditingProduct((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        variants: (prev.variants || []).filter((_, j) => j !== idx),
+                                      }
+                                    : prev
+                                )
+                              }
+                              aria-label={`Remove variation ${v.fit} ${v.size_label}`}
+                              className="text-red-600 hover:underline cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">

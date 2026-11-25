@@ -769,18 +769,19 @@ export const ReportsPanel: React.FC<{
         </button>
       </div>
 
-      {/* Light Shopify-style 3D Globe + Revenue & Category Charts */}
+      {/* Light Shopify-style Live View 3D Globe + Revenue & Category Charts */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        <div className="xl:col-span-7">
+        <div className="xl:col-span-12">
           <Globe3DMap
             countries={report.byCountry || []}
             visitors={report.visitorLocations || []}
             visitorCountries={report.byVisitorCountry || []}
             activeVisitorsCount={report.activeVisitorsCount || 0}
+            liveViewMetrics={report.liveViewMetrics}
           />
         </div>
 
-        <div className="xl:col-span-5 flex flex-col gap-5 text-xs">
+        <div className="xl:col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs">
           {/* Daily Revenue & Orders Velocity Chart */}
           <div className="border border-neutral-200 bg-white p-5 space-y-3">
             <div className="flex items-center justify-between">

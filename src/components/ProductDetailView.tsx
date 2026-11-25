@@ -72,8 +72,8 @@ const COLLAR_META: Record<string, { hint: string }> = {
   Cutaway: { hint: 'For Casual & Formal' },
 };
 
-const FIT_OPTIONS: Array<{
-  value: BespokeTailoring['fit'];
+const DEFAULT_FIT_OPTIONS: Array<{
+  value: string;
   label: string;
   desc: string;
 }> = [
@@ -97,7 +97,7 @@ const FIT_OPTIONS: Array<{
 const CollarIllustration: React.FC<{ name: string }> = ({ name }) => {
   if (name === 'Cutaway') {
     return (
-      <svg viewBox="0 0 64 42" className="w-14 h-9 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <svg viewBox="0 0 64 42" className="w-20 h-14 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
         <path d="M16 8 L32 16 L48 8 L58 22 L38 28 L32 18 L26 28 L6 22 Z" />
         <line x1="32" y1="16" x2="32" y2="38" />
       </svg>
@@ -105,7 +105,7 @@ const CollarIllustration: React.FC<{ name: string }> = ({ name }) => {
   }
   if (name === 'Button Down') {
     return (
-      <svg viewBox="0 0 64 42" className="w-14 h-9 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <svg viewBox="0 0 64 42" className="w-20 h-14 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
         <path d="M18 6 L32 15 L46 6 L52 28 L38 30 L32 18 L26 30 L12 28 Z" />
         <circle cx="22" cy="24" r="1.5" fill="currentColor" />
         <circle cx="42" cy="24" r="1.5" fill="currentColor" />
@@ -113,7 +113,7 @@ const CollarIllustration: React.FC<{ name: string }> = ({ name }) => {
     );
   }
   return (
-    <svg viewBox="0 0 64 42" className="w-14 h-9 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <svg viewBox="0 0 64 42" className="w-20 h-14 text-[#1A1A1A]" fill="none" stroke="currentColor" strokeWidth="1.4">
       <path d="M18 7 L32 15 L46 7 L54 25 L36 31 L32 18 L28 31 L10 25 Z" />
       <line x1="32" y1="16" x2="32" y2="38" />
     </svg>
@@ -181,9 +181,38 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     [product.cuffs, tailoringOptions]
   );
 
-  const [fit, setFit] = useState<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'>('Regular Fit');
+  const resolvedFitOptions = useMemo(() => {
+    const descByFit: Record<string, { label: string; desc: string }> = Object.fromEntries(
+      DEFAULT_FIT_OPTIONS.map((o) => [o.value.toLowerCase(), { label: o.label, desc: o.desc }])
+    );
+    const activeVariants = (product.variants || []).filter((v) => v.active !== false);
+    const variantFits = Array.from(new Set(activeVariants.map((v) => v.fit).filter(Boolean)));
+    const fitNames = variantFits.length > 0 ? variantFits : DEFAULT_FIT_OPTIONS.map((o) => o.value);
+    return fitNames.map((f) => {
+      const known = descByFit[f.toLowerCase()];
+      return {
+        value: f,
+        label: known?.label || f.toUpperCase(),
+        desc: known?.desc || `Bespoke ${f} silhouette crafted to exact Italian shirtmaking proportions.`,
+      };
+    });
+  }, [product.variants]);
+
+  const [fit, setFit] = useState<string>(() => resolvedFitOptions[0]?.value || 'Regular Fit');
+
+  const sizesForActiveFit = useMemo(() => {
+    const variantSizes = (product.variants || [])
+      .filter((v) => v.active !== false && v.fit.toLowerCase() === fit.toLowerCase())
+      .map((v) => v.size_label)
+      .filter(Boolean);
+    if (variantSizes.length > 0) return Array.from(new Set(variantSizes));
+    if (product.sizes && product.sizes.length > 0) return product.sizes;
+    return ['38 / S', '40 / M', '42 / L', '44 / XL'];
+  }, [product.variants, product.sizes, fit]);
+
   const [size, setSize] = useState<string>(
-    product.sizes.find((s) => s.startsWith('40')) || product.sizes[0] || '40 / M'
+    () =>
+      sizesForActiveFit.find((s) => s.startsWith('40')) || sizesForActiveFit[0] || '40 / M'
   );
   const [collar, setCollar] = useState<string>(
     () => orderedCollars.find((c) => c.isDefault)?.name || orderedCollars[0]?.name || 'Spread'
@@ -238,16 +267,24 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     setLightboxZoomed(false);
     setFitDrawerOpen(false);
     setMobileSlide(0);
-    setSize((prev) =>
-      product.sizes.includes(prev)
+    setFit((prev) =>
+      resolvedFitOptions.some((o) => o.value === prev)
         ? prev
-        : product.sizes.find((s) => s.startsWith('40')) || product.sizes[0] || '40 / M'
+        : resolvedFitOptions[0]?.value || 'Regular Fit'
     );
     const defaultCollar = orderedCollars.find((c) => c.isDefault)?.name || orderedCollars[0]?.name;
     const defaultCuff = orderedCuffs.find((c) => c.isDefault)?.name || orderedCuffs[0]?.name;
     if (defaultCollar) setCollar(defaultCollar);
     if (defaultCuff) setCuff(defaultCuff);
-  }, [product.id, product.sizes, orderedCollars, orderedCuffs]);
+  }, [product.id, resolvedFitOptions, orderedCollars, orderedCuffs]);
+
+  useEffect(() => {
+    setSize((prev) =>
+      sizesForActiveFit.includes(prev)
+        ? prev
+        : sizesForActiveFit.find((s) => s.startsWith('40')) || sizesForActiveFit[0] || '40 / M'
+    );
+  }, [sizesForActiveFit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -885,7 +922,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               </button>
 
               {collarOpen && (
-                <div className="px-3 pb-3 pt-2 grid grid-cols-2 gap-2.5 border-t border-black/10 bg-[#FAFAFA]">
+                <div
+                  data-testid="pdp-collar-grid"
+                  className="p-3 grid grid-cols-2 gap-3 border-t border-black/10 bg-[#FAFAFA]"
+                >
                   {orderedCollars.map((c) => {
                     const selected = collar === c.name;
                     const hint = c.subtitle || COLLAR_META[c.name]?.hint || 'Bespoke option';
@@ -894,37 +934,39 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                         key={c.name}
                         type="button"
                         onClick={() => setCollar(c.name)}
-                        className={`relative p-2.5 border text-center flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer bg-white ${
+                        className={`group overflow-hidden border text-center flex flex-col transition-all cursor-pointer bg-white ${
                           selected
-                            ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
-                            : 'border-black/10 hover:border-black/30'
+                            ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
+                            : 'border-black/10 hover:border-black/35'
                         }`}
                       >
-                        <span
-                          className={`absolute top-2 left-2 w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                            selected ? 'border-[#1D63DC]' : 'border-neutral-300'
-                          }`}
-                        >
-                          {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
-                        </span>
-                        {c.isDefault && (
-                          <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#142B4E]/10 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold rounded">
-                            Default
+                        <div className="relative w-full h-32 sm:h-36 bg-[#F4F3F1] border-b border-black/10 overflow-hidden flex items-center justify-center p-1">
+                          {c.imageUrl ? (
+                            <img
+                              src={c.imageUrl}
+                              alt={c.name}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                            />
+                          ) : (
+                            <CollarIllustration name={c.name} />
+                          )}
+                          <span
+                            className={`absolute top-2 left-2 w-4 h-4 rounded-full bg-white/95 border shadow-sm flex items-center justify-center ${
+                              selected ? 'border-[#1D63DC]' : 'border-neutral-300'
+                            }`}
+                          >
+                            {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
                           </span>
-                        )}
-                        {c.imageUrl ? (
-                          <img
-                            src={c.imageUrl}
-                            alt={c.name}
-                            referrerPolicy="no-referrer"
-                            className="w-16 h-11 object-cover rounded border border-black/10 bg-[#F5F5F5]"
-                          />
-                        ) : (
-                          <CollarIllustration name={c.name} />
-                        )}
-                        <div>
-                          <div className="text-xs font-medium text-[#1A1A1A]">{c.name}</div>
-                          <div className="text-[10px] text-neutral-500 mt-0.5">{hint}</div>
+                          {c.isDefault && (
+                            <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
+                              Default
+                            </span>
+                          )}
+                        </div>
+                        <div className="px-2.5 py-2.5 w-full bg-white">
+                          <div className="text-xs font-medium text-[#1A1A1A] truncate">{c.name}</div>
+                          <div className="text-[10px] text-neutral-500 mt-0.5 truncate">{hint}</div>
                         </div>
                       </button>
                     );
@@ -953,11 +995,11 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               </button>
 
               {cuffOpen && (
-                <div className="border-t border-black/10 bg-[#FAFAFA] p-3 space-y-2.5">
+                <div className="border-t border-black/10 bg-[#FAFAFA] p-3 space-y-3">
                   <div className="text-[11px] text-neutral-500 px-0.5">
                     {copy.pdp.cuffShowcaseCaption}
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div data-testid="pdp-cuff-grid" className="grid grid-cols-2 gap-3">
                     {orderedCuffs.map((cf) => {
                       const selected = cuff === cf.name;
                       const subtitle = cf.subtitle || CUFF_SPECS[cf.name]?.subtitle;
@@ -966,38 +1008,40 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           key={cf.name}
                           type="button"
                           onClick={() => setCuff(cf.name)}
-                          className={`relative p-3 border text-center flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer bg-white ${
+                          className={`group overflow-hidden border text-center flex flex-col transition-all cursor-pointer bg-white ${
                             selected
-                              ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
-                              : 'border-black/10 hover:border-black/30'
+                              ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
+                              : 'border-black/10 hover:border-black/35'
                           }`}
                         >
-                          <span
-                            className={`absolute top-2 left-2 w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                              selected ? 'border-[#1D63DC]' : 'border-neutral-300'
-                            }`}
-                          >
-                            {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
-                          </span>
-                          {cf.isDefault && (
-                            <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#142B4E]/10 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold rounded">
-                              Default
+                          <div className="relative w-full h-32 sm:h-36 bg-[#F4F3F1] border-b border-black/10 overflow-hidden flex items-center justify-center p-1">
+                            {cf.imageUrl ? (
+                              <img
+                                src={cf.imageUrl}
+                                alt={cf.name}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                              />
+                            ) : (
+                              <CuffShowcaseIllustration name={cf.name} selected={selected} />
+                            )}
+                            <span
+                              className={`absolute top-2 left-2 w-4 h-4 rounded-full bg-white/95 border shadow-sm flex items-center justify-center ${
+                                selected ? 'border-[#1D63DC]' : 'border-neutral-300'
+                              }`}
+                            >
+                              {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
                             </span>
-                          )}
-                          {cf.imageUrl ? (
-                            <img
-                              src={cf.imageUrl}
-                              alt={cf.name}
-                              referrerPolicy="no-referrer"
-                              className="w-20 h-14 object-cover rounded border border-black/10 bg-[#F5F5F5]"
-                            />
-                          ) : (
-                            <CuffShowcaseIllustration name={cf.name} selected={selected} />
-                          )}
-                          <div>
-                            <div className="text-xs font-medium text-[#1A1A1A]">{cf.name}</div>
+                            {cf.isDefault && (
+                              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
+                                Default
+                              </span>
+                            )}
+                          </div>
+                          <div className="px-2.5 py-2.5 w-full bg-white">
+                            <div className="text-xs font-medium text-[#1A1A1A] truncate">{cf.name}</div>
                             {subtitle && (
-                              <div className="text-[10px] text-neutral-500 mt-0.5">{subtitle}</div>
+                              <div className="text-[10px] text-neutral-500 mt-0.5 truncate">{subtitle}</div>
                             )}
                           </div>
                         </button>
@@ -1014,13 +1058,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     if (!detailText && !stitchText) return null;
                     return (
                       <div className="p-2.5 bg-white border border-black/10 flex items-center gap-3 text-[11px]">
-                        <div className="shrink-0">
+                        <div className="shrink-0 w-16 h-16 bg-[#F4F3F1] border border-black/10 overflow-hidden flex items-center justify-center p-0.5">
                           {activeOpt?.imageUrl ? (
                             <img
                               src={activeOpt.imageUrl}
                               alt={cuff}
                               referrerPolicy="no-referrer"
-                              className="w-16 h-12 object-cover rounded border border-black/10"
+                              className="w-full h-full object-contain"
                             />
                           ) : (
                             <CuffShowcaseIllustration name={cuff} selected />
@@ -1514,7 +1558,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
               <div className="p-6 space-y-6">
                 <div className="space-y-3">
-                  {FIT_OPTIONS.map((opt) => {
+                  {resolvedFitOptions.map((opt) => {
                     const active = fit === opt.value;
                     return (
                       <div
@@ -1525,7 +1569,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       >
                         <button
                           type="button"
-                          onClick={() => setFit(opt.value as 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit')}
+                          onClick={() => setFit(opt.value)}
                           className="w-full flex items-start gap-3 text-left cursor-pointer"
                         >
                           <span
@@ -1553,7 +1597,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                               {copy.pdp.selectSize}
                             </div>
                             <div className="grid grid-cols-4 gap-2">
-                              {product.sizes.map((s) => (
+                              {sizesForActiveFit.map((s) => (
                                 <button
                                   key={s}
                                   type="button"

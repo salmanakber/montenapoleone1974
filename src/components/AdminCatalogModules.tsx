@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Layers, PackageCheck, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import type {
   AuthUser,
+  CategoryRecord,
   Product,
   ProductVariant,
   RegionCode,
@@ -9,7 +10,7 @@ import type {
 } from '../types.ts';
 import { formatRegionalPrice, hasPermission } from '../utils/commerce.ts';
 
-const ALL_FITS = ['Regular Fit', 'Slim Fit', 'Contemporary Fit'] as const;
+const DEFAULT_FITS = ['Regular Fit', 'Slim Fit', 'Contemporary Fit'] as const;
 const ALL_COLLAR_SIZES = [
   '30 / 3XS',
   '34 / 2XS',
@@ -315,12 +316,26 @@ export const VariantMatrixPanel: React.FC<{
   authToken: string;
   authUser: AuthUser;
   products: Product[];
+  categories?: CategoryRecord[];
   variants: ProductVariant[];
   onRefresh: () => void;
-}> = ({ authToken, authUser, products, variants, onRefresh }) => {
+}> = ({ authToken, authUser, products, categories = [], variants, onRefresh }) => {
+  const [targetScope, setTargetScope] = useState<'categories' | 'products'>('products');
+  const [selectedCategorySlugs, setSelectedCategorySlugs] = useState<string[]>([]);
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>(
     products[0] ? [products[0].id] : []
   );
+  const [productQuery, setProductQuery] = useState('');
+  const [availableFits, setAvailableFits] = useState<string[]>(() => {
+    const fromVariants = Array.from(new Set(variants.map((v) => v.fit).filter(Boolean)));
+    return Array.from(new Set([...DEFAULT_FITS, ...fromVariants]));
+  });
+  const [availableSizes, setAvailableSizes] = useState<string[]>(() => {
+    const fromVariants = Array.from(new Set(variants.map((v) => v.size_label).filter(Boolean)));
+    return Array.from(new Set([...ALL_COLLAR_SIZES, ...fromVariants]));
+  });
+  const [customFitInput, setCustomFitInput] = useState('');
+  const [customSizeInput, setCustomSizeInput] = useState('');
   const [selectedFits, setSelectedFits] = useState<string[]>(['Regular Fit', 'Slim Fit']);
   const [selectedSizes, setSelectedSizes] = useState<string[]>(['34 / 2XS', '40 / M', '45 / 3XL']);
   const [priceEn, setPriceEn] = useState('');
@@ -338,14 +353,67 @@ export const VariantMatrixPanel: React.FC<{
   const canPrice = hasPermission(authUser, 'manage_pricing');
   const canStock = hasPermission(authUser, 'manage_inventory');
 
+  const usableCategories = useMemo(() => {
+    const usable = categories.filter((c) => c.slug !== 'all' && c.slug !== 'b2b');
+    const parents = usable.filter((c) => !c.parent_id);
+    const ordered: Array<{ slug: string; label: string; isChild: boolean }> = [];
+    parents.forEach((par) => {
+      ordered.push({ slug: par.slug, label: par.name_en, isChild: false });
+      usable
+        .filter((ch) => ch.parent_id === par.id)
+        .forEach((ch) =>
+          ordered.push({ slug: ch.slug, label: `↳ ${ch.name_en}`, isChild: true })
+        );
+    });
+    usable
+      .filter((c) => !ordered.some((o) => o.slug === c.slug))
+      .forEach((c) => ordered.push({ slug: c.slug, label: c.name_en, isChild: Boolean(c.parent_id) }));
+    return ordered;
+  }, [categories]);
+
+  const filteredProducts = useMemo(() => {
+    const q = productQuery.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter(
+      (p) =>
+        p.sku.toLowerCase().includes(q) ||
+        (p.localizations?.en?.title || p.title).toLowerCase().includes(q) ||
+        p.category_slug.toLowerCase().includes(q)
+    );
+  }, [products, productQuery]);
+
   const toggleItem = <T,>(arr: T[], item: T, setArr: (v: T[]) => void) => {
     setArr(arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]);
   };
 
+  const handleAddCustomFit = () => {
+    const clean = customFitInput.trim();
+    if (!clean) return;
+    setAvailableFits((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setSelectedFits((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setCustomFitInput('');
+  };
+
+  const handleAddCustomSize = () => {
+    const clean = customSizeInput.trim();
+    if (!clean) return;
+    setAvailableSizes((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setSelectedSizes((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setCustomSizeInput('');
+  };
+
   const handleBulkSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedProductIds.length === 0 || selectedFits.length === 0 || selectedSizes.length === 0) {
-      setFeedback('Select at least one shirt, one fit, and one collar size.');
+    const hasTarget =
+      targetScope === 'categories'
+        ? selectedCategorySlugs.length > 0
+        : selectedProductIds.length > 0;
+    if (!hasTarget || selectedFits.length === 0 || selectedSizes.length === 0) {
+      setFeedback(
+        targetScope === 'categories'
+          ? 'Select at least one category, one fit, and one size.'
+          : 'Select at least one shirt, one fit, and one size.'
+      );
       return;
     }
     setBusy(true);
@@ -358,7 +426,8 @@ export const VariantMatrixPanel: React.FC<{
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({
-          productIds: selectedProductIds,
+          productIds: targetScope === 'products' ? selectedProductIds : undefined,
+          categorySlugs: targetScope === 'categories' ? selectedCategorySlugs : undefined,
           fits: selectedFits,
           sizes: selectedSizes,
           price_en: priceEn !== '' ? Number(priceEn) : null,
@@ -377,7 +446,9 @@ export const VariantMatrixPanel: React.FC<{
         setFeedback(data.error || 'Variant update failed.');
         return;
       }
-      setFeedback(`Updated/created ${data.affected} Fit × Size variation records.`);
+      setFeedback(
+        `Applied ${data.affected} variation record(s) across ${data.matchedProducts ?? (targetScope === 'products' ? selectedProductIds.length : 'matched')} shirt(s).`
+      );
       onRefresh();
     } finally {
       setBusy(false);
@@ -399,10 +470,10 @@ export const VariantMatrixPanel: React.FC<{
       <div className="border-b border-neutral-200 pb-3">
         <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#142B4E]" />
-          <span>Bulk Fit × Collar Size Variations Matrix</span>
+          <span>Bulk Fit × Size Variations Matrix</span>
         </h1>
         <p className="text-xs text-neutral-500 mt-0.5">
-          Bulk-assign body fits (Regular, Slim, Contemporary) across collar sizes (30 to 45) with per-size regional price overrides and warehouse stock counts.
+          Apply default or custom Body Fits and Sizes either to entire parent/child categories or specific shirts, with per-variation pricing and stock.
         </p>
       </div>
 
@@ -410,49 +481,160 @@ export const VariantMatrixPanel: React.FC<{
         onSubmit={handleBulkSave}
         className="border border-neutral-200 bg-[#FAFAFA] p-5 space-y-4 text-xs"
       >
-        {/* Step 1: Products */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
+        {/* Step 1: Scope Switcher (Categories vs Specific Products) */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-semibold uppercase tracking-wider text-neutral-600">
-              1. Target Shirts ({selectedProductIds.length} selected)
+              1. Application Scope
             </span>
-            <button
-              type="button"
-              onClick={() => setSelectedProductIds(products.map((p) => p.id))}
-              className="text-[#142B4E] hover:underline cursor-pointer"
+            <div
+              role="group"
+              aria-label="Variations application scope"
+              className="inline-flex bg-white border border-neutral-300 p-0.5 rounded"
             >
-              Select All SKUs
-            </button>
+              <button
+                type="button"
+                data-testid="variant-scope-categories"
+                onClick={() => setTargetScope('categories')}
+                className={`px-3 py-1 text-[11px] font-medium cursor-pointer rounded-sm ${
+                  targetScope === 'categories'
+                    ? 'bg-[#142B4E] text-white'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+              >
+                Apply to Entire Category(ies)
+              </button>
+              <button
+                type="button"
+                data-testid="variant-scope-products"
+                onClick={() => setTargetScope('products')}
+                className={`px-3 py-1 text-[11px] font-medium cursor-pointer rounded-sm ${
+                  targetScope === 'products'
+                    ? 'bg-[#142B4E] text-white'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+              >
+                Apply to Specific Product(s)
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {products.map((p) => {
-              const active = selectedProductIds.includes(p.id);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => toggleItem(selectedProductIds, p.id, setSelectedProductIds)}
-                  className={`px-3 py-1.5 border text-[11px] cursor-pointer ${
-                    active
-                      ? 'bg-[#142B4E] text-white border-[#142B4E]'
-                      : 'bg-white text-neutral-700 border-neutral-300'
-                  }`}
-                >
-                  <span className="font-mono-tabular">{p.sku}</span> · {p.localizations?.en?.title || p.title}
-                </button>
-              );
-            })}
-          </div>
+
+          {targetScope === 'categories' ? (
+            <div className="bg-white border border-neutral-200 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-neutral-600">
+                  Chosen Categories ({selectedCategorySlugs.length} selected — automatically includes subcategories & matching shirts)
+                </span>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategorySlugs(usableCategories.map((c) => c.slug))}
+                    className="text-[#142B4E] hover:underline cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                  {selectedCategorySlugs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategorySlugs([])}
+                      className="text-neutral-500 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto pt-1">
+                {usableCategories.map((cat) => {
+                  const active = selectedCategorySlugs.includes(cat.slug);
+                  return (
+                    <button
+                      key={cat.slug}
+                      type="button"
+                      onClick={() =>
+                        toggleItem(selectedCategorySlugs, cat.slug, setSelectedCategorySlugs)
+                      }
+                      className={`px-3 py-1.5 border text-[11px] cursor-pointer ${
+                        active
+                          ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                          : 'bg-white text-neutral-700 border-neutral-300 hover:border-neutral-400'
+                      } ${cat.isChild ? 'pl-4' : 'font-medium'}`}
+                    >
+                      {cat.label}
+                    </button>
+                  );
+                })}
+                {usableCategories.length === 0 && (
+                  <span className="text-neutral-500">No categories loaded.</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-neutral-200 p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <input
+                  type="search"
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                  placeholder="Filter shirts by SKU, title, or category..."
+                  className="px-2.5 py-1.5 border border-neutral-300 text-xs w-full sm:w-72 outline-none focus:border-[#142B4E]"
+                />
+                <div className="flex items-center gap-3 text-[11px]">
+                  <span className="text-neutral-500">{selectedProductIds.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedProductIds((prev) =>
+                        Array.from(new Set([...prev, ...filteredProducts.map((p) => p.id)]))
+                      )
+                    }
+                    className="text-[#142B4E] hover:underline cursor-pointer"
+                  >
+                    Select Filtered ({filteredProducts.length})
+                  </button>
+                  {selectedProductIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProductIds([])}
+                      className="text-neutral-500 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto pt-1">
+                {filteredProducts.map((p) => {
+                  const active = selectedProductIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => toggleItem(selectedProductIds, p.id, setSelectedProductIds)}
+                      className={`px-3 py-1.5 border text-[11px] cursor-pointer ${
+                        active
+                          ? 'bg-[#142B4E] text-white border-[#142B4E]'
+                          : 'bg-white text-neutral-700 border-neutral-300'
+                      }`}
+                    >
+                      <span className="font-mono-tabular">{p.sku}</span> ·{' '}
+                      {p.localizations?.en?.title || p.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Step 2: Fits & Collar Sizes */}
+        {/* Step 2: Fits & Sizes (with Custom Fit & Custom Size builders) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <div className="font-semibold uppercase tracking-wider text-neutral-600 mb-2">
-              2. Body Fits
+          <div className="space-y-2">
+            <div className="font-semibold uppercase tracking-wider text-neutral-600">
+              2. Body Fits & Custom Cuts ({selectedFits.length})
             </div>
             <div className="flex flex-wrap gap-2">
-              {ALL_FITS.map((fit) => {
+              {availableFits.map((fit) => {
                 const active = selectedFits.includes(fit);
                 return (
                   <button
@@ -470,23 +652,45 @@ export const VariantMatrixPanel: React.FC<{
                 );
               })}
             </div>
+            <div className="flex items-center gap-1.5 pt-1">
+              <input
+                type="text"
+                value={customFitInput}
+                onChange={(e) => setCustomFitInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomFit();
+                  }
+                }}
+                placeholder="Add custom fit (e.g. Tailored Fit, Relaxed Fit)"
+                className="flex-1 px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px] outline-none focus:border-[#142B4E]"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomFit}
+                className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] font-medium cursor-pointer"
+              >
+                + Add Fit
+              </button>
+            </div>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <span className="font-semibold uppercase tracking-wider text-neutral-600">
-                3. Collar Sizes ({selectedSizes.length})
+                3. Sizes & Collar Measurements ({selectedSizes.length})
               </span>
               <button
                 type="button"
-                onClick={() => setSelectedSizes([...ALL_COLLAR_SIZES])}
+                onClick={() => setSelectedSizes([...availableSizes])}
                 className="text-[#142B4E] hover:underline cursor-pointer"
               >
                 Select All Sizes
               </button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {ALL_COLLAR_SIZES.map((sz) => {
+            <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+              {availableSizes.map((sz) => {
                 const active = selectedSizes.includes(sz);
                 return (
                   <button
@@ -503,6 +707,28 @@ export const VariantMatrixPanel: React.FC<{
                   </button>
                 );
               })}
+            </div>
+            <div className="flex items-center gap-1.5 pt-1">
+              <input
+                type="text"
+                value={customSizeInput}
+                onChange={(e) => setCustomSizeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomSize();
+                  }
+                }}
+                placeholder="Add custom size (e.g. 46 / 4XL, One Size, S-Tall)"
+                className="flex-1 px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px] outline-none focus:border-[#142B4E]"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomSize}
+                className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] font-medium cursor-pointer"
+              >
+                + Add Size
+              </button>
             </div>
           </div>
         </div>
@@ -609,7 +835,9 @@ export const VariantMatrixPanel: React.FC<{
             <span className="text-[#4F8A47] font-medium">{feedback}</span>
           ) : (
             <span className="text-neutral-500">
-              Total combinations in batch: {selectedProductIds.length * selectedFits.length * selectedSizes.length}
+              {targetScope === 'categories'
+                ? `${selectedCategorySlugs.length} category(ies) × ${selectedFits.length} fit(s) × ${selectedSizes.length} size(s)`
+                : `Total combinations in batch: ${selectedProductIds.length * selectedFits.length * selectedSizes.length}`}
             </span>
           )}
           <button

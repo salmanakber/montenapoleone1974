@@ -79,7 +79,7 @@ export type TailoringZoneKey =
 
 export interface TailoringSizeSpec {
   id?: number;
-  fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit' | 'Tailored Classic';
+  fit: string;
   size_label: string;
   shirt_length_cm: number;
   sleeve_length_cm: number;
@@ -99,7 +99,7 @@ export interface TailoringSizeSpec {
 export interface ProductVariant {
   id?: number;
   product_id: number;
-  fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit';
+  fit: string;
   size_label: string;
   sku_variant: string;
   price_en: number | null;
@@ -189,6 +189,16 @@ export interface AdminReportData {
   visitorLocations?: VisitorSessionMetric[];
   byVisitorCountry?: VisitorCountryRollup[];
   activeVisitorsCount?: number;
+  liveViewMetrics?: {
+    visitorsRightNow: number;
+    totalSessions: number;
+    totalSalesUsd: number;
+    totalOrders: number;
+    activeCarts: number;
+    checkingOut: number;
+    purchasedRecent: number;
+    pageViewsTimeline: Array<{ label: string; count: number }>;
+  };
 }
 
 export interface Product {
@@ -278,7 +288,7 @@ export interface ProductReviewsResponse {
 }
 
 export interface BespokeTailoring {
-  fit: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit' | 'Tailored Classic';
+  fit: string;
   size: string;
   collar: string;
   cuff: string;
@@ -400,7 +410,7 @@ export interface B2BQuotationItem {
   sku: string;
   title: string;
   image: string;
-  fit: 'SLIM FIT' | 'REGULAR FIT' | 'CONTEMPORARY FIT';
+  fit: string;
   collar: string;
   cuff: string;
   sizeBreakdown: Record<string, number>;
@@ -593,7 +603,7 @@ export interface AiAgentAction {
     | 'open_checkout';
   productSlug?: string;
   size?: string;
-  fit?: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit';
+  fit?: string;
   categorySlug?: string;
   regionCode?: RegionCode;
   couponCode?: string;
@@ -603,7 +613,7 @@ export interface AiPendingOffer {
   kind: 'product' | 'discount' | 'checkout';
   productSlug?: string;
   size?: string;
-  fit?: 'Slim Fit' | 'Regular Fit' | 'Contemporary Fit';
+  fit?: string;
   couponCode?: string;
 }
 
@@ -721,7 +731,7 @@ export type AdminTab =
 
 export interface WooProductVariationImportRow {
   skuVariant: string;
-  fit: 'Regular Fit' | 'Slim Fit' | 'Contemporary Fit';
+  fit: string;
   sizeLabel: string;
   regularPrice: number;
   salePrice: number | null;
@@ -741,7 +751,7 @@ export interface WooProductImportRow {
   images: string[];
   fabricSpec: string;
   sizes: string[];
-  fits: Array<'Regular Fit' | 'Slim Fit' | 'Contemporary Fit'>;
+  fits: string[];
   variations: WooProductVariationImportRow[];
   published: boolean;
   sourceRegion: RegionCode;

@@ -30,6 +30,9 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
   const [search, setSearch] = useState('');
   const [uploadFolder, setUploadFolder] = useState<MediaAsset['folder']>('uploads');
   const [selectedId, setSelectedId] = useState<number | null>(media[0]?.id ?? null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +73,44 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
     setSelectedId(asset.id);
     setEditAlt(asset.alt_text);
     setEditCaption(asset.caption);
+  };
+
+  const toggleBulkId = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkDeleteMedia = async () => {
+    if (selectedIds.length === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    setError(null);
+    setBulkFeedback(null);
+    try {
+      const res = await fetch('/api/admin/media/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Bulk delete failed.');
+        return;
+      }
+      if (selectedId && selectedIds.includes(selectedId)) {
+        setSelectedId(null);
+      }
+      setBulkFeedback(`Deleted ${data.deletedCount ?? selectedIds.length} media file(s).`);
+      setSelectedIds([]);
+      onRefresh();
+    } catch {
+      setError('Network error deleting selected media.');
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   const handleFiles = async (files: FileList | null) => {
@@ -134,7 +175,8 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
       headers: { Authorization: `Bearer ${authToken}` },
     });
     if (res.ok) {
-      setSelectedId(null);
+      if (selectedId === id) setSelectedId(null);
+      setSelectedIds((prev) => prev.filter((x) => x !== id));
       onRefresh();
     }
   };
@@ -144,6 +186,9 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
     setCopiedId(asset.id);
     setTimeout(() => setCopiedId(null), 1500);
   };
+
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((m) => selectedIds.includes(m.id));
 
   return (
     <div className="space-y-5">
@@ -211,6 +256,9 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>
       )}
+      {bulkFeedback && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-xs text-emerald-700">{bulkFeedback}</div>
+      )}
 
       {/* Filter & Search Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -243,40 +291,104 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
         </div>
       </div>
 
+      {/* Bulk Selection Bar */}
+      <div
+        data-testid="media-bulk-bar"
+        className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-[#FAFAFA] border border-neutral-200 text-xs"
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-[#142B4E]">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelectedIds((prev) => Array.from(new Set([...prev, ...filtered.map((m) => m.id)])));
+                } else {
+                  const visSet = new Set(filtered.map((m) => m.id));
+                  setSelectedIds((prev) => prev.filter((id) => !visSet.has(id)));
+                }
+              }}
+            />
+            <span>Select All Visible ({filtered.length})</span>
+          </label>
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="text-[11px] text-neutral-500 hover:text-black underline cursor-pointer"
+            >
+              Clear ({selectedIds.length})
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          data-testid="media-bulk-delete-btn"
+          disabled={selectedIds.length === 0 || bulkDeleting}
+          onClick={handleBulkDeleteMedia}
+          className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-neutral-300 text-white text-[11px] uppercase tracking-wider font-medium inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>{bulkDeleting ? 'Deleting...' : `Delete Selected (${selectedIds.length})`}</span>
+        </button>
+      </div>
+
       {/* Main Media Grid + Attachment Inspector Split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {filtered.map((asset) => {
             const isSelected = activeAsset?.id === asset.id;
+            const isChecked = selectedIds.includes(asset.id);
             return (
-              <button
+              <div
                 key={asset.id}
-                type="button"
-                onClick={() => selectAsset(asset)}
-                className={`group text-left border p-1.5 bg-white transition-all cursor-pointer ${
+                className={`group relative border p-1.5 bg-white transition-all ${
                   isSelected
                     ? 'border-[#142B4E] ring-2 ring-[#142B4E]/30'
+                    : isChecked
+                    ? 'border-red-400 ring-1 ring-red-300'
                     : 'border-neutral-200 hover:border-neutral-400'
                 }`}
               >
-                <div className="aspect-square bg-[#E6E6E6] overflow-hidden">
-                  <img
-                    src={asset.url}
-                    alt={asset.alt_text || asset.original_name}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
+                <label
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-2.5 left-2.5 z-10 w-5 h-5 bg-white/95 border border-neutral-400 rounded flex items-center justify-center shadow-sm cursor-pointer"
+                  aria-label={`Select ${asset.original_name}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggleBulkId(asset.id)}
+                    className="accent-[#142B4E] cursor-pointer"
                   />
-                </div>
-                <div className="mt-1.5 px-1">
-                  <div className="text-[11px] font-medium truncate text-[#1A1A1A]">
-                    {asset.original_name}
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => selectAsset(asset)}
+                  className="w-full text-left cursor-pointer"
+                >
+                  <div className="aspect-square bg-[#E6E6E6] overflow-hidden">
+                    <img
+                      src={asset.url}
+                      alt={asset.alt_text || asset.original_name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-                  <div className="text-[10px] font-mono-tabular text-neutral-500 flex justify-between">
-                    <span>{asset.folder}</span>
-                    <span>{Math.max(1, Math.round(asset.size_bytes / 1024))} KB</span>
+                  <div className="mt-1.5 px-1">
+                    <div className="text-[11px] font-medium truncate text-[#1A1A1A]">
+                      {asset.original_name}
+                    </div>
+                    <div className="text-[10px] font-mono-tabular text-neutral-500 flex justify-between">
+                      <span>{asset.folder}</span>
+                      <span>{Math.max(1, Math.round(asset.size_bytes / 1024))} KB</span>
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              </div>
             );
           })}
         </div>
