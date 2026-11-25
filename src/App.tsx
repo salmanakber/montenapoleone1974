@@ -40,6 +40,7 @@ import { HeroAndHome } from './components/HeroAndHome.tsx';
 import { CatalogView } from './components/CatalogView.tsx';
 import { ProductDetailView } from './components/ProductDetailView.tsx';
 import { AboutUsView } from './components/AboutUsView.tsx';
+import { InfoPagesView } from './components/InfoPagesView.tsx';
 import { CartDrawer } from './components/CartDrawer.tsx';
 import { CheckoutView } from './components/CheckoutView.tsx';
 import { AccountView, B2BView } from './components/B2BAndAccountView.tsx';
@@ -49,6 +50,10 @@ import { InfoModal, SearchModal } from './components/Modals.tsx';
 import { FirstOrderPopup } from './components/FirstOrderPopup.tsx';
 import { AiConciergeWidget } from './components/AiConciergeWidget.tsx';
 import { GmailLoginCornerPopup } from './components/GmailLoginCornerPopup.tsx';
+import {
+  resolveInfoPageSlug,
+  type InfoPageSlug,
+} from './content/infoPages.ts';
 
 const DEFAULT_REGION: RegionConfig = {
   code: 'en',
@@ -144,6 +149,12 @@ export default function App() {
   const [b2bProductSlug, setB2bProductSlug] = useState<string | null>(
     initialRoute.view === 'b2b' ? initialRoute.slug || null : null
   );
+  const [infoPage, setInfoPage] = useState<InfoPageSlug>(() => {
+    if (initialRoute.view === 'info') {
+      return resolveInfoPageSlug(initialRoute.infoPage || initialRoute.slug) || 'returns';
+    }
+    return 'returns';
+  });
   const [reviewToken, setReviewToken] = useState<string | null>(() => {
     try {
       return new URLSearchParams(window.location.search).get('reviewToken');
@@ -457,6 +468,9 @@ export default function App() {
       setSelectedCategory(parsed.category || 'all');
       setSelectedSlug(parsed.view === 'product' ? parsed.slug || null : null);
       setB2bProductSlug(parsed.view === 'b2b' ? parsed.slug || null : null);
+      if (parsed.view === 'info') {
+        setInfoPage(resolveInfoPageSlug(parsed.infoPage || parsed.slug) || 'returns');
+      }
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -473,7 +487,11 @@ export default function App() {
       next,
       activeView,
       selectedCategory,
-      activeView === 'b2b' ? b2bProductSlug : selectedSlug,
+      activeView === 'b2b'
+        ? b2bProductSlug
+        : activeView === 'info'
+          ? infoPage
+          : selectedSlug,
       activeView === 'admin' ? adminTab : undefined
     );
   };
@@ -502,6 +520,7 @@ export default function App() {
         category: selectedCategory,
         categoryRecord: catRecord,
         product: activeView === 'product' ? activeProduct : null,
+        slug: activeView === 'info' ? infoPage : undefined,
         origin,
       });
 
@@ -572,18 +591,43 @@ export default function App() {
     } catch {
       // ignore DOM head sync errors in non-browser contexts
     }
-  }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct]);
+  }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct, infoPage]);
 
   const navigate = (
     view: AppView,
-    opts?: { category?: string; slug?: string; reviewToken?: string | null; adminTab?: AdminTab }
+    opts?: {
+      category?: string;
+      slug?: string;
+      reviewToken?: string | null;
+      adminTab?: AdminTab;
+      infoPage?: InfoPageSlug;
+    }
   ) => {
     const nextCat = opts?.category !== undefined ? opts.category : selectedCategory;
+    const nextInfo =
+      opts?.infoPage !== undefined
+        ? opts.infoPage
+        : view === 'info'
+          ? infoPage
+          : null;
     const nextSlug =
-      opts?.slug !== undefined ? opts.slug : view === 'product' ? selectedSlug : view === 'b2b' ? b2bProductSlug : null;
+      opts?.slug !== undefined
+        ? opts.slug
+        : view === 'product'
+          ? selectedSlug
+          : view === 'b2b'
+            ? b2bProductSlug
+            : view === 'info'
+              ? nextInfo
+              : null;
     const nextAdminTab = opts?.adminTab !== undefined ? opts.adminTab : adminTab;
     if (opts?.category !== undefined) setSelectedCategory(opts.category);
-    if (opts?.slug !== undefined) setSelectedSlug(opts.slug);
+    if (opts?.slug !== undefined && view !== 'info') setSelectedSlug(opts.slug);
+    if (opts?.infoPage !== undefined) setInfoPage(opts.infoPage);
+    else if (view === 'info' && opts?.slug) {
+      const resolved = resolveInfoPageSlug(opts.slug);
+      if (resolved) setInfoPage(resolved);
+    }
     if (opts?.adminTab !== undefined) setAdminTab(opts.adminTab);
     if (opts?.reviewToken !== undefined) {
       setReviewToken(opts.reviewToken);
@@ -591,7 +635,13 @@ export default function App() {
       setReviewToken(null);
     }
     setActiveView(view);
-    pushBrowserUrl(regionCode, view, nextCat, nextSlug, view === 'admin' ? nextAdminTab : undefined);
+    pushBrowserUrl(
+      regionCode,
+      view,
+      nextCat,
+      view === 'info' ? nextInfo || infoPage : nextSlug,
+      view === 'admin' ? nextAdminTab : undefined
+    );
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -801,6 +851,15 @@ export default function App() {
             onNavigateCatalog={() => navigate('catalog', { category: 'all' })}
             onNavigateB2B={() => navigate('b2b')}
           />
+        ) : activeView === 'info' ? (
+          <InfoPagesView
+            region={activeRegion}
+            copy={copy}
+            page={infoPage}
+            onNavigatePage={(page) => navigate('info', { infoPage: page, slug: page })}
+            onNavigateCatalog={() => navigate('catalog', { category: 'all' })}
+            onNavigateHome={() => navigate('home')}
+          />
         ) : activeView === 'product' && activeProduct ? (
           <ProductDetailView
             product={activeProduct}
@@ -903,9 +962,8 @@ export default function App() {
         <Footer
           region={activeRegion}
           copy={copy}
-          onNavigateB2B={() => navigate('b2b')}
-          onNavigateAccount={() => navigate('account')}
           onNavigateAbout={() => navigate('about')}
+          onNavigateInfo={(page) => navigate('info', { infoPage: page, slug: page })}
           onOpenSizeGuide={() => setInfoModal('size_guide')}
           onPromoCodeUnlocked={(code) => {
             setActivePromoCode(code);

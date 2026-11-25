@@ -1,13 +1,22 @@
 import React, { useState } from 'react';
 import type { RegionConfig } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
+import type { InfoPageSlug } from '../content/infoPages.ts';
+
+const FOOTER_INFO_SLUGS: InfoPageSlug[] = [
+  'returns',
+  'withdrawal',
+  'dealers',
+  'careers',
+  'faq',
+  'privacy',
+];
 
 interface FooterProps {
   region: RegionConfig;
   copy: RegionCopy;
-  onNavigateB2B: () => void;
-  onNavigateAccount: () => void;
   onNavigateAbout: () => void;
+  onNavigateInfo: (page: InfoPageSlug) => void;
   onOpenSizeGuide: () => void;
   onPromoCodeUnlocked?: (code: string) => void;
   onPromoCodeAlreadyUsed?: () => void;
@@ -16,9 +25,8 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({
   region,
   copy,
-  onNavigateB2B,
-  onNavigateAccount,
   onNavigateAbout,
+  onNavigateInfo,
   onOpenSizeGuide,
   onPromoCodeUnlocked,
   onPromoCodeAlreadyUsed,
@@ -113,37 +121,20 @@ export const Footer: React.FC<FooterProps> = ({
             </p>
           </div>
 
-          {/* Column 4: Information (Matches montenapoleone1974.com links) */}
+          {/* Column 4: Information pages (in-app, redesigned from legacy WordPress) */}
           <div>
             <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-neutral-500 mb-4">
               {copy.footer.infoHeading}
             </h2>
             <ul className="space-y-2 text-xs text-[#142B4E]">
               {copy.footer.infoLinks.map((label, idx) => {
-                const href = copy.footer.infoUrls?.[idx];
-                if (href) {
-                  return (
-                    <li key={label}>
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="hover:underline text-left inline-block"
-                      >
-                        {label}
-                      </a>
-                    </li>
-                  );
-                }
+                const slug = FOOTER_INFO_SLUGS[idx];
+                if (!slug) return null;
                 return (
                   <li key={label}>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (idx === 0 || idx === 1) onNavigateAccount();
-                        else if (idx === 2) onNavigateB2B();
-                        else onOpenSizeGuide();
-                      }}
+                      onClick={() => onNavigateInfo(slug)}
                       className="hover:underline text-left cursor-pointer"
                     >
                       {label}
@@ -151,6 +142,15 @@ export const Footer: React.FC<FooterProps> = ({
                   </li>
                 );
               })}
+              <li>
+                <button
+                  type="button"
+                  onClick={onOpenSizeGuide}
+                  className="hover:underline text-left cursor-pointer"
+                >
+                  {copy.pdp.sizeGuide}
+                </button>
+              </li>
             </ul>
           </div>
 

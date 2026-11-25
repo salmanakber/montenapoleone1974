@@ -6,6 +6,7 @@ export type StorefrontView =
   | 'product'
   | 'b2b'
   | 'about'
+  | 'info'
   | 'checkout'
   | 'account'
   | 'admin';
@@ -15,6 +16,7 @@ export interface ParsedRoute {
   view: StorefrontView;
   category?: string;
   slug?: string;
+  infoPage?: string;
   adminTab?: AdminTab;
 }
 
@@ -135,6 +137,34 @@ export function parseStorefrontUrl(pathname: string): ParsedRoute {
     };
   }
 
+  if (
+    head === 'info' ||
+    head === 'returns' ||
+    head === 'returns-exchanges' ||
+    head === 'retur-og-bytte' ||
+    head === 'withdrawal' ||
+    head === 'withdrawal-form' ||
+    head === 'angrefrist-skjema' ||
+    head === 'dealers' ||
+    head === 'dealers-partners' ||
+    head === 'forhandlere-og-partnere' ||
+    head === 'careers' ||
+    head === 'karrierer' ||
+    head === 'faq' ||
+    head === 'faqs' ||
+    head === 'privacy' ||
+    head === 'privacy-policy' ||
+    head === 'personvernerklaering'
+  ) {
+    const infoPage = head === 'info' ? tail || 'returns' : head;
+    return {
+      region,
+      view: 'info',
+      infoPage,
+      slug: infoPage,
+    };
+  }
+
   if (head === 'checkout') {
     return { region, view: 'checkout' };
   }
@@ -177,6 +207,10 @@ export function buildStorefrontPath(params: {
       return params.slug ? `/${rc}/b2b/${encodeURIComponent(params.slug)}` : `/${rc}/b2b`;
     case 'about':
       return `/${rc}/about-us`;
+    case 'info': {
+      const page = (params.slug || 'returns').trim() || 'returns';
+      return `/${rc}/info/${encodeURIComponent(page)}`;
+    }
     case 'checkout':
       return `/${rc}/checkout`;
     case 'account':
@@ -247,15 +281,17 @@ export function buildSeoMetadata(params: {
     subtitle?: string;
     gallery?: string[];
   }) | null;
+  slug?: string | null;
   origin: string;
 }): SeoMetadataResult {
   const baseOrigin = (params.origin || 'https://montenapoleone1974.com').replace(/\/+$/, '');
   const rc = params.region.code;
+  const pathSlug = params.view === 'info' ? params.slug : params.product?.slug;
   const canonicalPath = buildStorefrontPath({
     regionCode: rc,
     view: params.view,
     category: params.category,
-    slug: params.product?.slug,
+    slug: pathSlug,
   });
   const canonicalUrl = `${baseOrigin}${canonicalPath}`;
 
@@ -276,7 +312,7 @@ export function buildSeoMetadata(params: {
         regionCode: code,
         view: params.view,
         category: params.category,
-        slug: params.product?.slug,
+        slug: pathSlug,
       })}`,
     })
   );
@@ -286,7 +322,7 @@ export function buildSeoMetadata(params: {
       regionCode: 'en',
       view: params.view,
       category: params.category,
-      slug: params.product?.slug,
+      slug: pathSlug,
     })}`,
   });
 
@@ -597,6 +633,63 @@ export function buildSeoMetadata(params: {
     };
   }
 
+  if (params.view === 'info') {
+    const pageKey = (params.slug || 'returns').toLowerCase();
+    const infoMeta: Record<string, { title: string; description: string; keywords: string }> = {
+      returns: {
+        title: 'Returns & Exchanges – Monte Napoleone 1974',
+        description:
+          '14-day ready-to-wear returns, international return customs guidance, and bespoke shirt policy for Monte Napoleone 1974.',
+        keywords: 'shirt returns, exchange policy, Monte Napoleone returns',
+      },
+      withdrawal: {
+        title: 'Withdrawal Form – Monte Napoleone 1974',
+        description:
+          'Statutory withdrawal form and instructions for eligible ready-to-wear orders from Monte Napoleone 1974.',
+        keywords: 'withdrawal form, cooling-off period, Monte Napoleone',
+      },
+      dealers: {
+        title: 'Dealers & Partners – Monte Napoleone 1974',
+        description:
+          'Find Monte Napoleone partner boutiques in Norway and enquire about wholesale partnerships.',
+        keywords: 'Monte Napoleone dealers, Oslo showroom, shirt retailers Norway',
+      },
+      careers: {
+        title: 'Careers – Monte Napoleone 1974',
+        description:
+          'Career opportunities with Monte Napoleone 1974. Introduce yourself to our Italian shirting team.',
+        keywords: 'Monte Napoleone careers, jobs, Italian shirt brand careers',
+      },
+      faq: {
+        title: 'FAQ – Monte Napoleone 1974',
+        description:
+          'Frequently asked questions about shipping, Vipps/PayPal payments, sizing, and order changes.',
+        keywords: 'Monte Napoleone FAQ, shipping times, payment methods',
+      },
+      privacy: {
+        title: 'Privacy Policy – Monte Napoleone 1974',
+        description:
+          'How Monte Napoleone 1974 collects, uses, and protects personal data for orders and newsletters.',
+        keywords: 'privacy policy, GDPR, Monte Napoleone data protection',
+      },
+    };
+    const meta = infoMeta[pageKey] || infoMeta.returns;
+    return {
+      title: clampSeoText(meta.title, 28, 62, 'Monte Napoleone'),
+      description: clampSeoText(meta.description, 110, 160, 'Monte Napoleone 1974.'),
+      keywords: meta.keywords,
+      canonicalUrl,
+      ogType: 'website',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
+      ogImage: resolveImage('/src/assets/images/editorial_tailoring_guide_1795248294030.jpg'),
+      ogImageAlt: meta.title,
+      robots: 'index, follow, max-image-preview:large',
+      hreflangs,
+      jsonLd: [orgSchema, websiteSchema],
+    };
+  }
+
   const homeTitles: Record<RegionCode, string> = {
     en: 'Monte Napoleone 1974 – Bespoke Italian Shirts',
     no: 'Monte Napoleone 1974 – Skreddersydde Skjorter',
@@ -696,6 +789,13 @@ export function buildSitemapXml(params: {
       changefreq: 'monthly',
       priority: '0.6',
     });
+    for (const infoSlug of ['returns', 'withdrawal', 'dealers', 'careers', 'faq', 'privacy']) {
+      urls.push({
+        loc: `${baseOrigin}${buildStorefrontPath({ regionCode: rc, view: 'info', slug: infoSlug })}`,
+        changefreq: 'monthly',
+        priority: '0.5',
+      });
+    }
   }
 
   for (const cat of params.categories) {
