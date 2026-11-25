@@ -129,18 +129,34 @@ export const InfoPagesView: React.FC<InfoPagesViewProps> = ({
             </header>
 
             {content.dealers && content.dealers.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {content.dealers.map((d) => (
-                  <div
+                  <article
                     key={`${d.name}-${d.city}`}
-                    className="border border-black/10 bg-[#FAFAFA] px-4 py-4 flex items-start gap-3"
+                    className="group border border-black/10 bg-[#FAFAFA] overflow-hidden"
                   >
-                    <MapPin className="w-4 h-4 text-[#142B4E] shrink-0 mt-0.5" />
-                    <div>
-                      <div className="text-sm font-medium text-[#1A1A1A]">{d.name}</div>
-                      <div className="text-xs text-neutral-500 mt-0.5">{d.city}</div>
+                    <div className="aspect-[4/3] bg-[#EDEDED] overflow-hidden">
+                      {d.image ? (
+                        <img
+                          src={d.image}
+                          alt={`${d.name}, ${d.city}`}
+                          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center">
+                          <MapPin className="w-6 h-6 text-[#142B4E]/50" />
+                        </div>
+                      )}
                     </div>
-                  </div>
+                    <div className="px-4 py-3.5 flex items-start gap-2.5">
+                      <MapPin className="w-4 h-4 text-[#142B4E] shrink-0 mt-0.5" />
+                      <div>
+                        <h3 className="text-sm font-medium text-[#1A1A1A] leading-snug">{d.name}</h3>
+                        <p className="text-xs text-neutral-500 mt-0.5">{d.city}</p>
+                      </div>
+                    </div>
+                  </article>
                 ))}
               </div>
             )}

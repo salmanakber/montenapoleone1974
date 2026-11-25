@@ -53,6 +53,8 @@ export interface FaqItem {
 export interface DealerLocation {
   name: string;
   city: string;
+  /** Local path under /public, e.g. /partners/rolfsen-tonsberg.jpg */
+  image?: string;
 }
 
 export interface InfoPageContent {
@@ -68,18 +70,51 @@ export interface InfoPageContent {
   pdfLabel?: string;
 }
 
+const PLACEHOLDER = '/partners/partner-placeholder.png';
+
+/** Full Norwegian partner network from montenapoleone1974.com/forhandlere-og-partnere/ */
 const DEALERS: DealerLocation[] = [
-  { name: '4 MEN Storo Senter', city: 'Oslo' },
-  { name: '4 MEN CC Vest', city: 'Oslo' },
-  { name: 'Briskeby Gods Herre', city: 'Oslo' },
-  { name: 'Briskeby Gods Dame', city: 'Oslo' },
-  { name: 'The Player', city: 'Oslo' },
-  { name: 'Rolfsen', city: 'Tønsberg' },
-  { name: 'Vidars', city: 'Tønsberg' },
-  { name: 'Jørbæk Trekanten Senter', city: 'Asker / Bærum' },
-  { name: 'Jørbæk Holmen Senter', city: 'Asker / Bærum' },
-  { name: 'Høyer Gulskogen', city: 'Drammen / Stavanger' },
-  { name: 'For Menn CC Vest', city: 'Oslo' },
+  { name: '4 MEN Storo Senter', city: 'Oslo', image: '/partners/4men-storo.jpg' },
+  { name: 'Rolfsen', city: 'Tønsberg', image: '/partners/rolfsen-tonsberg.jpg' },
+  { name: '4 MEN CC Vest', city: 'Oslo', image: '/partners/4men-cc-vest.jpg' },
+  { name: 'Jørbæk Trekanten Senter', city: 'Asker / Bærum', image: '/partners/jorbaek-trekanten.jpg' },
+  { name: 'Jørbæk Holmen Senter', city: 'Asker / Bærum', image: '/partners/jorbaek-holmen.jpg' },
+  { name: 'Briskeby Gods Herre', city: 'Oslo', image: '/partners/briskeby-gods-herre.jpg' },
+  { name: 'Briskeby Gods Dame', city: 'Oslo', image: '/partners/briskeby-gods-dame.jpg' },
+  { name: 'The Player', city: 'Oslo', image: '/partners/the-player.jpg' },
+  { name: 'Object Etc Dame', city: 'Oslo', image: '/partners/object-etc-dame.jpg' },
+  { name: 'T. Riise', city: 'Hareid', image: PLACEHOLDER },
+  { name: 'Bjerkis (Høyer)', city: 'Bodø', image: '/partners/hoyer.png' },
+  { name: 'O. Johanson', city: 'Bodø', image: '/partners/o-johanson.jpg' },
+  { name: 'POM', city: 'Oslo', image: PLACEHOLDER },
+  { name: 'Boomerang', city: 'Fredrikstad', image: PLACEHOLDER },
+  { name: 'Wood Shop', city: 'Elverum', image: PLACEHOLDER },
+  { name: 'Fine Man', city: 'Stavanger', image: '/partners/fine-mann.jpg' },
+  { name: 'Icon of Norway', city: 'Haugesund', image: '/partners/icon-of-norway.jpg' },
+  { name: 'For Men Sandvika Senter', city: 'Oslo', image: '/partners/for-menn.png' },
+  { name: 'Briskeby Herregård', city: 'Oslo', image: PLACEHOLDER },
+  { name: 'Briskeby Herregård CC Vest', city: 'Oslo', image: PLACEHOLDER },
+  { name: 'Briskeby Herregård Vinderen', city: 'Oslo', image: PLACEHOLDER },
+  { name: 'Briskeby Gods Fornebu', city: 'Fornebu', image: PLACEHOLDER },
+  { name: 'Karma Marit Meløy', city: 'Larvik', image: PLACEHOLDER },
+  { name: 'Frati', city: 'Ålgård', image: PLACEHOLDER },
+  { name: 'Sporten Bagn', city: 'Bagn', image: PLACEHOLDER },
+  { name: 'Kase', city: 'Ski', image: '/partners/kase.png' },
+  { name: 'Bea', city: 'Holmsbu', image: PLACEHOLDER },
+  { name: 'Arve Tvete', city: 'Sarpsborg', image: PLACEHOLDER },
+  { name: 'Tendenza', city: 'Lillehammer', image: PLACEHOLDER },
+  { name: 'Studio Sisko', city: 'Gjøvik', image: PLACEHOLDER },
+  { name: 'Hamborg', city: 'Drøbak', image: '/partners/hamborg-drobak.jpg' },
+  { name: 'De Fem Hjørner', city: 'Sandvika Senter', image: PLACEHOLDER },
+  { name: 'Mille Måne', city: 'Sem', image: PLACEHOLDER },
+  { name: 'Høyer', city: 'Vestby', image: '/partners/hoyer.png' },
+  { name: 'Høyer', city: 'Ålgård', image: '/partners/hoyer.png' },
+  { name: 'Vidars', city: 'Tønsberg', image: PLACEHOLDER },
+  { name: 'Bogart', city: 'Tønsberg', image: '/partners/bogart.png' },
+  { name: 'LUI', city: 'Bogstadveien, Oslo', image: '/partners/lui.png' },
+  { name: 'Høyer Gulskogen', city: 'Stavanger', image: '/partners/hoyer-gulskogen.jpg' },
+  { name: 'Mannen i Gata', city: 'Drammen', image: '/partners/mannen-i-gata.jpg' },
+  { name: 'Trebutikk', city: 'Elverum', image: '/partners/trebutikk.jpg' },
 ];
 
 const WITHDRAWAL_PDF =
