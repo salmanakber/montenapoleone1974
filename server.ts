@@ -833,7 +833,142 @@ app.get('/api/storefront/bootstrap', (req, res) => {
     const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
     const pid = Number(p.id);
     const rStats = reviewStatsMap.get(pid);
+    // Slim variants for bootstrap: only active-region price/stock (keeps payload small so storefront boots fast)
+    const slimVariants = (variantsByProd.get(pid) || []).map((v) => {
+      const priceRaw = v[`price_${regionCode}` as keyof typeof v];
+      const stockRaw = v[`stock_${regionCode}` as keyof typeof v];
+      const price = typeof priceRaw === 'number' ? priceRaw : priceRaw != null ? Number(priceRaw) : null;
+      const stock = Number(stockRaw ?? 0);
+      return {
+        id: Number(v.id),
+        product_id: pid,
+        fit: String(v.fit),
+        size_label: String(v.size_label),
+        sku_variant: String(v.sku_variant),
+        price_en: regionCode === 'en' ? price : null,
+        price_no: regionCode === 'no' ? price : null,
+        price_it: regionCode === 'it' ? price : null,
+        price_vn: regionCode === 'vn' ? price : null,
+        stock_en: regionCode === 'en' ? stock : 0,
+        stock_no: regionCode === 'no' ? stock : 0,
+        stock_it: regionCode === 'it' ? stock : 0,
+        stock_vn: regionCode === 'vn' ? stock : 0,
+        active: true,
+      };
+    });
     return {
+      id: pid,
+      sku: String(p.sku),
+      slug: String(p.slug),
+      category_slug: categorySlugs[0] || String(p.category_slug),
+      category_slugs: categorySlugs,
+      fabric_spec: String(p.fabric_spec),
+      is_featured: Boolean(p.is_featured),
+      is_b2b_eligible: Boolean(p.is_b2b_eligible),
+      is_outlet: Boolean(p.is_outlet),
+      preorder_allowed: Boolean(p.preorder_allowed),
+      primary_image: String(p.primary_image),
+      secondary_image: String(p.secondary_image),
+      gallery: JSON.parse(String(p.gallery_json)) as string[],
+      collars: JSON.parse(String(p.collars_json)) as string[],
+      cuffs: JSON.parse(String(p.cuffs_json)) as string[],
+      sizes: JSON.parse(String(p.sizes_json)) as string[],
+      active: Boolean(p.active),
+      title: String(p.title),
+      subtitle: String(p.subtitle),
+      description: String(p.description || '').slice(0, 280),
+      price: Number(p.price),
+      compare_at_price: p.compare_at_price !== null ? Number(p.compare_at_price) : null,
+      stock_qty: Number(p.stock_qty),
+      warehouse_location: String(p.warehouse_location),
+      delivery_note: String(p.delivery_note),
+      seo_title: '',
+      seo_description: '',
+      seo_keywords: '',
+      review_count: rStats?.reviewCount || 0,
+      average_rating: rStats?.averageRating || 0,
+      variants: slimVariants,
+    };
+  });
+
+  const heroSlides = (
+    db.prepare('SELECT * FROM hero_slides WHERE active = 1 ORDER BY sort_order ASC, id ASC').all() as Array<
+      Record<string, unknown>
+    >
+  ).map(hydrateHeroSlide);
+
+  res.json({
+    activeRegion: regionCode,
+    regions,
+    categories,
+    menuItems,
+    heroSlides,
+    topBanner: getTopBannerSettings(),
+    homePage: getHomePageSettings(),
+    promoRules: getPromoRules(),
+    bulkDiscount: getBulkDiscountSettings(),
+    aiConfig: getPublicAiConfig(),
+    customerAuthConfig: getPublicCustomerAuthConfig(req),
+    products,
+    tailoringSpecs,
+    tailoringOptions,
+    tailoringSurcharges: DEFAULT_TAILORING_SURCHARGE,
+  });
+});
+
+/** Full product detail (incl. SEO + all-region variants) for PDP — keeps bootstrap light. */
+app.get('/api/storefront/product/:slug', (req, res) => {
+  const regionCode = parseRegion(req.query.region);
+  const slug = String(req.params.slug || '').trim();
+  if (!slug) {
+    res.status(400).json({ error: 'Missing product slug' });
+    return;
+  }
+  const p = db
+    .prepare(
+      `SELECT p.*, pl.title, pl.subtitle, pl.description, pl.price, pl.compare_at_price,
+              pl.stock_qty, pl.warehouse_location, pl.delivery_note,
+              pl.seo_title, pl.seo_description, pl.seo_keywords
+       FROM products p
+       JOIN product_localizations pl ON pl.product_id = p.id AND pl.region_code = ?
+       WHERE p.active = 1 AND p.slug = ?
+       LIMIT 1`
+    )
+    .get(regionCode, slug) as Record<string, unknown> | undefined;
+  if (!p) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+  const pid = Number(p.id);
+  const variants = (
+    db
+      .prepare('SELECT * FROM product_variants WHERE active = 1 AND product_id = ?')
+      .all(pid) as Array<Record<string, unknown>>
+  ).map((v) => ({
+    id: Number(v.id),
+    product_id: pid,
+    fit: String(v.fit),
+    size_label: String(v.size_label),
+    sku_variant: String(v.sku_variant),
+    price_en: v.price_en !== null ? Number(v.price_en) : null,
+    price_no: v.price_no !== null ? Number(v.price_no) : null,
+    price_it: v.price_it !== null ? Number(v.price_it) : null,
+    price_vn: v.price_vn !== null ? Number(v.price_vn) : null,
+    stock_en: Number(v.stock_en),
+    stock_no: Number(v.stock_no),
+    stock_it: Number(v.stock_it),
+    stock_vn: Number(v.stock_vn),
+    active: Boolean(v.active),
+  }));
+  const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
+  const rStats = db
+    .prepare(
+      `SELECT COUNT(*) AS review_count, ROUND(AVG(rating), 1) AS average_rating
+       FROM product_reviews WHERE product_id = ?`
+    )
+    .get(pid) as { review_count: number; average_rating: number } | undefined;
+  res.json({
+    product: {
       id: pid,
       sku: String(p.sku),
       slug: String(p.slug),
@@ -862,34 +997,10 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       seo_title: String(p.seo_title || ''),
       seo_description: String(p.seo_description || ''),
       seo_keywords: String(p.seo_keywords || ''),
-      review_count: rStats?.reviewCount || 0,
-      average_rating: rStats?.averageRating || 0,
-      variants: variantsByProd.get(pid) || [],
-    };
-  });
-
-  const heroSlides = (
-    db.prepare('SELECT * FROM hero_slides WHERE active = 1 ORDER BY sort_order ASC, id ASC').all() as Array<
-      Record<string, unknown>
-    >
-  ).map(hydrateHeroSlide);
-
-  res.json({
-    activeRegion: regionCode,
-    regions,
-    categories,
-    menuItems,
-    heroSlides,
-    topBanner: getTopBannerSettings(),
-    homePage: getHomePageSettings(),
-    promoRules: getPromoRules(),
-    bulkDiscount: getBulkDiscountSettings(),
-    aiConfig: getPublicAiConfig(),
-    customerAuthConfig: getPublicCustomerAuthConfig(req),
-    products,
-    tailoringSpecs,
-    tailoringOptions,
-    tailoringSurcharges: DEFAULT_TAILORING_SURCHARGE,
+      review_count: Number(rStats?.review_count || 0),
+      average_rating: Number(rStats?.average_rating || 0),
+      variants,
+    },
   });
 });
 

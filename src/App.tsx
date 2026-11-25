@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRANSLATIONS } from './i18n/translations.ts';
 import type {
   AdminTab,
@@ -259,10 +259,20 @@ export default function App() {
     }
   }, []);
 
+  const hasProductsRef = useRef(false);
+  useEffect(() => {
+    hasProductsRef.current = products.length > 0;
+  }, [products.length]);
+
   const fetchStorefront = useCallback(async (targetRegion: RegionCode) => {
-    setLoading(true);
+    // Only block the whole page on the very first boot (keep prior content visible on region switches)
+    if (!hasProductsRef.current) setLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
     try {
-      const res = await fetch(`/api/storefront/bootstrap?region=${targetRegion}`);
+      const res = await fetch(`/api/storefront/bootstrap?region=${targetRegion}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.regions)) setRegions(data.regions);
@@ -312,7 +322,10 @@ export default function App() {
           })
         );
       }
+    } catch (err) {
+      console.error('Storefront bootstrap failed', err);
     } finally {
+      window.clearTimeout(timeout);
       setLoading(false);
     }
   }, []);
@@ -508,9 +521,38 @@ export default function App() {
   const copy = TRANSLATIONS[regionCode];
 
   const activeProduct = useMemo(
-    () => products.find((p) => p.slug === selectedSlug) || products[0] || null,
+    () => products.find((p) => p.slug === selectedSlug) || null,
     [products, selectedSlug]
   );
+
+  // Hydrate full PDP fields (SEO + complete variant matrix) when opening a product
+  useEffect(() => {
+    if (activeView !== 'product' || !selectedSlug) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/storefront/product/${encodeURIComponent(selectedSlug)}?region=${regionCode}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const full = data?.product as Product | undefined;
+        if (!full || cancelled) return;
+        setProducts((prev) => {
+          const idx = prev.findIndex((p) => p.id === full.id || p.slug === full.slug);
+          if (idx < 0) return [...prev, full];
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...full };
+          return next;
+        });
+      } catch {
+        /* keep slim bootstrap product */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, selectedSlug, regionCode]);
 
   useEffect(() => {
     try {
