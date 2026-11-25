@@ -421,6 +421,191 @@ export function initializeDatabase(): void {
   );
 
   seedInitialData();
+  syncTailoringSizeGuideSketches();
+}
+
+/** Map Downloads/Size folder assets onto tailoring_size_specs sketch_* columns */
+export function syncTailoringSizeGuideSketches(): { updated: number; created: number } {
+  const roots = [
+    path.resolve(process.cwd(), 'public', 'size-guides'),
+    path.resolve(process.cwd(), 'dist', 'size-guides'),
+  ];
+  const root = roots.find((r) => fs.existsSync(r));
+  if (!root) return { updated: 0, created: 0 };
+
+  const fitDirMap: Record<string, string> = {
+    modern: 'Regular Fit',
+    slim: 'Slim Fit',
+    contemporary: 'Contemporary Fit',
+  };
+
+  const sizeLabelFromFolder = (folderName: string): string | null => {
+    const token = folderName.split('-')[0] || '';
+    const m = token.match(/^(\d{2})([A-Za-z0-9]+)$/i);
+    if (!m) return null;
+    const collar = m[1];
+    const alpha = m[2].toUpperCase();
+    const key = `${collar}-${alpha}`;
+    const map: Record<string, string> = {
+      '36-XS': '36 / XS',
+      '37-S': '37 / XS',
+      '37-XS': '37 / XS',
+      '38-S': '38 / S',
+      '39-M': '39 / M',
+      '40-M': '40 / M',
+      '41-L': '41 / L',
+      '42-L': '42 / L',
+      '43-XL': '43 / XL',
+      '44-XL': '44 / XXL',
+      '44-XXL': '44 / XXL',
+      '45-2XL': '45 / 3XL',
+      '45-XXL': '45 / 3XL',
+      '45-3XL': '45 / 3XL',
+      '46-2XL': '46 / 4XL',
+      '46-XXL': '46 / 4XL',
+      '46-4XL': '46 / 4XL',
+      '48-3XL': '48 / 5XL',
+      '48-5XL': '48 / 5XL',
+    };
+    return map[key] || `${collar} / ${alpha}`;
+  };
+
+  const pickSketchFile = (files: string[], prefer: string[], exclude: string[] = []): string | null => {
+    const normalized = files.map((f) => ({
+      f,
+      b: path
+        .basename(f)
+        .toLowerCase()
+        .replace(/^39regular-man-/, '')
+        .replace(/\s+/g, ''),
+    }));
+    for (const pref of prefer) {
+      const hit = normalized.find(({ b }) => {
+        if (exclude.some((ex) => b.includes(ex))) return false;
+        return b === pref || b.includes(pref);
+      });
+      if (hit) return hit.f;
+    }
+    return null;
+  };
+
+  const publicUrlFor = (absFile: string): string => {
+    const rel = path.relative(root, absFile).split(path.sep).join('/');
+    return `/size-guides/${rel}`;
+  };
+
+  const defaultCmFor = (fit: string, sizeLabel: string) => {
+    const num = Number((sizeLabel.match(/\d{2}/) || ['40'])[0]);
+    const offset = num - 40;
+    const chestAdj = fit === 'Slim Fit' ? -4 : fit === 'Contemporary Fit' ? -2 : 0;
+    const waistAdj = fit === 'Slim Fit' ? -6 : fit === 'Contemporary Fit' ? -3 : 0;
+    const hemAdj = fit === 'Slim Fit' ? -4 : fit === 'Contemporary Fit' ? -2 : 0;
+    return {
+      shirt_length_cm: Math.round((77 + offset * 0.5) * 10) / 10,
+      sleeve_length_cm: Math.round((65 + offset * 0.5) * 10) / 10,
+      waist_cm: Math.round((102 + offset * 3 + waistAdj) * 10) / 10,
+      chest_cm: Math.round((110 + offset * 3 + chestAdj) * 10) / 10,
+      bottom_hem_cm: Math.round((106 + offset * 3 + hemAdj) * 10) / 10,
+      shoulder_cm: Math.round((46 + offset * 0.7) * 10) / 10,
+    };
+  };
+
+  let updated = 0;
+  let created = 0;
+
+  const upsert = db.prepare(`
+    INSERT INTO tailoring_size_specs (
+      fit, size_label, shirt_length_cm, sleeve_length_cm, waist_cm, chest_cm, bottom_hem_cm, shoulder_cm,
+      sketch_shirt_length, sketch_sleeve_length, sketch_waist, sketch_chest, sketch_bottom_hem, sketch_shoulder, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(fit, size_label) DO UPDATE SET
+      sketch_shirt_length = excluded.sketch_shirt_length,
+      sketch_sleeve_length = excluded.sketch_sleeve_length,
+      sketch_waist = excluded.sketch_waist,
+      sketch_chest = excluded.sketch_chest,
+      sketch_bottom_hem = excluded.sketch_bottom_hem,
+      sketch_shoulder = excluded.sketch_shoulder,
+      updated_at = datetime('now')
+  `);
+
+  const fitDirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+  for (const fitDir of fitDirs) {
+    const fit = fitDirMap[fitDir.name.toLowerCase()];
+    if (!fit) continue;
+    const fitPath = path.join(root, fitDir.name);
+    const sizeDirs = fs.readdirSync(fitPath, { withFileTypes: true }).filter((d) => d.isDirectory());
+    for (const sizeDir of sizeDirs) {
+      const sizeLabel = sizeLabelFromFolder(sizeDir.name);
+      if (!sizeLabel) continue;
+      const sizePath = path.join(fitPath, sizeDir.name);
+      const files = fs
+        .readdirSync(sizePath)
+        .filter((n) => /\.(jpe?g|png|webp)$/i.test(n))
+        .map((n) => path.join(sizePath, n));
+      if (files.length === 0) continue;
+
+      const shirtFile = pickSketchFile(files, ['backlength.jpg', 'backlength', 'back.jpg', 'back.jpeg'], [
+        'shoulder',
+        'sholder',
+      ]);
+      const sleeveFile = pickSketchFile(files, ['sleeve.jpg', 'sleeve']);
+      const waistFile = pickSketchFile(files, ['halfwaist.jpg', 'halfwaist', 'waist.jpg', 'waist']);
+      const chestFile = pickSketchFile(files, ['halfchest.jpg', 'halfchest', 'chest.jpg', 'chest']);
+      const bottomFile = pickSketchFile(files, [
+        'halfbottom.jpg',
+        'halfbottom',
+        'bottom.jpg',
+        'bottom.jpeg',
+        'bottom',
+      ]);
+      const shoulderFile = pickSketchFile(files, [
+        'backshoulder.jpg',
+        'backsholder.jpg',
+        'backshoulder',
+        'backsholder',
+        'shoulder.jpg',
+        'shoulder',
+      ]);
+
+      const sketches = {
+        sketch_shirt_length: shirtFile ? publicUrlFor(shirtFile) : '',
+        sketch_sleeve_length: sleeveFile ? publicUrlFor(sleeveFile) : '',
+        sketch_waist: waistFile ? publicUrlFor(waistFile) : '',
+        sketch_chest: chestFile ? publicUrlFor(chestFile) : '',
+        sketch_bottom_hem: bottomFile ? publicUrlFor(bottomFile) : '',
+        sketch_shoulder: shoulderFile ? publicUrlFor(shoulderFile) : '',
+      };
+      if (!Object.values(sketches).some(Boolean)) continue;
+
+      const existing = db
+        .prepare('SELECT id FROM tailoring_size_specs WHERE fit = ? AND size_label = ?')
+        .get(fit, sizeLabel) as { id: number } | undefined;
+      const cm = defaultCmFor(fit, sizeLabel);
+      upsert.run(
+        fit,
+        sizeLabel,
+        cm.shirt_length_cm,
+        cm.sleeve_length_cm,
+        cm.waist_cm,
+        cm.chest_cm,
+        cm.bottom_hem_cm,
+        cm.shoulder_cm,
+        sketches.sketch_shirt_length,
+        sketches.sketch_sleeve_length,
+        sketches.sketch_waist,
+        sketches.sketch_chest,
+        sketches.sketch_bottom_hem,
+        sketches.sketch_shoulder
+      );
+      if (existing) updated++;
+      else created++;
+    }
+  }
+
+  if (updated + created > 0) {
+    console.log(`[size-guides] Synced sketches: ${updated} updated, ${created} created`);
+  }
+  return { updated, created };
 }
 
 function ensureColumn(tableName: string, columnName: string, definition: string): void {

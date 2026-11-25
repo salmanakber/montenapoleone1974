@@ -352,8 +352,16 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
       </div>
 
       {/* Main Media Grid + Attachment Inspector Split */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div
+        className={`grid grid-cols-1 lg:grid-cols-12 gap-6 items-start ${
+          pickerMode ? 'max-h-[58vh]' : ''
+        }`}
+      >
+        <div
+          className={`lg:col-span-8 grid grid-cols-3 sm:grid-cols-4 ${
+            pickerMode ? 'md:grid-cols-5 gap-2 overflow-y-auto max-h-[58vh] pr-1' : 'gap-3'
+          }`}
+        >
           {filtered.map((asset) => {
             const isSelected = activeAsset?.id === asset.id;
             const isChecked = selectedIds.includes(asset.id);

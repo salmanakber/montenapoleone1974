@@ -34,6 +34,7 @@ const FITS: Array<TailoringSizeSpec['fit']> = ['Regular Fit', 'Slim Fit', 'Conte
 const SIZES = [
   '30 / 3XS',
   '34 / 2XS',
+  '36 / XS',
   '37 / XS',
   '38 / S',
   '39 / M',
@@ -43,6 +44,8 @@ const SIZES = [
   '43 / XL',
   '44 / XXL',
   '45 / 3XL',
+  '46 / 4XL',
+  '48 / 5XL',
 ];
 
 const ZONE_META: Array<{
@@ -143,16 +146,51 @@ export const TailoringMatrixPanel: React.FC<{
     [specs, filterFit]
   );
 
+  const handleSyncSizeGuides = async () => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/admin/tailoring-specs/sync-size-guides', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFeedback(data.error || 'Could not sync size-guide sketches.');
+        return;
+      }
+      setFeedback(
+        `Size-guide sketches synced: ${data.updated ?? 0} updated, ${data.created ?? 0} created from /size-guides.`
+      );
+      onRefresh();
+    } catch {
+      setFeedback('Network error syncing size-guide sketches.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="border-b border-neutral-200 pb-3">
-        <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
-          <Ruler className="w-4 h-4 text-[#142B4E]" />
-          <span>Skreddersøm / Tailoring Size Matrix & Bulk Sketch Assigner</span>
-        </h1>
-        <p className="text-xs text-neutral-500 mt-0.5">
-          Configure base pattern cm (Shirt length, Sleeve length, Waist, Chest, Bottom hem, Shoulder) AND bulk-assign measurement sketches from the Media Library across collar sizes (30, 34, 40, 45).
-        </p>
+      <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
+            <Ruler className="w-4 h-4 text-[#142B4E]" />
+            <span>Skreddersøm / Tailoring Size Matrix & Bulk Sketch Assigner</span>
+          </h1>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Configure base pattern cm (Shirt length, Sleeve length, Waist, Chest, Bottom hem, Shoulder)
+            and assign measurement sketches per fit × size. Modern maps to Regular Fit.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={handleSyncSizeGuides}
+          className="px-3.5 py-2 bg-[#142B4E] hover:bg-[#0f213d] disabled:opacity-60 text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
+        >
+          {busy ? 'Syncing...' : 'Sync Size-Guide Images'}
+        </button>
       </div>
 
       <form

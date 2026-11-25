@@ -3608,15 +3608,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <div
               data-testid="edit-product-gallery-editor"
-              className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-4 text-xs"
+              className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-3 text-xs"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
-                    Primary Image &amp; Draggable Gallery Images (3+ Slots)
+                    Product Media
                   </div>
                   <p className="text-[11px] text-neutral-500 mt-0.5">
-                    Drag gallery cards (or use ← / → controls) to reorder how photos appear on the product page. Gallery #1 doubles as the hover editorial photo.
+                    Primary lead photo + horizontal gallery strip. Drag cards or use arrows to reorder.
                   </p>
                 </div>
                 <button
@@ -3628,14 +3628,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+              <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
                 {/* Primary Main Image Card */}
-                <div className="lg:col-span-4 bg-white border-2 border-[#142B4E] p-3 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2 py-0.5 bg-[#142B4E] text-white text-[10px] uppercase tracking-wider font-semibold">
-                      Primary Image
+                <div className="snap-start shrink-0 w-[160px] sm:w-[180px] bg-white border-2 border-[#142B4E] p-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold">
+                      Primary
                     </span>
-                    <span className="text-[10px] text-neutral-500 font-mono-tabular">Lead Photo</span>
+                    <span className="text-[9px] text-neutral-500 font-mono-tabular">Lead</span>
                   </div>
                   <div className="aspect-[4/5] w-full bg-[#ECECEC] overflow-hidden border border-neutral-200 flex items-center justify-center">
                     {editingProduct.primary_image ? (
@@ -3646,140 +3646,113 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         className="w-full h-full object-cover"
                       />
                     ) : (
-                      <span className="text-[11px] text-neutral-400">No primary photo</span>
+                      <span className="text-[10px] text-neutral-400">No photo</span>
                     )}
                   </div>
-                  <input
-                    type="text"
-                    value={editingProduct.primary_image || ''}
-                    onChange={(e) =>
-                      setEditingProduct((prev) =>
-                        prev ? { ...prev, primary_image: e.target.value } : prev
-                      )
-                    }
-                    placeholder="/uploads/..."
-                    className="w-full px-2 py-1 border border-neutral-300 text-[11px] font-mono-tabular bg-white"
-                  />
                   <button
                     type="button"
                     onClick={() => setMediaPickerTarget('primary')}
-                    className="w-full py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
+                    className="w-full py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[10px] uppercase tracking-wider font-medium cursor-pointer"
                   >
-                    Choose Primary from Media
+                    Choose Media
                   </button>
                 </div>
 
-                {/* Draggable Gallery Slots (minimum 3) */}
-                <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {editGallerySlots.map((slotUrl, idx) => (
-                    <div
-                      key={`gallery-slot-${idx}`}
-                      data-testid={`gallery-slot-${idx}`}
-                      draggable
-                      onDragStart={() => setDragGalleryIdx(idx)}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        if (dragOverGalleryIdx !== idx) setDragOverGalleryIdx(idx);
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
-                          handleMoveGallerySlot(dragGalleryIdx, idx);
-                        }
-                        setDragGalleryIdx(null);
-                        setDragOverGalleryIdx(null);
-                      }}
-                      onDragEnd={() => {
-                        setDragGalleryIdx(null);
-                        setDragOverGalleryIdx(null);
-                      }}
-                      className={`bg-white border p-2.5 space-y-2 transition-all cursor-grab active:cursor-grabbing ${
-                        dragOverGalleryIdx === idx
-                          ? 'border-[#142B4E] ring-2 ring-[#142B4E]/30 bg-slate-50'
-                          : 'border-neutral-200 hover:border-neutral-400'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="inline-flex items-center gap-1 font-semibold text-[11px] text-[#142B4E]">
-                          <GripVertical className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                          <span>Gallery #{idx + 1}</span>
-                        </div>
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => handleMoveGallerySlot(idx, idx - 1)}
-                            aria-label={`Move gallery image ${idx + 1} left`}
-                            className="p-1 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                          >
-                            <ArrowLeft className="w-3 h-3" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === editGallerySlots.length - 1}
-                            onClick={() => handleMoveGallerySlot(idx, idx + 1)}
-                            aria-label={`Move gallery image ${idx + 1} right`}
-                            className="p-1 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                          >
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditGallerySlots((prev) =>
-                                prev.length > 3
-                                  ? prev.filter((_, j) => j !== idx)
-                                  : prev.map((v, j) => (j === idx ? '' : v))
-                              )
-                            }
-                            aria-label={`Clear gallery slot ${idx + 1}`}
-                            className="p-1 text-red-500 hover:text-red-700 cursor-pointer"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
+                {/* Draggable Gallery Slots */}
+                {editGallerySlots.map((slotUrl, idx) => (
+                  <div
+                    key={`gallery-slot-${idx}`}
+                    data-testid={`gallery-slot-${idx}`}
+                    draggable
+                    onDragStart={() => setDragGalleryIdx(idx)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (dragOverGalleryIdx !== idx) setDragOverGalleryIdx(idx);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
+                        handleMoveGallerySlot(dragGalleryIdx, idx);
+                      }
+                      setDragGalleryIdx(null);
+                      setDragOverGalleryIdx(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragGalleryIdx(null);
+                      setDragOverGalleryIdx(null);
+                    }}
+                    className={`snap-start shrink-0 w-[148px] sm:w-[160px] bg-white border p-2 space-y-1.5 transition-all cursor-grab active:cursor-grabbing ${
+                      dragOverGalleryIdx === idx
+                        ? 'border-[#142B4E] ring-2 ring-[#142B4E]/30 bg-slate-50'
+                        : 'border-neutral-200 hover:border-neutral-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="inline-flex items-center gap-0.5 font-semibold text-[10px] text-[#142B4E]">
+                        <GripVertical className="w-3 h-3 text-neutral-400 shrink-0" />
+                        <span>#{idx + 1}</span>
                       </div>
-
-                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
-                        {slotUrl ? (
-                          <img
-                            src={slotUrl}
-                            alt={`Gallery ${idx + 1}`}
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-cover pointer-events-none"
-                          />
-                        ) : (
-                          <span className="text-[10px] text-neutral-400 text-center px-2">
-                            Empty Gallery Slot
-                          </span>
-                        )}
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => handleMoveGallerySlot(idx, idx - 1)}
+                          aria-label={`Move gallery image ${idx + 1} left`}
+                          className="p-0.5 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          <ArrowLeft className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === editGallerySlots.length - 1}
+                          onClick={() => handleMoveGallerySlot(idx, idx + 1)}
+                          aria-label={`Move gallery image ${idx + 1} right`}
+                          className="p-0.5 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditGallerySlots((prev) =>
+                              prev.length > 3
+                                ? prev.filter((_, j) => j !== idx)
+                                : prev.map((v, j) => (j === idx ? '' : v))
+                            )
+                          }
+                          aria-label={`Clear gallery slot ${idx + 1}`}
+                          className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </div>
-
-                      <input
-                        type="text"
-                        value={slotUrl}
-                        onChange={(e) =>
-                          setEditGallerySlots((prev) =>
-                            prev.map((v, j) => (j === idx ? e.target.value : v))
-                          )
-                        }
-                        placeholder="Image URL..."
-                        className="w-full px-2 py-1 border border-neutral-300 text-[10px] font-mono-tabular bg-white"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
-                        className="w-full py-1 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer bg-[#FAFAFA]"
-                      >
-                        Choose from Media
-                      </button>
                     </div>
-                  ))}
-                </div>
+
+                    <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                      {slotUrl ? (
+                        <img
+                          src={slotUrl}
+                          alt={`Gallery ${idx + 1}`}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover pointer-events-none"
+                        />
+                      ) : (
+                        <span className="text-[9px] text-neutral-400 text-center px-1">Empty</span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
+                      className="w-full py-1 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] font-medium cursor-pointer bg-[#FAFAFA]"
+                    >
+                      Choose Media
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -4381,15 +4354,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* MEDIA PICKER MODAL FOR PRODUCTS & TAILORING SKETCHES */}
       {mediaPickerTarget && authToken && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          {/* Backdrop stays visual only — outside click does NOT close the picker */}
+          <div className="fixed inset-0 bg-black/60" aria-hidden="true" />
           <div
-            className="fixed inset-0 bg-black/60"
-            onClick={() => {
-              setMediaPickerTarget(null);
-              setTailoringPickerCb(null);
-            }}
-          />
-          <div className="relative w-full max-w-5xl bg-white border border-black/20 shadow-2xl p-6 max-h-[90vh] overflow-y-auto space-y-4">
-            <div className="flex items-center justify-between border-b border-black/10 pb-3">
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-5xl bg-white border border-black/20 shadow-2xl flex flex-col max-h-[90vh]"
+          >
+            <div className="flex items-center justify-between border-b border-black/10 px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-semibold uppercase tracking-wider">
                 Select{' '}
                 {mediaPickerTarget === 'tailoring'
@@ -4412,57 +4384,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   setTailoringPickerCb(null);
                 }}
                 className="p-1 text-neutral-500 hover:text-black cursor-pointer"
+                aria-label="Close media picker"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <MediaLibraryPanel
-              authToken={authToken}
-              media={media}
-              pickerMode
-              onRefresh={loadAdminData}
-              onSelectMedia={(asset) => {
-                if (
-                  (mediaPickerTarget === 'tailoring' ||
-                    mediaPickerTarget === 'menu' ||
-                    mediaPickerTarget === 'hero') &&
-                  tailoringPickerCb
-                ) {
-                  tailoringPickerCb(asset.url);
-                } else if (
-                  typeof mediaPickerTarget === 'object' &&
-                  mediaPickerTarget?.type === 'gallery'
-                ) {
-                  const targetIdx = mediaPickerTarget.index;
-                  setEditGallerySlots((prev) => {
-                    const next = [...prev];
-                    while (next.length <= targetIdx) next.push('');
-                    next[targetIdx] = asset.url;
-                    return next;
-                  });
-                  if (targetIdx === 0 && editingProduct) {
+            <div className="overflow-y-auto px-5 py-4">
+              <MediaLibraryPanel
+                authToken={authToken}
+                media={media}
+                pickerMode
+                onRefresh={loadAdminData}
+                onSelectMedia={(asset) => {
+                  if (
+                    (mediaPickerTarget === 'tailoring' ||
+                      mediaPickerTarget === 'menu' ||
+                      mediaPickerTarget === 'hero') &&
+                    tailoringPickerCb
+                  ) {
+                    tailoringPickerCb(asset.url);
+                  } else if (
+                    typeof mediaPickerTarget === 'object' &&
+                    mediaPickerTarget?.type === 'gallery'
+                  ) {
+                    const targetIdx = mediaPickerTarget.index;
+                    setEditGallerySlots((prev) => {
+                      const next = [...prev];
+                      while (next.length <= targetIdx) next.push('');
+                      next[targetIdx] = asset.url;
+                      return next;
+                    });
+                    if (targetIdx === 0 && editingProduct) {
+                      setEditingProduct((prev) =>
+                        prev ? { ...prev, secondary_image: asset.url } : prev
+                      );
+                    }
+                  } else if (editingProduct) {
                     setEditingProduct((prev) =>
-                      prev ? { ...prev, secondary_image: asset.url } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            primary_image:
+                              mediaPickerTarget === 'primary' ? asset.url : prev.primary_image,
+                            secondary_image:
+                              mediaPickerTarget === 'secondary' ? asset.url : prev.secondary_image,
+                          }
+                        : prev
                     );
+                  } else if (creatingProduct) {
+                    setNewPrimaryImg(asset.url);
                   }
-                } else if (editingProduct) {
-                  setEditingProduct((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          primary_image: mediaPickerTarget === 'primary' ? asset.url : prev.primary_image,
-                          secondary_image: mediaPickerTarget === 'secondary' ? asset.url : prev.secondary_image,
-                        }
-                      : prev
-                  );
-                } else if (creatingProduct) {
-                  setNewPrimaryImg(asset.url);
-                }
-                setTailoringPickerCb(null);
-                setMediaPickerTarget(null);
-              }}
-            />
+                  setTailoringPickerCb(null);
+                  setMediaPickerTarget(null);
+                }}
+              />
+            </div>
           </div>
         </div>
       )}

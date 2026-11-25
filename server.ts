@@ -15,7 +15,13 @@ import {
   type FunctionDeclaration,
   type LiveServerMessage,
 } from '@google/genai';
-import { DB_PATH, db, initializeDatabase, UPLOADS_DIR } from './server/db.ts';
+import {
+  DB_PATH,
+  db,
+  initializeDatabase,
+  syncTailoringSizeGuideSketches,
+  UPLOADS_DIR,
+} from './server/db.ts';
 import {
   createSession,
   extractBearerToken,
@@ -113,6 +119,12 @@ app.use(express.json({ limit: '4mb' }));
 
 // Static serving for uploaded WordPress-style media files
 app.use('/uploads', express.static(UPLOADS_DIR));
+// Tailoring measurement sketches shipped in public/size-guides
+app.use(
+  '/size-guides',
+  express.static(path.resolve(process.cwd(), 'public', 'size-guides'), { fallthrough: true })
+);
+app.use('/size-guides', express.static(path.resolve(process.cwd(), 'dist', 'size-guides')));
 
 // Safe multer configuration for image uploads
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -4092,47 +4104,76 @@ async function mirrorExternalImagesToLocalMedia(
     pendingToFetch.push({ sourceUrl: src, filename: safeFilename });
   }
 
-  const CONCURRENCY = 20;
+  const CONCURRENCY = 8;
   for (let i = 0; i < pendingToFetch.length; i += CONCURRENCY) {
     const batch = pendingToFetch.slice(i, i + CONCURRENCY);
     await Promise.all(
       batch.map(async ({ sourceUrl, filename }) => {
         try {
-          const resp = await fetch(sourceUrl, {
-            signal: AbortSignal.timeout(5500),
-            headers: { 'User-Agent': 'MonteNapoleoneCatalogSync/1.0' },
-          });
-          if (!resp.ok) return;
-          const contentType = String(resp.headers.get('content-type') || 'image/jpeg').toLowerCase();
-          if (!contentType.startsWith('image/')) return;
-          const arrayBuf = await resp.arrayBuffer();
-          if (arrayBuf.byteLength === 0 || arrayBuf.byteLength > 8 * 1024 * 1024) return;
-          const finalFilename = /\.(jpe?g|png|webp|avif|gif)$/i.test(filename)
-            ? filename
-            : `${filename}${extFromMime(contentType)}`;
-          const diskPath = path.resolve(UPLOADS_DIR, finalFilename);
-          if (!diskPath.startsWith(UPLOADS_DIR + path.sep)) return;
-          fs.writeFileSync(diskPath, Buffer.from(arrayBuf));
-          const localUrl = `/uploads/${finalFilename}`;
-          urlMap.set(sourceUrl, localUrl);
-          downloadedCount++;
+          let lastError: unknown = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const resp = await fetch(sourceUrl, {
+                signal: AbortSignal.timeout(28000),
+                redirect: 'follow',
+                headers: {
+                  'User-Agent':
+                    'Mozilla/5.0 (compatible; MonteNapoleoneCatalogSync/1.1; +https://montenapoleone1974.com)',
+                  Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                },
+              });
+              if (!resp.ok) {
+                lastError = `HTTP ${resp.status}`;
+                continue;
+              }
+              const contentType = String(resp.headers.get('content-type') || 'image/jpeg').toLowerCase();
+              if (!contentType.startsWith('image/') && !contentType.includes('octet-stream')) {
+                lastError = `bad content-type ${contentType}`;
+                continue;
+              }
+              const arrayBuf = await resp.arrayBuffer();
+              if (arrayBuf.byteLength === 0 || arrayBuf.byteLength > 12 * 1024 * 1024) {
+                lastError = 'empty or oversized body';
+                continue;
+              }
+              const finalFilename = /\.(jpe?g|png|webp|avif|gif)$/i.test(filename)
+                ? filename
+                : `${filename}${extFromMime(contentType)}`;
+              const diskPath = path.resolve(UPLOADS_DIR, finalFilename);
+              if (!diskPath.startsWith(UPLOADS_DIR + path.sep)) return;
+              fs.writeFileSync(diskPath, Buffer.from(arrayBuf));
+              const localUrl = `/uploads/${finalFilename}`;
+              urlMap.set(sourceUrl, localUrl);
+              downloadedCount++;
 
-          const cleanOriginal = finalFilename.replace(/^woo-[a-f0-9]+-/i, '');
-          db.prepare(
-            `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
-             SELECT ?, ?, ?, 'products', ?, ?, 1200, 1500, ?, ?, ?
-             WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
-          ).run(
-            finalFilename,
-            cleanOriginal,
-            localUrl,
-            contentType.split(';')[0].trim(),
-            arrayBuf.byteLength,
-            cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
-            sourceUrl,
-            uploadedBy,
-            localUrl
-          );
+              const cleanOriginal = finalFilename.replace(/^woo-[a-f0-9]+-/i, '');
+              db.prepare(
+                `INSERT INTO media (filename, original_name, url, folder, mime_type, size_bytes, width, height, alt_text, caption, uploaded_by)
+                 SELECT ?, ?, ?, 'products', ?, ?, 1200, 1500, ?, ?, ?
+                 WHERE NOT EXISTS (SELECT 1 FROM media WHERE url = ?)`
+              ).run(
+                finalFilename,
+                cleanOriginal,
+                localUrl,
+                contentType.startsWith('image/')
+                  ? contentType.split(';')[0].trim()
+                  : 'image/jpeg',
+                arrayBuf.byteLength,
+                cleanOriginal.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+                sourceUrl,
+                uploadedBy,
+                localUrl
+              );
+              lastError = null;
+              break;
+            } catch (err) {
+              lastError = err;
+              await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+            }
+          }
+          if (lastError) {
+            // keep original remote URL; admin can re-run Media Sync later
+          }
         } catch {
           // keep original URL gracefully if remote host rejects or times out
         }
@@ -4961,6 +5002,25 @@ app.get('/api/admin/tailoring-specs', requireStaffOrOwner, (_req, res) => {
     .prepare('SELECT * FROM tailoring_size_specs ORDER BY fit ASC, size_label ASC')
     .all();
   res.json({ specs });
+});
+
+app.post('/api/admin/tailoring-specs/sync-size-guides', requireStaffOrOwner, (req: AuthedRequest, res) => {
+  const user = req.authUser!;
+  if (!hasPermission(user, 'manage_products') && !hasPermission(user, 'manage_settings')) {
+    res.status(403).json({ error: 'Insufficient permissions to sync size guide sketches.' });
+    return;
+  }
+  const result = syncTailoringSizeGuideSketches();
+  logAudit(
+    user,
+    'TAILORING_SIZE_GUIDES_SYNCED',
+    'tailoring_size_specs',
+    `Updated ${result.updated}, created ${result.created}`
+  );
+  const specs = db
+    .prepare('SELECT * FROM tailoring_size_specs ORDER BY fit ASC, size_label ASC')
+    .all();
+  res.json({ ok: true, ...result, specs });
 });
 
 app.post('/api/admin/tailoring-specs/bulk', requireStaffOrOwner, (req: AuthedRequest, res) => {
