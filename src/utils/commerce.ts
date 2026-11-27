@@ -92,7 +92,7 @@ export const DEFAULT_HOME_PAGE_SETTINGS: HomePageSettings = {
   guideSub_no: 'Oversikt over skjortestoffer og vevtyper',
   guideSub_it: 'Tessuti, trama e come scegliere il tessuto',
   guideSub_vn: 'Kiểu dệt, cotton & cách chọn vải',
-  guideImage: '/uploads/articles/fabric-guide-hero.jpg',
+  guideImage: '/media/articles/fabric-guide-hero.jpg',
 
   inspirationTitle_en: 'ADVICE & INSPIRATION',
   inspirationTitle_no: 'RÅD & INSPIRASJON',
@@ -102,7 +102,7 @@ export const DEFAULT_HOME_PAGE_SETTINGS: HomePageSettings = {
   inspirationSub_no: 'Velg kvalitet som varer',
   inspirationSub_it: 'Compra meno. Scegli qualità che dura.',
   inspirationSub_vn: 'Mua ít hơn. Chọn chất lượng bền lâu.',
-  inspirationImage: '/uploads/articles/sustainable-fashion-hero.jpg',
+  inspirationImage: '/media/articles/sustainable-fashion-hero.jpg',
   inspirationTargetType: 'view',
   inspirationTargetValue: 'article/sustainable-fashion',
 };

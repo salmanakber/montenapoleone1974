@@ -669,21 +669,21 @@ export function buildSeoMetadata(params: {
         description:
           'Broadcloth, twill, oxford, linen and more — a clear guide to the weaves used in Monte Napoleone dress shirts.',
         keywords: 'shirt fabrics, broadcloth, twill, oxford cloth, Monte Napoleone fabric guide',
-        image: '/uploads/articles/fabric-guide-hero.jpg',
+        image: '/media/articles/fabric-guide-hero.jpg',
       },
       'oversikt-over-skjortestoffer': {
         title: 'Oversikt over skjortestoffer – Monte Napoleone 1974',
         description:
           'Broadcloth, twill, oxford, lin og mer — oversikten over vevene i Monte Napoleone dresskjorter.',
         keywords: 'skjortestoffer, broadcloth, twill, oxford, Monte Napoleone stoffguide',
-        image: '/uploads/articles/fabric-guide-hero.jpg',
+        image: '/media/articles/fabric-guide-hero.jpg',
       },
       'sustainable-fashion': {
         title: 'Quality & Sustainability – Monte Napoleone 1974',
         description:
           'Buy less and choose shirts that last. Why timeless quality is kinder to the planet than fast fashion.',
         keywords: 'sustainable fashion, buy less, quality shirts, Monte Napoleone',
-        image: '/uploads/articles/sustainable-fashion-hero.jpg',
+        image: '/media/articles/sustainable-fashion-hero.jpg',
       },
     };
     const meta = articleMeta[articleKey] || articleMeta['fabric-guide'];

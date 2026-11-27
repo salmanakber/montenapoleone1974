@@ -124,6 +124,15 @@ app.use(express.json({ limit: '32mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 // Fallback for assets placed under public/uploads (e.g. article heroes synced locally)
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'public', 'uploads')));
+// Committed media (articles + fabric close-ups) — survives deploy; also maps legacy /uploads URLs
+const PUBLIC_MEDIA_DIR = path.resolve(process.cwd(), 'public', 'media');
+const DIST_MEDIA_DIR = path.resolve(process.cwd(), 'dist', 'media');
+app.use('/media', express.static(PUBLIC_MEDIA_DIR));
+app.use('/media', express.static(DIST_MEDIA_DIR));
+app.use('/uploads/articles', express.static(path.join(PUBLIC_MEDIA_DIR, 'articles')));
+app.use('/uploads/articles', express.static(path.join(DIST_MEDIA_DIR, 'articles')));
+app.use('/uploads', express.static(path.join(PUBLIC_MEDIA_DIR, 'fabric-closeups')));
+app.use('/uploads', express.static(path.join(DIST_MEDIA_DIR, 'fabric-closeups')));
 // Tailoring measurement sketches shipped in public/size-guides
 app.use(
   '/size-guides',
@@ -283,9 +292,11 @@ function getHomePageSettings(): HomePageSettings {
     : DEFAULT_HOME_PAGE_SETTINGS.featuredProductIds;
   const legacyGuideImages = new Set([
     '/src/assets/images/editorial_tailoring_guide_1795248294030.jpg',
+    '/uploads/articles/fabric-guide-hero.jpg',
   ]);
   const legacyInspirationImages = new Set([
     '/src/assets/images/hero_linen_coastal_1795248294948.jpg',
+    '/uploads/articles/sustainable-fashion-hero.jpg',
   ]);
   const guideImage = String(raw.guideImage || DEFAULT_HOME_PAGE_SETTINGS.guideImage);
   const inspirationImage = String(
@@ -5931,9 +5942,13 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
 
     if (ordStatus !== 'cancelled') {
       for (const it of items) {
-        const key = String(it.sku || 'UNKNOWN').split('-')[0] === 'MN' && String(it.sku).includes('-', 3)
-          ? String(it.sku).split('-').slice(0, 2).join('-')
-          : String(it.sku || 'UNKNOWN');
+        const rawSku = String(it.sku || 'UNKNOWN').trim();
+        const parts = rawSku.split('-');
+        // Align with storefront badge logic: MN-XX-… → MN-XX; F61-… → F61; else full SKU
+        const key =
+          parts[0] === 'MN' && parts.length >= 2
+            ? parts.slice(0, 2).join('-')
+            : parts[0] || rawSku;
         const cur = skuMap.get(key) || {
           sku: key,
           title: String(it.title || key),
@@ -6135,7 +6150,7 @@ app.get('/api/admin/reports', requireStaffOrOwner, (_req, res) => {
     byRegion: Array.from(byRegionMap.values()),
     byPaymentMethod: Array.from(payMap.values()),
     byStatus: Array.from(statusMap.entries()).map(([order_status, count]) => ({ order_status, count })),
-    topSkus: Array.from(skuMap.values()).sort((a, b) => b.units_sold - a.units_sold).slice(0, 8),
+    topSkus: Array.from(skuMap.values()).sort((a, b) => b.units_sold - a.units_sold).slice(0, 50),
     stockHealth: {
       total_skus: totalSkus,
       low_stock_alerts: lowStockAlerts,

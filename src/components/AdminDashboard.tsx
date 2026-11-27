@@ -2441,15 +2441,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               {(() => {
                 const pq = productSearch.trim().toLowerCase();
-                const filteredProducts = products.filter((p) => {
-                  if (!pq) return true;
-                  return (
-                    p.sku.toLowerCase().includes(pq) ||
-                    (p.localizations?.en?.title || p.title).toLowerCase().includes(pq) ||
-                    p.category_slug.toLowerCase().includes(pq) ||
-                    (p.category_slugs || []).some((s) => s.toLowerCase().includes(pq))
-                  );
-                });
+                const filteredProducts = products
+                  .filter((p) => {
+                    if (!pq) return true;
+                    return (
+                      p.sku.toLowerCase().includes(pq) ||
+                      (p.localizations?.en?.title || p.title).toLowerCase().includes(pq) ||
+                      p.category_slug.toLowerCase().includes(pq) ||
+                      (p.category_slugs || []).some((s) => s.toLowerCase().includes(pq))
+                    );
+                  })
+                  .slice()
+                  .sort((a, b) => {
+                    const aRank = skuSalesRank.get(String(a.sku || '').toUpperCase());
+                    const bRank = skuSalesRank.get(String(b.sku || '').toUpperCase());
+                    const aUnits = aRank?.units || 0;
+                    const bUnits = bRank?.units || 0;
+                    if (bUnits !== aUnits) return bUnits - aUnits;
+                    if (aRank && bRank) return aRank.rank - bRank.rank;
+                    if (aRank) return -1;
+                    if (bRank) return 1;
+                    return String(a.sku || '').localeCompare(String(b.sku || ''));
+                  });
                 const totalProductPages = Math.max(
                   1,
                   Math.ceil(filteredProducts.length / productPageSize)

@@ -126,7 +126,7 @@ const FABRIC_GUIDE: Record<RegionCode, ArticleContent> = {
     title: 'Shirt fabric overview',
     lead:
       'A clear guide to the weaves most often used in dress shirts — so you can choose the ideal cloth for how you live and work.',
-    heroImage: '/uploads/articles/fabric-guide-hero.jpg',
+    heroImage: '/media/articles/fabric-guide-hero.jpg',
     sections: FABRIC_GUIDE_EN_SECTIONS,
   },
   no: {
@@ -135,7 +135,7 @@ const FABRIC_GUIDE: Record<RegionCode, ArticleContent> = {
     title: 'Oversikt over skjortestoffer',
     lead:
       'Her gir vi den endelige oversikten over de ulike typer stoffer som vanligvis brukes i dresskjorter. Ved å forstå hva de forskjellige vevene betyr for et stoff, kan du være sikker på å finne det ideelle dresskjortestoffet for dine behov.',
-    heroImage: '/uploads/articles/fabric-guide-hero.jpg',
+    heroImage: '/media/articles/fabric-guide-hero.jpg',
     sections: [
       {
         heading: 'Broadcloth',
@@ -224,7 +224,7 @@ const FABRIC_GUIDE: Record<RegionCode, ArticleContent> = {
     title: 'Guida ai tessuti da camicia',
     lead:
       'Una panoramica chiara delle trame più usate nelle camicie eleganti, per scegliere il tessuto giusto.',
-    heroImage: '/uploads/articles/fabric-guide-hero.jpg',
+    heroImage: '/media/articles/fabric-guide-hero.jpg',
     sections: FABRIC_GUIDE_EN_SECTIONS,
   },
   vn: {
@@ -233,7 +233,7 @@ const FABRIC_GUIDE: Record<RegionCode, ArticleContent> = {
     title: 'Tổng quan chất liệu áo sơ mi',
     lead:
       'Hướng dẫn các kiểu dệt thường dùng cho áo sơ mi công sở — giúp bạn chọn đúng chất liệu.',
-    heroImage: '/uploads/articles/fabric-guide-hero.jpg',
+    heroImage: '/media/articles/fabric-guide-hero.jpg',
     sections: FABRIC_GUIDE_EN_SECTIONS,
   },
 };
@@ -262,7 +262,7 @@ const SUSTAINABLE: Record<RegionCode, ArticleContent> = {
     title: 'Buy less. Choose quality that lasts.',
     lead:
       'Timeless shirts over trend pieces — a quieter way to dress that is kinder to the planet.',
-    heroImage: '/uploads/articles/sustainable-fashion-hero.jpg',
+    heroImage: '/media/articles/sustainable-fashion-hero.jpg',
     sections: SUSTAINABLE_EN_SECTIONS,
   },
   no: {
@@ -271,7 +271,7 @@ const SUSTAINABLE: Record<RegionCode, ArticleContent> = {
     title: 'Velg kvalitet som varer',
     lead:
       'Velg tidløse høykvalitets skjorter i stedet for moteklær og kjøp mindre klær.',
-    heroImage: '/uploads/articles/sustainable-fashion-hero.jpg',
+    heroImage: '/media/articles/sustainable-fashion-hero.jpg',
     sections: [
       {
         heading: 'Hvorfor kvalitet teller',
@@ -294,7 +294,7 @@ const SUSTAINABLE: Record<RegionCode, ArticleContent> = {
     eyebrow: 'Consigli & Ispirazione',
     title: 'Compra meno. Scegli qualità che dura.',
     lead: 'Camicie senza tempo invece della moda usa e getta.',
-    heroImage: '/uploads/articles/sustainable-fashion-hero.jpg',
+    heroImage: '/media/articles/sustainable-fashion-hero.jpg',
     sections: SUSTAINABLE_EN_SECTIONS,
   },
   vn: {
@@ -302,7 +302,7 @@ const SUSTAINABLE: Record<RegionCode, ArticleContent> = {
     eyebrow: 'Tư vấn & Cảm hứng',
     title: 'Mua ít hơn. Chọn chất lượng bền lâu.',
     lead: 'Áo sơ mi vượt thời gian thay vì thời trang nhanh.',
-    heroImage: '/uploads/articles/sustainable-fashion-hero.jpg',
+    heroImage: '/media/articles/sustainable-fashion-hero.jpg',
     sections: SUSTAINABLE_EN_SECTIONS,
   },
 };

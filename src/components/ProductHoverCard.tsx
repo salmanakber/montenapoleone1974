@@ -111,7 +111,7 @@ export const ProductHoverCard: React.FC<ProductHoverCardProps> = ({
 
         {product.performance_badge && (
           <span
-            className={`absolute top-3 left-3 z-10 inline-flex items-center gap-1 px-2 py-1 text-[9px] uppercase tracking-wider font-semibold shadow-sm ${
+            className={`absolute bottom-3 left-3 z-10 inline-flex items-center gap-1 px-2 py-1 text-[9px] uppercase tracking-wider font-semibold shadow-sm pointer-events-none ${
               product.performance_badge === 'star_seller'
                 ? 'bg-[#FFCC00] text-[#142B4E]'
                 : 'bg-[#142B4E] text-white'
