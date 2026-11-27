@@ -72,14 +72,18 @@ export function isProductVideoUrl(url: string | null | undefined): boolean {
   return /\.(mp4|webm|mov|ogg|m4v)$/i.test(clean);
 }
 
-/** Fabric macro shots (committed `/media/fabric-closeups/` or `/uploads/fabric-closeup-*`). */
+/** Fabric macro shots by filename / path (dedicated uploads or named detail shots). */
 export function isFabricCloseupUrl(url: string | null | undefined): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].toLowerCase();
+  const file = clean.split('/').pop() || clean;
   return (
     clean.includes('fabric-closeup') ||
     clean.includes('/fabric-closeups/') ||
-    clean.includes('/media/fabric-closeups/')
+    clean.includes('/media/fabric-closeups/') ||
+    /close[-_]?up/.test(file) ||
+    /fabric[-_]?(detail|macro|swatch|texture)/.test(file) ||
+    /(^|[-_])(swatch|macro|detailed?)([-_.]|$)/.test(file)
   );
 }
 
@@ -88,11 +92,13 @@ function isListingEligibleUrl(url: string | null | undefined): boolean {
 }
 
 /**
- * Keep admin slot positions fixed:
- * - shirt photos stay where they are in 0–3 (sparse empties allowed)
- * - fabric close-up always forced to slot 4
- * - short video always forced to slot 5
- * Storefront still hides empty slots via resolveFilledGalleryMedia.
+ * Keep admin + PDP slot positions fixed:
+ * - shirt photos stay in 0–3 (sparse empties allowed → gray on storefront)
+ * - fabric close-up always slot 4 (5th tile)
+ * - short video always slot 5 (6th tile)
+ *
+ * Woo often packs [folded, ghost, fabric] into slots 0–2; when slot 4 is empty and
+ * only the first three shirt slots are filled, the 3rd image is promoted to fabric.
  */
 export function canonicalizeGallerySlots(
   gallery: string[] | null | undefined,
@@ -115,6 +121,19 @@ export function canonicalizeGallerySlots(
       if (!video) video = u;
       slots[i] = '';
     }
+  }
+
+  // Classic 3-shot Woo pack: [main, ghost, fabric-detail] landed in 0/1/2
+  if (
+    !fabric &&
+    !slots[FABRIC_CLOSEUP_SLOT_INDEX] &&
+    slots[0] &&
+    slots[1] &&
+    slots[2] &&
+    !slots[3]
+  ) {
+    fabric = slots[2];
+    slots[2] = '';
   }
 
   // Non-fabric media that landed on fabric/video tiles → first empty shirt slot

@@ -1028,10 +1028,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleMoveGallerySlot = (fromIdx: number, toIdx: number) => {
     if (fromIdx === toIdx || toIdx < 0 || toIdx >= editGallerySlots.length) return;
     setEditGallerySlots((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      return next;
+      // Swap in place (do not splice — that shifts fixed slot positions).
+      const next = canonicalizeGallerySlots(prev);
+      const fromUrl = next[fromIdx] || '';
+      const toUrl = next[toIdx] || '';
+      next[fromIdx] = toUrl;
+      next[toIdx] = fromUrl;
+      return canonicalizeGallerySlots(next);
     });
   };
 
