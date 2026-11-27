@@ -82,6 +82,7 @@ import {
   calculateTailoringSurcharge,
   computeBulkPriceAdjustment,
   convertBasePriceAcrossRegions,
+  resolveImportPriceSourceRegion,
   DEFAULT_BULK_DISCOUNT_SETTINGS,
   DEFAULT_CUSTOMER_AUTH_SETTINGS,
   DEFAULT_PROMO_POPUP_SETTINGS,
@@ -115,6 +116,71 @@ import {
 
 dotenv.config();
 initializeDatabase();
+repairInflatedNokImportPrices();
+
+/** Fix Woo imports that treated NOK list prices as USD (→ ~10× NOK / wrong EN/IT/VN). Idempotent. */
+function repairInflatedNokImportPrices(): void {
+  const productRows = db
+    .prepare(
+      `SELECT p.id AS product_id, ple.price AS en_price
+       FROM products p
+       JOIN product_localizations ple ON ple.product_id = p.id AND ple.region_code = 'en'
+       JOIN product_localizations pln ON pln.product_id = p.id AND pln.region_code = 'no'
+       WHERE pln.price >= 5000 AND ple.price >= 500`
+    )
+    .all() as Array<{ product_id: number; en_price: number }>;
+
+  const variantRows = db
+    .prepare(
+      `SELECT id, price_en
+       FROM product_variants
+       WHERE price_no IS NOT NULL AND price_no >= 5000
+         AND price_en IS NOT NULL AND price_en >= 500`
+    )
+    .all() as Array<{ id: number; price_en: number }>;
+
+  if (productRows.length === 0 && variantRows.length === 0) return;
+
+  const updateLocPrice = db.prepare(
+    `UPDATE product_localizations SET price = ? WHERE product_id = ? AND region_code = ?`
+  );
+  const updateLocCompare = db.prepare(
+    `UPDATE product_localizations SET compare_at_price = ? WHERE product_id = ? AND region_code = ?`
+  );
+  const selectCompare = db.prepare(
+    `SELECT compare_at_price FROM product_localizations WHERE product_id = ? AND region_code = 'en'`
+  );
+  const updateVariant = db.prepare(
+    `UPDATE product_variants
+     SET price_en = ?, price_no = ?, price_it = ?, price_vn = ?
+     WHERE id = ?`
+  );
+
+  const tx = db.transaction(() => {
+    for (const row of productRows) {
+      const fixed = convertBasePriceAcrossRegions(Number(row.en_price), 'no');
+      for (const rc of ['en', 'no', 'it', 'vn'] as const) {
+        updateLocPrice.run(fixed[rc], row.product_id, rc);
+      }
+      const enCompare = selectCompare.get(row.product_id) as { compare_at_price: number | null } | undefined;
+      const cmp = enCompare?.compare_at_price;
+      if (cmp !== null && cmp !== undefined && Number(cmp) >= 500) {
+        const fixedCmp = convertBasePriceAcrossRegions(Number(cmp), 'no');
+        for (const rc of ['en', 'no', 'it', 'vn'] as const) {
+          updateLocCompare.run(fixedCmp[rc], row.product_id, rc);
+        }
+      }
+    }
+    for (const v of variantRows) {
+      const fixed = convertBasePriceAcrossRegions(Number(v.price_en), 'no');
+      updateVariant.run(fixed.en, fixed.no, fixed.it, fixed.vn, v.id);
+    }
+  });
+  tx();
+  console.log(
+    `[repair] Recalculated inflated NOK import prices for ${productRows.length} product(s) and ${variantRows.length} variant(s)`
+  );
+}
 
 const app = express();
 app.set('trust proxy', true);
@@ -4979,8 +5045,11 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
       }
       const leafCategorySlug = collectedLeafSlugs[0] || 'business';
       const allCategorySlugs = collectedAllSlugs.length > 0 ? collectedAllSlugs : [leafCategorySlug];
-      const sourceRc = parseRegion(row.sourceRegion || baseRegion);
       const basePrice = row.salePrice && row.salePrice > 0 ? row.salePrice : row.regularPrice;
+      const sourceRc = resolveImportPriceSourceRegion(
+        parseRegion(row.sourceRegion || baseRegion),
+        basePrice
+      );
       const compareAt = row.salePrice && row.salePrice > 0 && row.regularPrice > row.salePrice ? row.regularPrice : null;
       const regionPrices = convertBasePriceAcrossRegions(basePrice, sourceRc);
       const regionCompare = compareAt ? convertBasePriceAcrossRegions(compareAt, sourceRc) : null;

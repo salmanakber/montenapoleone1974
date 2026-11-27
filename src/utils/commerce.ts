@@ -192,12 +192,19 @@ export const OWNER_PERMISSIONS: StaffPermissions = {
   manage_settings: true,
 };
 
+/** Group thousands with a plain space (avoids nb-NO narrow spaces looking broken in mono UI). */
+function groupThousands(value: number): string {
+  const n = Math.trunc(Math.abs(value));
+  const grouped = String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return value < 0 ? `-${grouped}` : grouped;
+}
+
 export function formatRegionalPrice(amount: number, regionCode: RegionCode): string {
   const safeAmount = Number.isFinite(amount) ? amount : 0;
   switch (regionCode) {
     case 'no': {
       const rounded = Math.round(safeAmount);
-      return `${rounded.toLocaleString('nb-NO')} kr`;
+      return `${groupThousands(rounded)} kr`;
     }
     case 'it': {
       return `€${safeAmount.toLocaleString('it-IT', {
@@ -207,7 +214,7 @@ export function formatRegionalPrice(amount: number, regionCode: RegionCode): str
     }
     case 'vn': {
       const rounded = Math.round(safeAmount);
-      return `${rounded.toLocaleString('vi-VN')} ₫`;
+      return `${groupThousands(rounded)} ₫`;
     }
     case 'en':
     default: {
@@ -217,6 +224,38 @@ export function formatRegionalPrice(amount: number, regionCode: RegionCode): str
       })}`;
     }
   }
+}
+
+/**
+ * Parse Woo/CSV money cells that may use US (`1,599.00`) or European (`1.599,00` / `1 599,00`) formats.
+ */
+export function parseLooseMoneyAmount(raw: string): number {
+  const s = String(raw || '').trim();
+  if (!s) return 0;
+  const compact = s.replace(/\s/g, '');
+  // European decimal comma: 1599,00 / 1.599,00 / 1 599,00
+  if (/^\d{1,3}(\.\d{3})*,\d{1,2}$/.test(compact) || /^\d+,\d{1,2}$/.test(compact)) {
+    const normalized = compact.replace(/\./g, '').replace(',', '.');
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  }
+  // US / plain: strip currency letters and thousand commas
+  const n = Number(compact.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Norwegian Woo exports often put NOK in the Regular price column while the importer
+ * defaults to USD (`en`). Shirt NOK prices are typically 800–2500; USD list prices are ~100–250.
+ */
+export function resolveImportPriceSourceRegion(
+  sourceRegion: RegionCode,
+  baseAmount: number
+): RegionCode {
+  if (sourceRegion === 'en' && Number.isFinite(baseAmount) && baseAmount >= 500) {
+    return 'no';
+  }
+  return sourceRegion;
 }
 
 export function evaluateStockState(
@@ -1280,9 +1319,9 @@ export function parseWooCommerceCsv(
     const rawSku = skuIdx !== -1 ? (cells[skuIdx] || '').trim() : '';
     const sku = rawSku || (wooId ? `WC-${wooId}` : `WOO-${slugifyCategoryName(title).toUpperCase().slice(0, 12)}-${r}`);
 
-    const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const fbRaw = fallbackPriceIdx !== -1 ? Number((cells[fallbackPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const regRaw = regularPriceIdx !== -1 ? parseLooseMoneyAmount(cells[regularPriceIdx] || '') : 0;
+    const fbRaw = fallbackPriceIdx !== -1 ? parseLooseMoneyAmount(cells[fallbackPriceIdx] || '') : 0;
+    const saleRaw = salePriceIdx !== -1 ? parseLooseMoneyAmount(cells[salePriceIdx] || '') : 0;
     const regularPrice =
       Number.isFinite(regRaw) && regRaw > 0
         ? regRaw
@@ -1418,9 +1457,9 @@ export function parseWooCommerceCsv(
       sizeLabel = normalizeWooSizeLabel(dashPart) || targetParent.row.sizes[0] || '40 / M';
     }
 
-    const regRaw = regularPriceIdx !== -1 ? Number((cells[regularPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const fbRaw = fallbackPriceIdx !== -1 ? Number((cells[fallbackPriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
-    const saleRaw = salePriceIdx !== -1 ? Number((cells[salePriceIdx] || '').replace(/[^0-9.]/g, '')) : 0;
+    const regRaw = regularPriceIdx !== -1 ? parseLooseMoneyAmount(cells[regularPriceIdx] || '') : 0;
+    const fbRaw = fallbackPriceIdx !== -1 ? parseLooseMoneyAmount(cells[fallbackPriceIdx] || '') : 0;
+    const saleRaw = salePriceIdx !== -1 ? parseLooseMoneyAmount(cells[salePriceIdx] || '') : 0;
     const vRegCandidate = Number.isFinite(regRaw) && regRaw > 0 ? regRaw : Number.isFinite(fbRaw) && fbRaw > 0 ? fbRaw : 0;
     const vReg = vRegCandidate > 0 ? vRegCandidate : targetParent.row.regularPrice;
     const vSale = Number.isFinite(saleRaw) && saleRaw > 0 && saleRaw < vReg ? saleRaw : null;

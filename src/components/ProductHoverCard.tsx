@@ -169,13 +169,6 @@ export const ProductHoverCard: React.FC<ProductHoverCardProps> = ({
           </>
         )}
 
-        {/* Crisp Studio Price Tag Overlay (B2C) */}
-        {!hidePrice && (
-          <div className="absolute bottom-2.5 right-2.5 z-10 bg-white/95 text-[#142B4E] font-mono-tabular text-xs font-semibold px-2.5 py-0.5 shadow-sm border border-black/10 pointer-events-none">
-            {formatRegionalPrice(product.price, regionCode)}
-          </div>
-        )}
-
         {/* Bottom Hover Progress Bar & Segments (Matches montenapoleone1974.com mont-card-slider) */}
         {images.length > 1 && (
           <div
