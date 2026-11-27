@@ -106,6 +106,9 @@ import {
 import { AdminCategoriesPanel } from './AdminCategoriesPanel.tsx';
 import { ApiVaultAndOnboardingPanel, EmailsResendPanel } from './AdminEmailsAndVault.tsx';
 import {
+  assignGallerySlotUrl,
+  canonicalizeGallerySlots,
+  isFabricCloseupUrl,
   isProductVideoUrl,
   normalizeGallerySlots,
   PRODUCT_GALLERY_SLOTS,
@@ -1034,8 +1037,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           .map((v) => v.size_label)
       )
     );
-    // Keep fixed 6-slot positions (empty string = unused). Listing image can be any filled slot.
-    const orderedGallery = normalizeGallerySlots(editGallerySlots);
+    // Keep fixed 6-slot positions (fabric → slot 5, video → slot 6; empties stay for admin).
+    const orderedGallery = canonicalizeGallerySlots(editGallerySlots);
     const listingIdx = resolveListingSlotIndex(
       orderedGallery,
       editListingSlotIndex,
@@ -1120,7 +1123,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           Array.isArray(cloned.category_slugs) && cloned.category_slugs.length > 0
             ? cloned.category_slugs
             : [cloned.category_slug || 'business'];
-        const slots = normalizeGallerySlots(
+        const slots = canonicalizeGallerySlots(
           cloned.gallery,
           cloned.primary_image,
           cloned.secondary_image
@@ -1166,7 +1169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           is_featured: true,
           preorder_allowed: true,
           primary_image: (() => {
-            const slots = normalizeGallerySlots(newGallerySlots);
+            const slots = canonicalizeGallerySlots(newGallerySlots);
             return (
               resolveListingImage({
                 gallery: slots,
@@ -1178,7 +1181,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             );
           })(),
           secondary_image: (() => {
-            const slots = normalizeGallerySlots(newGallerySlots);
+            const slots = canonicalizeGallerySlots(newGallerySlots);
             const primary =
               resolveListingImage({
                 gallery: slots,
@@ -1189,7 +1192,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               newPrimaryImg;
             return slots.find((u) => Boolean(u) && u !== primary) || primary;
           })(),
-          gallery: normalizeGallerySlots(newGallerySlots),
+          gallery: canonicalizeGallerySlots(newGallerySlots),
           sizes: newSizes,
           fits: newFits,
           localizations: {
@@ -2659,7 +2662,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                         cloned.variants = variants.filter((v) => v.product_id === p.id);
                                       }
                                       {
-                                        const slots = normalizeGallerySlots(
+                                        const slots = canonicalizeGallerySlots(
                                           cloned.gallery,
                                           cloned.primary_image,
                                           cloned.secondary_image
@@ -2701,7 +2704,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                         cloned.variants = variants.filter((v) => v.product_id === p.id);
                                       }
                                       setEditGallerySlots(
-                                        normalizeGallerySlots(
+                                        canonicalizeGallerySlots(
                                           cloned.gallery,
                                           cloned.primary_image,
                                           cloned.secondary_image
@@ -4126,9 +4129,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Product Gallery — Fixed 6 Slots
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
-                  Keep this order so uploads always land in the right place. Empty slots are hidden on
-                  the storefront (no blank tiles). Slot 6 is a muted autoplay video. Any filled image
-                  can be the catalog listing image — default is the first filled slot.
+                  Keep this order so uploads always land in the right place. Fabric close-ups always
+                  go to slot 5 and videos to slot 6. Empty slots stay visible here but are hidden on
+                  the storefront (images show in sequence). Listing image defaults to the first shirt
+                  photo — never the fabric close-up.
                 </p>
               </div>
 
@@ -5001,19 +5005,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     ) {
                       const targetIdx = mediaPickerTarget.index;
                       if (creatingProduct) {
-                        setNewGallerySlots((prev) => {
-                          const next = normalizeGallerySlots(prev);
-                          next[targetIdx] = url;
-                          return next;
-                        });
-                        if (targetIdx === 0) setNewPrimaryImg(url);
+                        setNewGallerySlots((prev) => assignGallerySlotUrl(prev, targetIdx, url));
+                        if (targetIdx === 0 && !isFabricCloseupUrl(url) && !isProductVideoUrl(url)) {
+                          setNewPrimaryImg(url);
+                        }
                       } else {
-                        setEditGallerySlots((prev) => {
-                          const next = normalizeGallerySlots(prev);
-                          next[targetIdx] = url;
-                          return next;
-                        });
-                        if (targetIdx === 0 && editingProduct) {
+                        setEditGallerySlots((prev) => assignGallerySlotUrl(prev, targetIdx, url));
+                        if (
+                          targetIdx === 0 &&
+                          editingProduct &&
+                          !isFabricCloseupUrl(url) &&
+                          !isProductVideoUrl(url)
+                        ) {
                           setEditingProduct((prev) =>
                             prev ? { ...prev, primary_image: url } : prev
                           );
@@ -5096,19 +5099,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       ) {
                         const targetIdx = mediaPickerTarget.index;
                         if (creatingProduct) {
-                          setNewGallerySlots((prev) => {
-                            const next = normalizeGallerySlots(prev);
-                            next[targetIdx] = asset.url;
-                            return next;
-                          });
-                          if (targetIdx === 0) setNewPrimaryImg(asset.url);
+                          setNewGallerySlots((prev) =>
+                            assignGallerySlotUrl(prev, targetIdx, asset.url)
+                          );
+                          if (
+                            targetIdx === 0 &&
+                            !isFabricCloseupUrl(asset.url) &&
+                            !isProductVideoUrl(asset.url)
+                          ) {
+                            setNewPrimaryImg(asset.url);
+                          }
                         } else {
-                          setEditGallerySlots((prev) => {
-                            const next = normalizeGallerySlots(prev);
-                            next[targetIdx] = asset.url;
-                            return next;
-                          });
-                          if (targetIdx === 0) {
+                          setEditGallerySlots((prev) =>
+                            assignGallerySlotUrl(prev, targetIdx, asset.url)
+                          );
+                          if (
+                            targetIdx === 0 &&
+                            !isFabricCloseupUrl(asset.url) &&
+                            !isProductVideoUrl(asset.url)
+                          ) {
                             setEditingProduct((prev) =>
                               prev ? { ...prev, primary_image: asset.url } : prev
                             );

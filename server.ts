@@ -113,10 +113,12 @@ import {
   evaluateStorefrontAgentTurn,
   type AgentCatalogProduct,
 } from './src/utils/agentLogic.ts';
+import { canonicalizeGallerySlots, resolveListingImage } from './src/utils/productGallery.ts';
 
 dotenv.config();
 initializeDatabase();
 repairInflatedNokImportPrices();
+repairGalleryFabricSlots();
 
 /** Fix Woo imports that treated NOK list prices as USD (→ ~10× NOK / wrong EN/IT/VN). Idempotent. */
 function repairInflatedNokImportPrices(): void {
@@ -180,6 +182,59 @@ function repairInflatedNokImportPrices(): void {
   console.log(
     `[repair] Recalculated inflated NOK import prices for ${productRows.length} product(s) and ${variantRows.length} variant(s)`
   );
+}
+
+/** Move fabric close-ups to slot 5 and videos to slot 6; fix listing primary when it was a fabric shot. */
+function repairGalleryFabricSlots(): void {
+  const rows = db
+    .prepare('SELECT id, primary_image, secondary_image, gallery_json FROM products')
+    .all() as Array<{
+    id: number;
+    primary_image: string;
+    secondary_image: string;
+    gallery_json: string;
+  }>;
+  const update = db.prepare(
+    'UPDATE products SET primary_image = ?, secondary_image = ?, gallery_json = ? WHERE id = ?'
+  );
+  let fixed = 0;
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      let gallery: string[] = [];
+      try {
+        const parsed = JSON.parse(String(row.gallery_json || '[]'));
+        gallery = Array.isArray(parsed) ? parsed.map((u) => String(u || '')) : [];
+      } catch {
+        gallery = [];
+      }
+      const nextGallery = canonicalizeGallerySlots(
+        gallery,
+        row.primary_image,
+        row.secondary_image
+      );
+      const nextPrimary = resolveListingImage({
+        gallery: nextGallery,
+        primary_image: row.primary_image,
+        secondary_image: row.secondary_image,
+      });
+      const nextSecondary =
+        nextGallery.find((u) => Boolean(u) && u !== nextPrimary) ||
+        nextPrimary ||
+        row.secondary_image;
+      if (
+        JSON.stringify(nextGallery) !== JSON.stringify(Array.from({ length: 6 }, (_, i) => gallery[i] || '')) ||
+        nextPrimary !== row.primary_image ||
+        nextSecondary !== row.secondary_image
+      ) {
+        update.run(nextPrimary, nextSecondary, JSON.stringify(nextGallery), row.id);
+        fixed++;
+      }
+    }
+  });
+  tx();
+  if (fixed > 0) {
+    console.log(`[repair] Canonicalized gallery slots for ${fixed} product(s)`);
+  }
 }
 
 const app = express();
@@ -3173,6 +3228,30 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
               }
             })();
 
+      let existingGallery: string[] = [];
+      try {
+        const parsedG = JSON.parse(String(existing.gallery_json || '[]'));
+        existingGallery = Array.isArray(parsedG) ? parsedG.map((u) => String(u || '')) : [];
+      } catch {
+        existingGallery = [];
+      }
+      const nextGallery = canonicalizeGallerySlots(
+        Array.isArray(b.gallery) ? b.gallery.map((u: unknown) => String(u || '')) : existingGallery,
+        String(b.primary_image || existing.primary_image),
+        String(b.secondary_image || existing.secondary_image)
+      );
+      const nextPrimary = resolveListingImage({
+        gallery: nextGallery,
+        primary_image: String(b.primary_image || existing.primary_image),
+        secondary_image: String(b.secondary_image || existing.secondary_image),
+        listing_slot_index:
+          b.listing_slot_index !== undefined ? Number(b.listing_slot_index) : null,
+      });
+      const nextSecondary =
+        nextGallery.find((u) => Boolean(u) && u !== nextPrimary) ||
+        nextPrimary ||
+        String(b.secondary_image || existing.secondary_image);
+
       db.prepare(
         `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, is_featured = ?, is_b2b_eligible = ?,
          is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?
@@ -3185,11 +3264,9 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         b.is_b2b_eligible !== undefined ? (b.is_b2b_eligible ? 1 : 0) : Number(existing.is_b2b_eligible),
         b.is_outlet !== undefined ? (b.is_outlet ? 1 : 0) : Number(existing.is_outlet),
         b.preorder_allowed !== undefined ? (b.preorder_allowed ? 1 : 0) : Number(existing.preorder_allowed),
-        String(b.primary_image || existing.primary_image),
-        String(b.secondary_image || existing.secondary_image),
-        Array.isArray(b.gallery)
-          ? JSON.stringify(Array.from({ length: 6 }, (_, i) => String(b.gallery[i] || '').trim()))
-          : String(existing.gallery_json),
+        nextPrimary,
+        nextSecondary,
+        JSON.stringify(nextGallery),
         JSON.stringify(nextSizes),
         productId
       );
@@ -5058,12 +5135,14 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
         .map((u) => mirroredImageMap.get(String(u).trim()) || String(u).trim())
         .filter(Boolean);
       // Fixed 6-slot gallery: pack Woo images into slots 0..n (empties preserve later fabric/video slots)
-      const galleryArr = Array.from({ length: 6 }, (_, i) => mappedImages[i] || '');
-      const filledImages = galleryArr.filter(Boolean);
+      const galleryArr = canonicalizeGallerySlots(
+        Array.from({ length: 6 }, (_, i) => mappedImages[i] || '')
+      );
       const primaryImg =
-        filledImages[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
-      const secondaryImg = filledImages[1] || primaryImg;
-      if (!galleryArr[0]) galleryArr[0] = primaryImg;
+        resolveListingImage({ gallery: galleryArr }) ||
+        '/src/assets/images/shirt_white_signature_1795248293653.jpg';
+      const secondaryImg =
+        galleryArr.find((u) => Boolean(u) && u !== primaryImg) || primaryImg;
       const sizes =
         Array.isArray(row.sizes) && row.sizes.length > 0
           ? row.sizes
