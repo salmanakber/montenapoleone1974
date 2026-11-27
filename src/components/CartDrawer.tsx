@@ -14,6 +14,23 @@ export function resolveCartChannel(item: CartItem): CartChannel {
   return 'b2c';
 }
 
+/** Bag badge = retail lines + unique B2B colour groups (not total piece count). */
+export function countCartBadgeEntries(items: CartItem[]): number {
+  let retail = 0;
+  const b2bKeys = new Set<string>();
+  for (const item of items) {
+    if (resolveCartChannel(item) === 'b2b') {
+      b2bKeys.add(
+        item.b2bGroupKey ||
+          `${item.productId}|${item.tailoring.fit}|${item.tailoring.collar}|${item.tailoring.cuff}`
+      );
+    } else {
+      retail += 1;
+    }
+  }
+  return retail + b2bKeys.size;
+}
+
 interface CartDrawerProps {
   open: boolean;
   mode: 'bag' | 'wishlist';
@@ -306,41 +323,104 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
                   {b2bGroups.map((group) => {
                     const groupPcs = group.lines.reduce((s, l) => s + l.quantity, 0);
+                    const groupTotal = group.lines.reduce(
+                      (s, l) => s + l.unitPrice * l.quantity,
+                      0
+                    );
+                    const sortedLines = [...group.lines].sort((a, b) =>
+                      String(a.tailoring.size).localeCompare(String(b.tailoring.size), undefined, {
+                        numeric: true,
+                      })
+                    );
                     return (
                       <div
                         key={group.key}
                         className="bg-white border border-[#142B4E]/15 p-3 space-y-3"
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-start gap-3">
                           <img
                             src={group.image}
                             alt={group.title}
                             referrerPolicy="no-referrer"
-                            className="w-12 h-12 object-cover bg-[#E6E6E6] shrink-0"
+                            className="w-14 h-16 object-cover bg-[#E6E6E6] shrink-0"
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-semibold uppercase truncate">
-                              {group.title}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-semibold uppercase leading-snug">
+                                  {group.title}
+                                </div>
+                                <div className="text-[10px] text-neutral-500 mt-0.5">
+                                  {group.fit} · {group.collar} · {group.cuff}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  for (const line of group.lines) onRemoveItem(line.cartKey);
+                                }}
+                                aria-label={`Remove ${group.title} group`}
+                                className="text-neutral-400 hover:text-red-600 cursor-pointer shrink-0"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
-                            <div className="text-[10px] text-neutral-500 mt-0.5">
-                              {group.fit} · {group.collar} · {group.cuff}
-                            </div>
-                            <div className="text-[10px] font-mono-tabular text-[#142B4E] mt-0.5">
-                              {groupPcs} {copy.checkout.pcsLabel}
+                            <div className="mt-1.5 flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-mono-tabular text-[#142B4E] font-semibold">
+                                {groupPcs} {copy.checkout.pcsLabel} · {sortedLines.length} sizes
+                              </span>
+                              <span className="text-[11px] font-mono-tabular font-medium">
+                                {formatRegionalPrice(groupTotal, region.code)}
+                              </span>
                             </div>
                           </div>
                         </div>
-                        {group.lines.map((item) => (
-                          <CartLine
-                            key={item.cartKey}
-                            item={item}
-                            region={region}
-                            copy={copy}
-                            showB2bBadge
-                            onUpdateQty={onUpdateQty}
-                            onRemoveItem={onRemoveItem}
-                          />
-                        ))}
+
+                        <div className="border border-[#142B4E]/10 overflow-hidden">
+                          <div className="grid grid-cols-[1fr_auto_auto] gap-0 bg-[#F4F7FB] text-[9px] uppercase tracking-wider text-neutral-500 font-semibold">
+                            <div className="px-2.5 py-1.5">Size</div>
+                            <div className="px-2.5 py-1.5 text-center">Qty</div>
+                            <div className="px-2.5 py-1.5 text-right">Line</div>
+                          </div>
+                          <div className="divide-y divide-black/5">
+                            {sortedLines.map((item) => (
+                              <div
+                                key={item.cartKey}
+                                className="grid grid-cols-[1fr_auto_auto] items-center gap-0 text-[11px]"
+                              >
+                                <div className="px-2.5 py-1.5 font-mono-tabular text-neutral-700">
+                                  {item.tailoring.size}
+                                </div>
+                                <div className="px-1.5 py-1 inline-flex items-center justify-center">
+                                  <div className="inline-flex items-center border border-black/15">
+                                    <button
+                                      type="button"
+                                      onClick={() => onUpdateQty(item.cartKey, item.quantity - 1)}
+                                      aria-label={`Decrease ${item.tailoring.size}`}
+                                      className="p-1 hover:bg-neutral-100 cursor-pointer"
+                                    >
+                                      <Minus className="w-3 h-3" />
+                                    </button>
+                                    <span className="px-2 font-mono-tabular min-w-[1.75rem] text-center">
+                                      {item.quantity}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => onUpdateQty(item.cartKey, item.quantity + 1)}
+                                      aria-label={`Increase ${item.tailoring.size}`}
+                                      className="p-1 hover:bg-neutral-100 cursor-pointer"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="px-2.5 py-1.5 text-right font-mono-tabular text-neutral-600">
+                                  {formatRegionalPrice(item.unitPrice * item.quantity, region.code)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     );
                   })}

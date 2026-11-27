@@ -212,6 +212,8 @@ export interface Product {
   is_b2b_eligible: boolean;
   is_outlet: boolean;
   preorder_allowed: boolean;
+  /** Storefront sales badge from order analytics */
+  performance_badge?: 'star_seller' | 'top_seller' | null;
   primary_image: string;
   secondary_image: string;
   gallery: string[];

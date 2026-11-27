@@ -8,9 +8,12 @@ import {
   Building2,
   Check,
   Compass,
+  Copy,
   Database,
   Download,
   Eye,
+  FileBarChart,
+  Star,
   FolderTree,
   Gift,
   Globe,
@@ -106,6 +109,8 @@ import {
   isProductVideoUrl,
   normalizeGallerySlots,
   PRODUCT_GALLERY_SLOTS,
+  resolveListingImage,
+  resolveListingSlotIndex,
 } from '../utils/productGallery.ts';
 import { ProductGalleryMedia } from './ProductGalleryMedia.tsx';
 
@@ -266,6 +271,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [editGallerySlots, setEditGallerySlots] = useState<string[]>(() =>
     normalizeGallerySlots([])
   );
+  /** Which gallery slot is the catalog/listing (front) image. Default = first filled. */
+  const [editListingSlotIndex, setEditListingSlotIndex] = useState(0);
   const [dragGalleryIdx, setDragGalleryIdx] = useState<number | null>(null);
   const [dragOverGalleryIdx, setDragOverGalleryIdx] = useState<number | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
@@ -304,6 +311,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newGallerySlots, setNewGallerySlots] = useState<string[]>(() =>
     normalizeGallerySlots(['/src/assets/images/shirt_white_signature_1795248293653.jpg'])
   );
+  const [newListingSlotIndex, setNewListingSlotIndex] = useState(0);
   const [newFits, setNewFits] = useState<string[]>(['Regular Fit', 'Slim Fit']);
   const [newSizes, setNewSizes] = useState<string[]>([
     '38 / S',
@@ -329,6 +337,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     '44 / XXL',
     '45 / 3XL',
   ] as const;
+  const ATTR_FIT_OPTIONS = [
+    'Regular Fit',
+    'Slim Fit',
+    'Contemporary Fit',
+    'Tailored Fit',
+    'Comfort Fit',
+  ] as const;
+  const ATTR_SIZE_OPTIONS = [
+    '30 / 3XS',
+    '34 / 2XS',
+    '37 / XS',
+    '38 / S',
+    '39 / M',
+    '40 / M',
+    '41 / L',
+    '42 / L',
+    '43 / XL',
+    '44 / XXL',
+    '45 / 3XL',
+    '46 / 4XL',
+  ] as const;
+  type EditProductTab = 'gallery' | 'categories' | 'variants' | 'regions' | 'report';
+  type CreateProductTab = 'gallery' | 'details' | 'attributes';
+  const [editProductTab, setEditProductTab] = useState<EditProductTab>('gallery');
+  const [createProductTab, setCreateProductTab] = useState<CreateProductTab>('details');
+  const [productReportTarget, setProductReportTarget] = useState<Product | null>(null);
+  const [duplicateBusyId, setDuplicateBusyId] = useState<number | null>(null);
 
   // New Staff Form
   const [staffName, setStaffName] = useState('');
@@ -999,17 +1034,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           .map((v) => v.size_label)
       )
     );
-    // Keep fixed 6-slot positions (empty string = unused). Slot 0 = Folded shirt (main).
+    // Keep fixed 6-slot positions (empty string = unused). Listing image can be any filled slot.
     const orderedGallery = normalizeGallerySlots(editGallerySlots);
+    const listingIdx = resolveListingSlotIndex(
+      orderedGallery,
+      editListingSlotIndex,
+      editingProduct.primary_image
+    );
     const nextPrimary =
-      orderedGallery[0] ||
+      resolveListingImage({
+        gallery: orderedGallery,
+        listing_slot_index: listingIdx,
+        primary_image: editingProduct.primary_image,
+      }) ||
       orderedGallery.find(Boolean) ||
       editingProduct.primary_image ||
       '';
     const nextSecondary =
-      orderedGallery[1] ||
-      orderedGallery.find((u, i) => i > 0 && Boolean(u)) ||
-      nextPrimary;
+      orderedGallery.find((u, i) => Boolean(u) && u !== nextPrimary) || nextPrimary;
 
     const payload: Product = {
       ...editingProduct,
@@ -1032,6 +1074,66 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setEditingProduct(null);
       loadAdminData();
       onRefreshStorefront();
+    }
+  };
+
+  const skuSalesRank = useMemo(() => {
+    const list = reportData?.topSkus || [];
+    const map = new Map<string, { units: number; rank: number; revenue: number }>();
+    list.forEach((row, idx) => {
+      map.set(String(row.sku).toUpperCase(), {
+        units: Number(row.units_sold || 0),
+        rank: idx + 1,
+        revenue: Number(row.revenue || 0),
+      });
+    });
+    return map;
+  }, [reportData]);
+
+  const resolvePerfBadge = (sku: string) => {
+    const hit = skuSalesRank.get(String(sku || '').toUpperCase());
+    if (!hit || hit.units <= 0) return null;
+    if (hit.rank <= 3) return { label: 'Star seller', tone: 'star' as const, ...hit };
+    if (hit.rank <= 10) return { label: 'Top seller', tone: 'top' as const, ...hit };
+    return { label: 'Selling', tone: 'ok' as const, ...hit };
+  };
+
+  const handleDuplicateProduct = async (productId: number) => {
+    if (!authToken) return;
+    setDuplicateBusyId(productId);
+    try {
+      const res = await fetch(`/api/admin/products/${productId}/duplicate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        window.alert((data as { error?: string }).error || 'Could not duplicate product.');
+        return;
+      }
+      await loadAdminData();
+      onRefreshStorefront();
+      const created = (data as { product?: Product }).product;
+      if (created) {
+        const cloned: Product = JSON.parse(JSON.stringify(created));
+        cloned.category_slugs =
+          Array.isArray(cloned.category_slugs) && cloned.category_slugs.length > 0
+            ? cloned.category_slugs
+            : [cloned.category_slug || 'business'];
+        const slots = normalizeGallerySlots(
+          cloned.gallery,
+          cloned.primary_image,
+          cloned.secondary_image
+        );
+        setEditGallerySlots(slots);
+        setEditListingSlotIndex(resolveListingSlotIndex(slots, null, cloned.primary_image));
+        setEditProductTab('gallery');
+        setEditingProduct(cloned);
+      }
+    } catch {
+      window.alert('Network error duplicating product.');
+    } finally {
+      setDuplicateBusyId(null);
     }
   };
 
@@ -1063,11 +1165,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           fabric_spec: newFabric,
           is_featured: true,
           preorder_allowed: true,
-          primary_image: normalizeGallerySlots(newGallerySlots)[0] || newPrimaryImg,
-          secondary_image:
-            normalizeGallerySlots(newGallerySlots).find((u, i) => i > 0 && u) ||
-            normalizeGallerySlots(newGallerySlots)[0] ||
-            newPrimaryImg,
+          primary_image: (() => {
+            const slots = normalizeGallerySlots(newGallerySlots);
+            return (
+              resolveListingImage({
+                gallery: slots,
+                listing_slot_index: newListingSlotIndex,
+                primary_image: newPrimaryImg,
+              }) ||
+              slots.find(Boolean) ||
+              newPrimaryImg
+            );
+          })(),
+          secondary_image: (() => {
+            const slots = normalizeGallerySlots(newGallerySlots);
+            const primary =
+              resolveListingImage({
+                gallery: slots,
+                listing_slot_index: newListingSlotIndex,
+                primary_image: newPrimaryImg,
+              }) ||
+              slots.find(Boolean) ||
+              newPrimaryImg;
+            return slots.find((u) => Boolean(u) && u !== primary) || primary;
+          })(),
           gallery: normalizeGallerySlots(newGallerySlots),
           sizes: newSizes,
           fits: newFits,
@@ -1092,6 +1213,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setNewGallerySlots(
         normalizeGallerySlots(['/src/assets/images/shirt_white_signature_1795248293653.jpg'])
       );
+      setNewListingSlotIndex(0);
       setNewFits(['Regular Fit', 'Slim Fit']);
       setNewSizes(['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL']);
       setNewStockQty(12);
@@ -2432,6 +2554,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {pagedProducts.map((p) => {
                             const locs = p.localizations;
                             const isChecked = selectedProductIds.includes(p.id);
+                            const badge = resolvePerfBadge(p.sku);
                             return (
                               <tr key={p.id} className={isChecked ? 'bg-red-50/40' : 'hover:bg-neutral-50'}>
                                 <td className="p-3">
@@ -2457,7 +2580,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       className="w-10 h-10 object-cover bg-[#E6E6E6] shrink-0"
                                     />
                                     <div>
-                                      <div className="font-medium">{locs?.en?.title || p.sku}</div>
+                                      <div className="font-medium flex flex-wrap items-center gap-1.5">
+                                        <span>{locs?.en?.title || p.sku}</span>
+                                        {badge && (
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
+                                              badge.tone === 'star'
+                                                ? 'bg-[#FFCC00] text-[#142B4E]'
+                                                : badge.tone === 'top'
+                                                  ? 'bg-[#142B4E] text-white'
+                                                  : 'bg-emerald-100 text-emerald-800'
+                                            }`}
+                                          >
+                                            <Star className="w-2.5 h-2.5" />
+                                            {badge.label}
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="text-[11px] font-mono-tabular text-neutral-500">
                                         {p.sku} ·{' '}
                                         {(p.category_slugs && p.category_slugs.length > 0
@@ -2468,6 +2607,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                           <span className="ml-1.5 text-[#142B4E]">
                                             · {p.variants.length} var(s)
                                           </span>
+                                        )}
+                                        {badge && (
+                                          <span className="ml-1.5">· {badge.units} sold</span>
                                         )}
                                       </div>
                                     </div>
@@ -2491,6 +2633,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   );
                                 })}
                                 <td className="p-3 text-right">
+                                  <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -2502,6 +2645,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       if (!cloned.variants || cloned.variants.length === 0) {
                                         cloned.variants = variants.filter((v) => v.product_id === p.id);
                                       }
+                                      {
+                                        const slots = normalizeGallerySlots(
+                                          cloned.gallery,
+                                          cloned.primary_image,
+                                          cloned.secondary_image
+                                        );
+                                        setEditGallerySlots(slots);
+                                        setEditListingSlotIndex(
+                                          resolveListingSlotIndex(
+                                            slots,
+                                            null,
+                                            cloned.primary_image
+                                          )
+                                        );
+                                      }
+                                      setDragGalleryIdx(null);
+                                      setDragOverGalleryIdx(null);
+                                      setEditVarFitInput('');
+                                      setEditVarSizeInput('');
+                                      setEditProductTab('gallery');
+                                      setEditingProduct(cloned);
+                                    }}
+                                    className="px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={duplicateBusyId === p.id}
+                                    onClick={() => void handleDuplicateProduct(p.id)}
+                                    className="px-2.5 py-1.5 border border-neutral-300 text-neutral-700 hover:border-[#142B4E] hover:text-[#142B4E] text-[11px] uppercase tracking-wider cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                    {duplicateBusyId === p.id ? '…' : 'Dup'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const cloned: Product = JSON.parse(JSON.stringify(p));
+                                      if (!cloned.variants || cloned.variants.length === 0) {
+                                        cloned.variants = variants.filter((v) => v.product_id === p.id);
+                                      }
                                       setEditGallerySlots(
                                         normalizeGallerySlots(
                                           cloned.gallery,
@@ -2509,16 +2694,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                           cloned.secondary_image
                                         )
                                       );
-                                      setDragGalleryIdx(null);
-                                      setDragOverGalleryIdx(null);
-                                      setEditVarFitInput('');
-                                      setEditVarSizeInput('');
+                                      setEditProductTab('report');
                                       setEditingProduct(cloned);
+                                      setProductReportTarget(cloned);
                                     }}
-                                    className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider cursor-pointer"
+                                    className="px-2.5 py-1.5 border border-neutral-300 text-neutral-700 hover:border-[#142B4E] hover:text-[#142B4E] text-[11px] uppercase tracking-wider cursor-pointer inline-flex items-center gap-1"
                                   >
-                                    Edit Regions
+                                    <FileBarChart className="w-3 h-3" />
+                                    Report
                                   </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -3877,20 +4062,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {editingProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-black/50" onClick={() => setEditingProduct(null)} />
-          <div className="relative w-full max-w-4xl bg-white border border-black/15 shadow-2xl p-6 max-h-[90vh] overflow-y-auto space-y-5">
-            <div className="flex items-center justify-between border-b border-black/10 pb-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wider">
-                Edit Product · {editingProduct.sku}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setEditingProduct(null)}
-                className="p-1 text-neutral-500 hover:text-black cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+          <div className="relative w-full max-w-4xl bg-white border border-black/15 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="shrink-0 px-6 pt-5 pb-0 space-y-3 border-b border-black/10 bg-white">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wider">
+                  Edit Product · {editingProduct.sku}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setEditingProduct(null)}
+                  className="p-1 text-neutral-500 hover:text-black cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['gallery', 'Gallery'],
+                    ['categories', 'Categories'],
+                    ['variants', 'Fit & Size'],
+                    ['regions', 'Regions & SEO'],
+                    ['report', 'Report'],
+                  ] as Array<[EditProductTab, string]>
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setEditProductTab(id)}
+                    className={`px-3 py-2 text-[11px] uppercase tracking-wider font-semibold border-b-2 cursor-pointer ${
+                      editProductTab === id
+                        ? 'border-[#142B4E] text-[#142B4E]'
+                        : 'border-transparent text-neutral-500 hover:text-[#142B4E]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            {editProductTab === 'gallery' && (
             <div
               data-testid="edit-product-gallery-editor"
               className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-3 text-xs"
@@ -3901,7 +4114,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
                   Keep this order so uploads always land in the right place. Empty slots are hidden on
-                  the storefront (no blank tiles). Slot 6 is a muted autoplay video.
+                  the storefront (no blank tiles). Slot 6 is a muted autoplay video. Any filled image
+                  can be the catalog listing image — default is the first filled slot.
                 </p>
               </div>
 
@@ -3909,12 +4123,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {PRODUCT_GALLERY_SLOTS.map((slot) => {
                   const idx = slot.index;
                   const slotUrl = editGallerySlots[idx] || '';
+                  const isListing =
+                    Boolean(slotUrl) &&
+                    !isProductVideoUrl(slotUrl) &&
+                    resolveListingSlotIndex(
+                      editGallerySlots,
+                      editListingSlotIndex,
+                      editingProduct.primary_image
+                    ) === idx;
                   return (
                     <div
                       key={slot.id}
                       data-testid={`gallery-slot-${idx}`}
                       className={`bg-white border p-2 space-y-1.5 ${
-                        idx === 0 ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                        isListing ? 'border-[#142B4E] border-2' : 'border-neutral-200'
                       }`}
                     >
                       <div className="space-y-0.5 min-h-[42px]">
@@ -3923,7 +4145,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
                               slot.kind === 'video'
                                 ? 'bg-[#4F8A47] text-white'
-                                : idx === 0
+                                : isListing
                                   ? 'bg-[#142B4E] text-white'
                                   : 'bg-neutral-100 text-[#142B4E]'
                             }`}
@@ -3933,13 +4155,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {slotUrl && (
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={() => {
                                 setEditGallerySlots((prev) => {
                                   const next = normalizeGallerySlots(prev);
                                   next[idx] = '';
                                   return next;
-                                })
-                              }
+                                });
+                                if (editListingSlotIndex === idx) {
+                                  const nextSlots = normalizeGallerySlots(editGallerySlots);
+                                  nextSlots[idx] = '';
+                                  setEditListingSlotIndex(
+                                    resolveListingSlotIndex(nextSlots, null, null)
+                                  );
+                                }
+                              }}
                               aria-label={`Clear ${slot.label}`}
                               className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
                             >
@@ -3953,7 +4182,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="text-[9px] text-neutral-500 leading-snug">{slot.hint}</div>
                       </div>
 
-                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center relative">
                         {slotUrl ? (
                           isProductVideoUrl(slotUrl) ? (
                             <ProductGalleryMedia
@@ -3975,6 +4204,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             {slot.kind === 'video' ? 'No video' : 'No image'}
                           </span>
                         )}
+                        {isListing && (
+                          <span className="absolute top-1 left-1 bg-[#142B4E] text-white text-[8px] uppercase tracking-wider px-1.5 py-0.5">
+                            Listing
+                          </span>
+                        )}
                       </div>
 
                       <button
@@ -3984,12 +4218,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       >
                         {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
                       </button>
+                      {slotUrl && slot.kind !== 'video' && (
+                        <button
+                          type="button"
+                          onClick={() => setEditListingSlotIndex(idx)}
+                          className={`w-full py-1 text-[9px] uppercase tracking-wider font-semibold cursor-pointer ${
+                            isListing
+                              ? 'bg-[#142B4E] text-white'
+                              : 'border border-neutral-300 text-neutral-600 hover:border-[#142B4E] hover:text-[#142B4E]'
+                          }`}
+                        >
+                          {isListing ? 'Listing image' : 'Use as listing'}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
+            )}
 
+            {editProductTab === 'categories' && (
+            <>
             {/* Multi-Category Assignment (Parent & Child Categories) */}
             <div className="border border-neutral-200 p-3.5 bg-[#FAFAFA] space-y-2 text-xs">
               <div className="flex items-center justify-between">
@@ -4066,7 +4316,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 })()}
               </div>
             </div>
+            </>
+            )}
 
+            {editProductTab === 'variants' && (
+            <>
             {/* Per-Product Variations: Body Fits, Custom Fits & Sizes */}
             <div
               data-testid="edit-product-variations-section"
@@ -4143,9 +4397,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="flex flex-wrap gap-1.5">
                     {Array.from(
                       new Set([
-                        'Regular Fit',
-                        'Slim Fit',
-                        'Contemporary Fit',
+                        ...ATTR_FIT_OPTIONS,
                         ...(editingProduct.variants || []).map((v) => v.fit),
                         ...editVarSelectedFits,
                       ])
@@ -4174,36 +4426,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     })}
                   </div>
                   <div className="flex gap-1.5 pt-1">
-                    <input
-                      type="text"
-                      value={editVarFitInput}
-                      onChange={(e) => setEditVarFitInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const clean = editVarFitInput.trim();
-                          if (clean && !editVarSelectedFits.includes(clean)) {
-                            setEditVarSelectedFits((prev) => [...prev, clean]);
-                          }
-                          setEditVarFitInput('');
-                        }
-                      }}
-                      placeholder="Custom fit (e.g. Comfort Fit)"
-                      className="flex-1 px-2 py-1 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const clean = editVarFitInput.trim();
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const clean = e.target.value.trim();
                         if (clean && !editVarSelectedFits.includes(clean)) {
                           setEditVarSelectedFits((prev) => [...prev, clean]);
                         }
-                        setEditVarFitInput('');
                       }}
-                      className="px-2.5 py-1 border border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer"
+                      className="flex-1 px-2 py-1.5 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E] bg-white"
                     >
-                      + Fit
-                    </button>
+                      <option value="">Add fit from list…</option>
+                      {ATTR_FIT_OPTIONS.map((fit) => (
+                        <option key={fit} value={fit}>
+                          {fit}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
@@ -4214,15 +4453,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
                     {Array.from(
                       new Set([
-                        '37 / XS',
-                        '38 / S',
-                        '39 / M',
-                        '40 / M',
-                        '41 / L',
-                        '42 / L',
-                        '43 / XL',
-                        '44 / XXL',
-                        '45 / 3XL',
+                        ...ATTR_SIZE_OPTIONS,
                         ...(editingProduct.sizes || []),
                         ...(editingProduct.variants || []).map((v) => v.size_label),
                         ...editVarSelectedSizes,
@@ -4252,36 +4483,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     })}
                   </div>
                   <div className="flex gap-1.5 pt-1">
-                    <input
-                      type="text"
-                      value={editVarSizeInput}
-                      onChange={(e) => setEditVarSizeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const clean = editVarSizeInput.trim();
-                          if (clean && !editVarSelectedSizes.includes(clean)) {
-                            setEditVarSelectedSizes((prev) => [...prev, clean]);
-                          }
-                          setEditVarSizeInput('');
-                        }
-                      }}
-                      placeholder="Custom size (e.g. 46 / 4XL)"
-                      className="flex-1 px-2 py-1 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const clean = editVarSizeInput.trim();
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const clean = e.target.value.trim();
                         if (clean && !editVarSelectedSizes.includes(clean)) {
                           setEditVarSelectedSizes((prev) => [...prev, clean]);
                         }
-                        setEditVarSizeInput('');
                       }}
-                      className="px-2.5 py-1 border border-[#142B4E] text-[#142B4E] text-[11px] font-medium cursor-pointer"
+                      className="flex-1 px-2 py-1.5 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E] bg-white font-mono-tabular"
                     >
-                      + Size
-                    </button>
+                      <option value="">Add size from list…</option>
+                      {ATTR_SIZE_OPTIONS.map((sz) => (
+                        <option key={sz} value={sz}>
+                          {sz}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -4301,10 +4519,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
-                      {(editingProduct.variants || []).map((v, idx) => (
+                      {(editingProduct.variants || []).map((v, idx) => {
+                        const fitChoices = Array.from(
+                          new Set([...ATTR_FIT_OPTIONS, v.fit].filter(Boolean))
+                        );
+                        const sizeChoices = Array.from(
+                          new Set([...ATTR_SIZE_OPTIONS, v.size_label].filter(Boolean))
+                        );
+                        return (
                         <tr key={`${v.fit}-${v.size_label}-${idx}`}>
                           <td className="p-1.5">
-                            <input
+                            <select
                               value={v.fit}
                               onChange={(e) =>
                                 setEditingProduct((prev) => {
@@ -4314,11 +4539,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   return { ...prev, variants: next };
                                 })
                               }
-                              className="w-28 px-1.5 py-1 border border-neutral-200 bg-white"
-                            />
+                              className="w-36 px-1.5 py-1 border border-neutral-200 bg-white"
+                            >
+                              {fitChoices.map((fit) => (
+                                <option key={fit} value={fit}>
+                                  {fit}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td className="p-1.5">
-                            <input
+                            <select
                               value={v.size_label}
                               onChange={(e) =>
                                 setEditingProduct((prev) => {
@@ -4328,8 +4559,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   return { ...prev, variants: next };
                                 })
                               }
-                              className="w-20 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
-                            />
+                              className="w-28 px-1.5 py-1 border border-neutral-200 font-mono-tabular bg-white"
+                            >
+                              {sizeChoices.map((sz) => (
+                                <option key={sz} value={sz}>
+                                  {sz}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td className="p-1.5">
                             <input
@@ -4414,13 +4651,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
             </div>
+            </>
+            )}
 
+            {editProductTab === 'regions' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               {(['en', 'no', 'it', 'vn'] as const).map((rc) => {
                 const loc = editingProduct.localizations?.[rc];
@@ -4564,8 +4805,107 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 );
               })}
             </div>
+            )}
 
-            <div className="flex justify-end gap-3 pt-3 border-t border-black/10">
+            {editProductTab === 'report' && (
+              <div className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-4 text-xs">
+                {(() => {
+                  const badge = resolvePerfBadge(editingProduct.sku);
+                  const sales = skuSalesRank.get(String(editingProduct.sku).toUpperCase());
+                  const locs = editingProduct.localizations;
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                          Product performance
+                        </span>
+                        {badge ? (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+                              badge.tone === 'star'
+                                ? 'bg-[#FFCC00] text-[#142B4E]'
+                                : badge.tone === 'top'
+                                  ? 'bg-[#142B4E] text-white'
+                                  : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            <Star className="w-3 h-3" />
+                            {badge.label}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-500">No sales rank yet</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-white border border-neutral-200 p-3">
+                          <div className="text-[10px] uppercase text-neutral-500">Units sold</div>
+                          <div className="font-mono-tabular text-lg font-semibold text-[#142B4E]">
+                            {sales?.units ?? 0}
+                          </div>
+                        </div>
+                        <div className="bg-white border border-neutral-200 p-3">
+                          <div className="text-[10px] uppercase text-neutral-500">Revenue (mixed)</div>
+                          <div className="font-mono-tabular text-lg font-semibold">
+                            {Math.round(sales?.revenue || 0).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="bg-white border border-neutral-200 p-3">
+                          <div className="text-[10px] uppercase text-neutral-500">Variants</div>
+                          <div className="font-mono-tabular text-lg font-semibold">
+                            {(editingProduct.variants || []).length}
+                          </div>
+                        </div>
+                        <div className="bg-white border border-neutral-200 p-3">
+                          <div className="text-[10px] uppercase text-neutral-500">Rank</div>
+                          <div className="font-mono-tabular text-lg font-semibold">
+                            {sales?.rank ? `#${sales.rank}` : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bg-white border border-neutral-200 overflow-hidden">
+                        <div className="px-3 py-2 border-b border-neutral-200 font-semibold uppercase tracking-wider text-[#142B4E]">
+                          Stock by region
+                        </div>
+                        <table className="w-full text-left">
+                          <thead className="bg-[#F7F7F7] text-[10px] uppercase text-neutral-500">
+                            <tr>
+                              <th className="p-2">Region</th>
+                              <th className="p-2">Price</th>
+                              <th className="p-2">Stock</th>
+                              <th className="p-2">Warehouse</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-100">
+                            {(['en', 'no', 'it', 'vn'] as const).map((rc) => {
+                              const loc = locs?.[rc];
+                              if (!loc) return null;
+                              return (
+                                <tr key={rc}>
+                                  <td className="p-2 uppercase font-medium">{rc}</td>
+                                  <td className="p-2 font-mono-tabular">
+                                    {formatRegionalPrice(loc.price, rc)}
+                                  </td>
+                                  <td className="p-2 font-mono-tabular">{loc.stock_qty}</td>
+                                  <td className="p-2 text-neutral-600">{loc.warehouse_location}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="text-[11px] text-neutral-500 leading-relaxed">
+                        Categories:{' '}
+                        {(editingProduct.category_slugs || [editingProduct.category_slug]).join(', ')}
+                        . Fabric: {editingProduct.fabric_spec || '—'}.
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+            </div>
+
+            <div className="shrink-0 flex justify-end gap-3 px-6 py-3 border-t border-black/10 bg-white">
               <button
                 type="button"
                 onClick={() => setEditingProduct(null)}
@@ -4578,7 +4918,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 onClick={handleSaveProductEdit}
                 className="px-5 py-2 bg-[#142B4E] text-white text-xs uppercase tracking-wider font-medium cursor-pointer"
               >
-                Save Regional Changes
+                Save Changes
               </button>
             </div>
           </div>
@@ -4816,7 +5156,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             onSubmit={handleCreateProduct}
             className="relative w-full max-w-6xl max-h-[94vh] overflow-y-auto bg-white border border-black/15 shadow-2xl text-xs"
           >
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white px-5 sm:px-6 py-3">
+            <div className="sticky top-0 z-10 border-b border-black/10 bg-white px-5 sm:px-6 pt-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-[#142B4E]">
                   Add New Shirt
@@ -4833,11 +5174,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               >
                 <X className="w-4 h-4" />
               </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['details', 'Details'],
+                    ['gallery', 'Gallery'],
+                    ['attributes', 'Fit & Size'],
+                  ] as Array<[CreateProductTab, string]>
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setCreateProductTab(id)}
+                    className={`px-3 py-2 text-[11px] uppercase tracking-wider font-semibold border-b-2 cursor-pointer ${
+                      createProductTab === id
+                        ? 'border-[#142B4E] text-[#142B4E]'
+                        : 'border-transparent text-neutral-500 hover:text-[#142B4E]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="px-5 sm:px-6 py-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Left: identity + prices + image */}
-              <div className="lg:col-span-5 space-y-3">
+              <div
+                className={`lg:col-span-5 space-y-3 ${
+                  createProductTab === 'attributes' ? 'hidden' : ''
+                }`}
+              >
+                <div
+                  className={`space-y-3 ${createProductTab === 'gallery' ? 'hidden' : ''}`}
+                >
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[11px] text-neutral-600 mb-1">SKU *</label>
@@ -4927,9 +5298,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
+                </div>
                 <div
                   data-testid="create-product-gallery-editor"
-                  className="border border-neutral-200 bg-[#FAFAFA] p-3 space-y-2.5"
+                  className={`border border-neutral-200 bg-[#FAFAFA] p-3 space-y-2.5 ${
+                    createProductTab === 'details' ? 'hidden' : ''
+                  }`}
                 >
                   <div>
                     <div className="font-semibold uppercase tracking-wider text-[#142B4E] text-[11px]">
@@ -4937,18 +5311,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                     <p className="text-[10px] text-neutral-500 mt-0.5">
                       1 Folded shirt (main) · 2 Ghost mannequin-front · 3 Sideway · 4 Shirt with model · 5
-                      Fabric close up · 6 Short video clip. Empty slots stay hidden on the storefront.
+                      Fabric close up · 6 Short video clip. Empty slots stay hidden. Pick any image as
+                      listing (default: first filled).
                     </p>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {PRODUCT_GALLERY_SLOTS.map((slot) => {
                       const idx = slot.index;
                       const slotUrl = newGallerySlots[idx] || '';
+                      const isListing =
+                        Boolean(slotUrl) &&
+                        !isProductVideoUrl(slotUrl) &&
+                        resolveListingSlotIndex(newGallerySlots, newListingSlotIndex, newPrimaryImg) ===
+                          idx;
                       return (
                         <div
                           key={slot.id}
                           className={`bg-white border p-2 space-y-1 ${
-                            idx === 0 ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                            isListing ? 'border-[#142B4E] border-2' : 'border-neutral-200'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
@@ -4956,7 +5336,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
                                 slot.kind === 'video'
                                   ? 'bg-[#4F8A47] text-white'
-                                  : idx === 0
+                                  : isListing
                                     ? 'bg-[#142B4E] text-white'
                                     : 'bg-neutral-100 text-[#142B4E]'
                               }`}
@@ -4966,14 +5346,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             {slotUrl && (
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
                                   setNewGallerySlots((prev) => {
                                     const next = normalizeGallerySlots(prev);
                                     next[idx] = '';
-                                    if (idx === 0) setNewPrimaryImg('');
                                     return next;
-                                  })
-                                }
+                                  });
+                                  if (newListingSlotIndex === idx) {
+                                    const nextSlots = normalizeGallerySlots(newGallerySlots);
+                                    nextSlots[idx] = '';
+                                    const nextIdx = resolveListingSlotIndex(nextSlots, null, null);
+                                    setNewListingSlotIndex(nextIdx);
+                                    setNewPrimaryImg(nextSlots[nextIdx] || '');
+                                  }
+                                }}
                                 className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
                                 aria-label={`Clear ${slot.label}`}
                               >
@@ -4984,7 +5370,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <div className="text-[10px] font-semibold text-[#1A1A1A] leading-snug">
                             {slot.label}
                           </div>
-                          <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                          <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center relative">
                             {slotUrl ? (
                               <ProductGalleryMedia
                                 src={slotUrl}
@@ -4997,6 +5383,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 {slot.kind === 'video' ? 'No video' : 'No image'}
                               </span>
                             )}
+                            {isListing && (
+                              <span className="absolute top-1 left-1 bg-[#142B4E] text-white text-[8px] uppercase tracking-wider px-1.5 py-0.5">
+                                Listing
+                              </span>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -5005,13 +5396,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           >
                             {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
                           </button>
+                          {slotUrl && slot.kind !== 'video' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewListingSlotIndex(idx);
+                                setNewPrimaryImg(slotUrl);
+                              }}
+                              className={`w-full py-1 text-[9px] uppercase tracking-wider font-semibold cursor-pointer ${
+                                isListing
+                                  ? 'bg-[#142B4E] text-white'
+                                  : 'border border-neutral-300 text-neutral-600 hover:border-[#142B4E]'
+                              }`}
+                            >
+                              {isListing ? 'Listing image' : 'Use as listing'}
+                            </button>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
+                <div
+                  className={`px-3 py-2 bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 ${
+                    createProductTab === 'gallery' ? 'hidden' : ''
+                  }`}
+                >
                   Will create{' '}
                   <strong className="font-mono-tabular">
                     {Math.max(0, newFits.length) * Math.max(0, newSizes.length)}
@@ -5027,7 +5438,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               {/* Right: categories + fits + sizes side by side */}
-              <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div
+                className={`lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3 ${
+                  createProductTab === 'gallery' ? 'hidden' : ''
+                }`}
+              >
                 <div className="border border-neutral-200 p-3 bg-[#FAFAFA] space-y-2 min-h-0">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
                     Categories

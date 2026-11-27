@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Heart } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Heart, Star } from 'lucide-react';
 import type { Product, RegionCode } from '../types.ts';
 import { evaluateStockState, formatRegionalPrice } from '../utils/commerce.ts';
+import {
+  resolveFilledGalleryMedia,
+  resolveListingImage,
+} from '../utils/productGallery.ts';
 
 interface ProductHoverCardProps {
   product: Product;
@@ -24,16 +28,18 @@ export const ProductHoverCard: React.FC<ProductHoverCardProps> = ({
   onOpenProduct,
   onToggleWishlist,
 }) => {
+  const filled = resolveFilledGalleryMedia(product);
+  const listing = resolveListingImage(product);
   const images =
-    product.gallery && product.gallery.length > 0
-      ? product.gallery
-      : [product.primary_image, product.secondary_image].filter(Boolean);
+    filled.length > 0
+      ? [listing, ...filled.filter((u) => u !== listing)].filter(Boolean)
+      : [listing || product.primary_image].filter(Boolean);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
 
   const stockState = evaluateStockState(product.stock_qty, product.preorder_allowed);
-  const currentImg = images[activeIndex] || product.primary_image;
+  const currentImg = images[activeIndex] || listing || product.primary_image;
   const totalFrames = Math.max(1, images.length);
   const progressPct = ((activeIndex + 1) / totalFrames) * 100;
 
@@ -102,6 +108,19 @@ export const ProductHoverCard: React.FC<ProductHoverCardProps> = ({
             className={`w-4 h-4 ${inWishlist ? 'fill-[#142B4E] text-[#142B4E]' : ''}`}
           />
         </button>
+
+        {product.performance_badge && (
+          <span
+            className={`absolute top-3 left-3 z-10 inline-flex items-center gap-1 px-2 py-1 text-[9px] uppercase tracking-wider font-semibold shadow-sm ${
+              product.performance_badge === 'star_seller'
+                ? 'bg-[#FFCC00] text-[#142B4E]'
+                : 'bg-[#142B4E] text-white'
+            }`}
+          >
+            <Star className="w-3 h-3" />
+            {product.performance_badge === 'star_seller' ? 'Star seller' : 'Top seller'}
+          </span>
+        )}
 
         {/* Image Trigger */}
         <button

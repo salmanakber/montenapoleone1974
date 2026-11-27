@@ -78,13 +78,59 @@ export function normalizeGallerySlots(
 ): string[] {
   const raw = Array.isArray(gallery) ? gallery.map((u) => String(u || '').trim()) : [];
   const slots = Array.from({ length: PRODUCT_GALLERY_SLOT_COUNT }, (_, i) => raw[i] || '');
-  if (!slots[0] && primary) slots[0] = String(primary).trim();
-  if (!slots[1] && secondary && secondary !== slots[0]) slots[1] = String(secondary).trim();
-  // Legacy galleries were dense (no empties). If only dense extras exist past primary, keep them in order.
-  if (raw.length > 0 && raw.every((u, i) => i < raw.length && Boolean(u))) {
-    // already assigned above for index positions; densify only when legacy length < 6 and no holes
+  const primaryTrim = String(primary || '').trim();
+  const secondaryTrim = String(secondary || '').trim();
+  // Only backfill primary/secondary into empty early slots when they are not already in the gallery
+  // (avoids duplicating a lone fabric-closeup into slot 0).
+  if (primaryTrim && !slots.includes(primaryTrim)) {
+    if (!slots[0]) slots[0] = primaryTrim;
+  }
+  if (secondaryTrim && secondaryTrim !== primaryTrim && !slots.includes(secondaryTrim)) {
+    if (!slots[1]) slots[1] = secondaryTrim;
   }
   return slots;
+}
+
+/** Index of the preferred listing/front image within the 6-slot gallery. */
+export function resolveListingSlotIndex(
+  gallery: string[] | null | undefined,
+  preferredIndex?: number | null,
+  primary?: string | null
+): number {
+  const slots = normalizeGallerySlots(gallery, primary);
+  if (
+    preferredIndex != null &&
+    Number.isFinite(preferredIndex) &&
+    preferredIndex >= 0 &&
+    preferredIndex < PRODUCT_GALLERY_SLOT_COUNT &&
+    slots[preferredIndex]
+  ) {
+    return preferredIndex;
+  }
+  const primaryTrim = String(primary || '').trim();
+  if (primaryTrim) {
+    const at = slots.findIndex((u) => u === primaryTrim);
+    if (at >= 0) return at;
+  }
+  const firstFilled = slots.findIndex(Boolean);
+  return firstFilled >= 0 ? firstFilled : 0;
+}
+
+/**
+ * Listing/front image for catalog cards.
+ * Default: first filled gallery slot. If only one image exists in any slot, that image is used.
+ */
+export function resolveListingImage(product: {
+  gallery?: string[] | null;
+  primary_image?: string;
+  secondary_image?: string;
+  listing_slot_index?: number | null;
+}): string {
+  const slots = normalizeGallerySlots(product.gallery, product.primary_image, product.secondary_image);
+  const filled = slots.filter(Boolean);
+  if (filled.length === 1) return filled[0];
+  const idx = resolveListingSlotIndex(slots, product.listing_slot_index, product.primary_image);
+  return slots[idx] || filled[0] || String(product.primary_image || product.secondary_image || '');
 }
 
 /** Storefront: only filled media, preserving slot order (no blank tiles). */

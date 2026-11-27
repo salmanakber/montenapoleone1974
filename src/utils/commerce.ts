@@ -794,6 +794,77 @@ export function slugifyCategoryName(raw: string): string {
     .replace(/^-+|-+$/g, '') || 'category';
 }
 
+/** Normalize WooCommerce / Norwegian category labels onto our storefront category slugs. */
+const WOO_CATEGORY_SEGMENT_ALIASES: Record<
+  string,
+  { slug: string; name: string; nameNo?: string }
+> = {
+  flannel: { slug: 'flannel', name: 'Flannel Shirts', nameNo: 'Flanell skjorter' },
+  'flannel shirts': { slug: 'flannel', name: 'Flannel Shirts', nameNo: 'Flanell skjorter' },
+  'flanell skjorte': { slug: 'flannel', name: 'Flannel Shirts', nameNo: 'Flanell skjorter' },
+  'flanell skjorter': { slug: 'flannel', name: 'Flannel Shirts', nameNo: 'Flanell skjorter' },
+  'flanell-skjorte': { slug: 'flannel', name: 'Flannel Shirts', nameNo: 'Flanell skjorter' },
+  linen: { slug: 'linen', name: 'Linen Shirts', nameNo: 'Linskjorter' },
+  'linen shirts': { slug: 'linen', name: 'Linen Shirts', nameNo: 'Linskjorter' },
+  linskjorte: { slug: 'linen', name: 'Linen Shirts', nameNo: 'Linskjorter' },
+  linskjorter: { slug: 'linen', name: 'Linen Shirts', nameNo: 'Linskjorter' },
+  business: { slug: 'business', name: 'Business Shirts', nameNo: 'Business skjorter' },
+  'business shirts': { slug: 'business', name: 'Business Shirts', nameNo: 'Business skjorter' },
+  'business skjorte': { slug: 'business', name: 'Business Shirts', nameNo: 'Business skjorter' },
+  'business skjorter': { slug: 'business', name: 'Business Shirts', nameNo: 'Business skjorter' },
+  'business-skjorte': { slug: 'business', name: 'Business Shirts', nameNo: 'Business skjorter' },
+  oxford: { slug: 'oxford', name: 'Oxford Shirts', nameNo: 'Oxford skjorter' },
+  'oxford shirts': { slug: 'oxford', name: 'Oxford Shirts', nameNo: 'Oxford skjorter' },
+  'oxford skjorte': { slug: 'oxford', name: 'Oxford Shirts', nameNo: 'Oxford skjorter' },
+  'oxford skjorter': { slug: 'oxford', name: 'Oxford Shirts', nameNo: 'Oxford skjorter' },
+  'oxford-skjorte': { slug: 'oxford', name: 'Oxford Shirts', nameNo: 'Oxford skjorter' },
+  stretch: { slug: 'stretch', name: 'Stretch Shirts', nameNo: 'Stretch Skjorter' },
+  'stretch shirts': { slug: 'stretch', name: 'Stretch Shirts', nameNo: 'Stretch Skjorter' },
+  'stretch skjorte': { slug: 'stretch', name: 'Stretch Shirts', nameNo: 'Stretch Skjorter' },
+  'stretch skjorter': { slug: 'stretch', name: 'Stretch Shirts', nameNo: 'Stretch Skjorter' },
+  'stretch-skjorter': { slug: 'stretch', name: 'Stretch Shirts', nameNo: 'Stretch Skjorter' },
+  b2b: { slug: 'b2b', name: 'Corporate Agreement', nameNo: 'Bedriftsavtale' },
+  bedriftsavtale: { slug: 'b2b', name: 'Corporate Agreement', nameNo: 'Bedriftsavtale' },
+  'corporate agreement': { slug: 'b2b', name: 'Corporate Agreement', nameNo: 'Bedriftsavtale' },
+  'herre skjorter': { slug: 'herre-skjorter', name: "Men's Shirts", nameNo: 'Herre Skjorter' },
+  'herre-skjorter': { slug: 'herre-skjorter', name: "Men's Shirts", nameNo: 'Herre Skjorter' },
+  "men's shirts": { slug: 'herre-skjorter', name: "Men's Shirts", nameNo: 'Herre Skjorter' },
+  'herre pique skjorter': {
+    slug: 'herre-pique-skjorter',
+    name: 'Pique Shirts',
+    nameNo: 'Herre pique skjorter',
+  },
+  'herre-pique-skjorter': {
+    slug: 'herre-pique-skjorter',
+    name: 'Pique Shirts',
+    nameNo: 'Herre pique skjorter',
+  },
+  outlet: { slug: 'outlet', name: 'Outlet', nameNo: 'Outlet' },
+};
+
+export function normalizeCategoryLookupKey(raw: string): string {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[_/]+/g, ' ')
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Map a Woo/CSV category segment onto the canonical storefront category. */
+export function resolveWooCategorySegment(raw: string): { slug: string; name: string; nameNo?: string } {
+  const key = normalizeCategoryLookupKey(raw);
+  const alias = WOO_CATEGORY_SEGMENT_ALIASES[key];
+  if (alias) return { ...alias };
+  // Also try slugified form as key (e.g. already-imported "flanell-skjorte")
+  const slugKey = slugifyCategoryName(raw);
+  const bySlug = WOO_CATEGORY_SEGMENT_ALIASES[slugKey] || WOO_CATEGORY_SEGMENT_ALIASES[slugKey.replace(/-/g, ' ')];
+  if (bySlug) return { ...bySlug };
+  return { slug: slugKey || 'business', name: String(raw || '').trim() || 'Business Shirts' };
+}
+
 export function convertBasePriceAcrossRegions(
   baseAmount: number,
   sourceRegion: RegionCode
@@ -1249,18 +1320,27 @@ export function parseWooCommerceCsv(
           ? rawSegments.filter((s) => s.toLowerCase() !== 'uncategorized')
           : rawSegments;
       if (filteredSegments.length === 0) continue;
-      normalizedCategoryPaths.push(filteredSegments.join(' > '));
+
+      // Map Norwegian/Woo labels onto canonical storefront categories (linen/flannel/business/…)
+      const resolvedSegments = filteredSegments.map((seg) => resolveWooCategorySegment(seg));
+      // De-dupe consecutive identical slugs (e.g. parent already mapped away)
+      const deduped: Array<{ slug: string; name: string }> = [];
+      for (const seg of resolvedSegments) {
+        if (deduped.length > 0 && deduped[deduped.length - 1].slug === seg.slug) continue;
+        deduped.push(seg);
+      }
+      if (deduped.length === 0) continue;
+      normalizedCategoryPaths.push(deduped.map((s) => s.name).join(' > '));
 
       let parentSlug: string | null = null;
-      for (const seg of filteredSegments) {
-        const slug = slugifyCategoryName(seg);
-        const existing = categoryMap.get(slug);
+      for (const seg of deduped) {
+        const existing = categoryMap.get(seg.slug);
         if (!existing) {
-          categoryMap.set(slug, { slug, name: seg, parentSlug });
+          categoryMap.set(seg.slug, { slug: seg.slug, name: seg.name, parentSlug });
         } else if (!existing.parentSlug && parentSlug) {
           existing.parentSlug = parentSlug;
         }
-        parentSlug = slug;
+        parentSlug = seg.slug;
       }
     }
 

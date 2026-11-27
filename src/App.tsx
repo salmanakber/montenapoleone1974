@@ -47,7 +47,7 @@ import { ProductDetailView } from './components/ProductDetailView.tsx';
 import { AboutUsView } from './components/AboutUsView.tsx';
 import { ArticlesView } from './components/ArticlesView.tsx';
 import { InfoPagesView } from './components/InfoPagesView.tsx';
-import { CartDrawer, resolveCartChannel } from './components/CartDrawer.tsx';
+import { CartDrawer, countCartBadgeEntries, resolveCartChannel } from './components/CartDrawer.tsx';
 import { CheckoutView } from './components/CheckoutView.tsx';
 import { AccountView, B2BView } from './components/B2BAndAccountView.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
@@ -954,7 +954,8 @@ export default function App() {
     }
   };
 
-  const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+  const cartCount = countCartBadgeEntries(cart);
+  const cartPieceCount = cart.reduce((sum, i) => sum + i.quantity, 0);
   const cartSubtotal = cart.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
   const wishlistProducts = products.filter((p) => wishlistIds.includes(p.id));
   const hasTopBannerText = Boolean(
@@ -984,6 +985,7 @@ export default function App() {
           topBanner={topBanner}
           copy={copy}
           cartCount={cartCount}
+          cartPieceCount={cartPieceCount}
           wishlistCount={wishlistIds.length}
           onSelectRegion={handleSelectRegion}
           onNavigate={(view, opts) => navigate(view, opts)}

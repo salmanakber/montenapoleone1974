@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Ruler } from 'lucide-react';
 import type { HeroSlideRecord, HomePageSettings, Product, RegionCode, RegionConfig } from '../types.ts';
 import type { RegionCopy } from '../i18n/translations.ts';
 import { DEFAULT_HOME_PAGE_SETTINGS, formatRegionalPrice } from '../utils/commerce.ts';
+import { resolveListingImage } from '../utils/productGallery.ts';
 
 interface HeroAndHomeProps {
   region: RegionConfig;
@@ -341,7 +342,7 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
                 >
                   <div className="relative aspect-[3/4] w-full bg-[#E6E6E6] overflow-hidden">
                     <img
-                      src={product.primary_image}
+                      src={resolveListingImage(product) || product.primary_image}
                       alt={product.title}
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"

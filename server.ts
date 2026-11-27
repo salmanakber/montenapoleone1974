@@ -98,6 +98,7 @@ import {
   parseWooCommerceCsv,
   parseWordPressCategoriesXml,
   resolveOrderDiscounts,
+  resolveWooCategorySegment,
   slugifyCategoryName,
   toCsv,
 } from './src/utils/commerce.ts';
@@ -121,6 +122,8 @@ app.use(express.json({ limit: '32mb' }));
 
 // Static serving for uploaded WordPress-style media files
 app.use('/uploads', express.static(UPLOADS_DIR));
+// Fallback for assets placed under public/uploads (e.g. article heroes synced locally)
+app.use('/uploads', express.static(path.resolve(process.cwd(), 'public', 'uploads')));
 // Tailoring measurement sketches shipped in public/size-guides
 app.use(
   '/size-guides',
@@ -839,11 +842,52 @@ app.get('/api/storefront/bootstrap', (req, res) => {
 
   const tailoringOptions = getTailoringOptions(false);
 
+  // Lightweight bestseller badges for catalog cards (top 8 by units sold)
+  const sellerUnits = new Map<string, number>();
+  try {
+    const orderRowsLite = db
+      .prepare(`SELECT items_json FROM orders WHERE order_status != 'cancelled'`)
+      .all() as Array<{ items_json: string }>;
+    for (const o of orderRowsLite) {
+      let items: Array<{ sku?: string; quantity?: number }> = [];
+      try {
+        items = JSON.parse(String(o.items_json || '[]'));
+      } catch {
+        items = [];
+      }
+      for (const it of items) {
+        const sku = String(it.sku || '').trim();
+        if (!sku) continue;
+        const parts = sku.split('-');
+        const parentSku =
+          parts[0] === 'MN' && parts.length >= 2 ? parts.slice(0, 2).join('-') : parts[0] || sku;
+        const key = parentSku.toUpperCase();
+        // Also credit exact SKU for F61-style products
+        sellerUnits.set(key, (sellerUnits.get(key) || 0) + Number(it.quantity || 1));
+        if (key !== sku.toUpperCase()) {
+          sellerUnits.set(
+            sku.toUpperCase(),
+            (sellerUnits.get(sku.toUpperCase()) || 0) + Number(it.quantity || 1)
+          );
+        }
+      }
+    }
+  } catch {
+    // ignore analytics failures on bootstrap
+  }
+  const topSellerSkus = Array.from(sellerUnits.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([sku]) => sku);
+  const topSellerSet = new Set(topSellerSkus);
+  const starSellerSet = new Set(topSellerSkus.slice(0, 3));
+
   const products = productRows.map((p) => {
     const categorySlugs = parseCategorySlugs(p.category_slug, p.category_slugs_json);
     const pid = Number(p.id);
     const rStats = reviewStatsMap.get(pid);
     const gallery = JSON.parse(String(p.gallery_json)) as string[];
+    const skuKey = String(p.sku || '').toUpperCase();
     return {
       id: pid,
       sku: String(p.sku),
@@ -855,6 +899,11 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       is_b2b_eligible: Boolean(p.is_b2b_eligible),
       is_outlet: Boolean(p.is_outlet),
       preorder_allowed: Boolean(p.preorder_allowed),
+      performance_badge: starSellerSet.has(skuKey)
+        ? 'star_seller'
+        : topSellerSet.has(skuKey)
+          ? 'top_seller'
+          : null,
       primary_image: String(p.primary_image),
       secondary_image: String(p.secondary_image),
       // Keep up to 6 fixed gallery slots (incl. empty strings for position); storefront hides blanks.
@@ -2846,6 +2895,173 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
   }
 });
 
+app.post('/api/admin/products/:id/duplicate', requirePermission('manage_products'), (req: AuthedRequest, res) => {
+  const productId = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(productId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+
+  try {
+    const baseSku = String(existing.sku || 'SKU');
+    let nextSku = `${baseSku}-COPY`;
+    let n = 2;
+    while (db.prepare('SELECT id FROM products WHERE sku = ?').get(nextSku)) {
+      nextSku = `${baseSku}-COPY${n}`;
+      n += 1;
+    }
+    const nextSlug = `${String(existing.slug || slugifyCategoryName(baseSku))}-copy-${Date.now().toString(36)}`;
+
+    const tx = db.transaction(() => {
+      const info = db
+        .prepare(
+          `INSERT INTO products (
+            sku, slug, category_slug, category_slugs_json, fabric_spec, is_featured, is_b2b_eligible, is_outlet,
+            preorder_allowed, primary_image, secondary_image, gallery_json, collars_json, cuffs_json, sizes_json, active
+          ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+        )
+        .run(
+          nextSku,
+          nextSlug,
+          String(existing.category_slug || 'business'),
+          String(existing.category_slugs_json || '[]'),
+          String(existing.fabric_spec || ''),
+          Number(existing.is_b2b_eligible || 0),
+          Number(existing.is_outlet || 0),
+          Number(existing.preorder_allowed || 1),
+          String(existing.primary_image || ''),
+          String(existing.secondary_image || ''),
+          String(existing.gallery_json || '[]'),
+          String(existing.collars_json || '[]'),
+          String(existing.cuffs_json || '[]'),
+          String(existing.sizes_json || '[]')
+        );
+      const newId = Number(info.lastInsertRowid);
+
+      const locs = db
+        .prepare('SELECT * FROM product_localizations WHERE product_id = ?')
+        .all(productId) as Array<Record<string, unknown>>;
+      const insertLoc = db.prepare(
+        `INSERT INTO product_localizations (
+          product_id, region_code, title, subtitle, description, price, compare_at_price, stock_qty,
+          warehouse_location, delivery_note, seo_title, seo_description, seo_keywords
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const loc of locs) {
+        insertLoc.run(
+          newId,
+          String(loc.region_code),
+          `${String(loc.title || nextSku)} (Copy)`,
+          String(loc.subtitle || ''),
+          String(loc.description || ''),
+          Number(loc.price || 0),
+          loc.compare_at_price == null ? null : Number(loc.compare_at_price),
+          Number(loc.stock_qty || 0),
+          String(loc.warehouse_location || ''),
+          String(loc.delivery_note || ''),
+          String(loc.seo_title || ''),
+          String(loc.seo_description || ''),
+          String(loc.seo_keywords || '')
+        );
+      }
+
+      const vars = db
+        .prepare('SELECT * FROM product_variants WHERE product_id = ?')
+        .all(productId) as Array<Record<string, unknown>>;
+      const insertVar = db.prepare(
+        `INSERT INTO product_variants (
+          product_id, fit, size_label, sku_variant, price_en, price_no, price_it, price_vn,
+          stock_en, stock_no, stock_it, stock_vn, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const v of vars) {
+        insertVar.run(
+          newId,
+          String(v.fit || 'Regular Fit'),
+          String(v.size_label || '40 / M'),
+          `${nextSku}-${String(v.sku_variant || 'VAR').split('-').slice(-2).join('-') || 'VAR'}`,
+          v.price_en == null ? null : Number(v.price_en),
+          v.price_no == null ? null : Number(v.price_no),
+          v.price_it == null ? null : Number(v.price_it),
+          v.price_vn == null ? null : Number(v.price_vn),
+          Number(v.stock_en || 0),
+          Number(v.stock_no || 0),
+          Number(v.stock_it || 0),
+          Number(v.stock_vn || 0),
+          v.active === 0 ? 0 : 1
+        );
+      }
+      return newId;
+    });
+
+    const newId = tx();
+    if (req.authUser) {
+      logAudit(req.authUser, 'PRODUCT_DUPLICATED', nextSku, `Duplicated from #${productId}`);
+    }
+
+    const created = db.prepare('SELECT * FROM products WHERE id = ?').get(newId) as Record<string, unknown>;
+    const categorySlugs = parseCategorySlugs(created.category_slug, created.category_slugs_json);
+    const locsOut = db
+      .prepare('SELECT * FROM product_localizations WHERE product_id = ?')
+      .all(newId) as Array<Record<string, unknown>>;
+    const localizations: Record<string, unknown> = {};
+    for (const loc of locsOut) {
+      localizations[String(loc.region_code)] = loc;
+    }
+    const variantsOut = db
+      .prepare('SELECT * FROM product_variants WHERE product_id = ?')
+      .all(newId) as Array<Record<string, unknown>>;
+
+    res.status(201).json({
+      product: {
+        ...created,
+        id: newId,
+        category_slug: categorySlugs[0] || String(created.category_slug),
+        category_slugs: categorySlugs,
+        is_featured: Boolean(created.is_featured),
+        is_b2b_eligible: Boolean(created.is_b2b_eligible),
+        is_outlet: Boolean(created.is_outlet),
+        preorder_allowed: Boolean(created.preorder_allowed),
+        active: Boolean(created.active),
+        gallery: JSON.parse(String(created.gallery_json || '[]')),
+        collars: JSON.parse(String(created.collars_json || '[]')),
+        cuffs: JSON.parse(String(created.cuffs_json || '[]')),
+        sizes: JSON.parse(String(created.sizes_json || '[]')),
+        localizations,
+        variants: variantsOut.map((v) => ({
+          ...v,
+          product_id: newId,
+          active: v.active !== 0,
+          price_en: v.price_en == null ? null : Number(v.price_en),
+          price_no: v.price_no == null ? null : Number(v.price_no),
+          price_it: v.price_it == null ? null : Number(v.price_it),
+          price_vn: v.price_vn == null ? null : Number(v.price_vn),
+        })),
+        title: String((localizations.en as { title?: string } | undefined)?.title || nextSku),
+        subtitle: '',
+        description: '',
+        price: Number((localizations.en as { price?: number } | undefined)?.price || 0),
+        compare_at_price: null,
+        stock_qty: Number((localizations.en as { stock_qty?: number } | undefined)?.stock_qty || 0),
+        warehouse_location: String(
+          (localizations.en as { warehouse_location?: string } | undefined)?.warehouse_location || ''
+        ),
+        delivery_note: '',
+        primary_image: String(created.primary_image || ''),
+        secondary_image: String(created.secondary_image || ''),
+        sku: nextSku,
+        slug: nextSlug,
+        fabric_spec: String(created.fabric_spec || ''),
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to duplicate product' });
+  }
+});
+
 app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res) => {
   const productId = Number(req.params.id);
   const user = req.authUser!;
@@ -4690,12 +4906,21 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
     let leafSlug = 'business';
     const chainSlugs: string[] = [];
     for (const rawName of chain) {
-      const slug = slugifyCategoryName(rawName);
+      const resolved = resolveWooCategorySegment(rawName);
+      const slug = resolved.slug || slugifyCategoryName(rawName);
       if (!slug) continue;
-      const existing = db.prepare('SELECT id FROM categories WHERE slug = ?').get(slug) as
-        | { id: number }
+      // Prefer attaching child categories under an existing parent when possible
+      const existing = db.prepare('SELECT id, parent_id FROM categories WHERE slug = ?').get(slug) as
+        | { id: number; parent_id: number | null }
         | undefined;
       if (existing) {
+        // If this category already exists as a top-level canonical (linen/flannel/…) keep that id
+        // but still record hierarchy for product assignment.
+        if (parentId && existing.parent_id == null && chainSlugs.length > 0) {
+          // Leave canonical top-level parents intact; do not re-parent linen/flannel/etc.
+        } else if (parentId && existing.parent_id == null) {
+          // no-op
+        }
         parentId = existing.id;
         leafSlug = slug;
       } else {
@@ -4704,7 +4929,15 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
             `INSERT INTO categories (slug, parent_id, scope, active, sort_order, name_en, name_no, name_it, name_vn)
              VALUES (?, ?, 'both', 1, ?, ?, ?, ?, ?)`
           )
-          .run(slug, parentId, 50 + createdCategories, rawName, rawName, rawName, rawName);
+          .run(
+            slug,
+            parentId,
+            50 + createdCategories,
+            resolved.name,
+            resolved.nameNo || resolved.name,
+            resolved.name,
+            resolved.name
+          );
         parentId = Number(info.lastInsertRowid);
         leafSlug = slug;
         createdCategories++;
@@ -4744,9 +4977,13 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
       const mappedImages = (row.images || [])
         .map((u) => mirroredImageMap.get(String(u).trim()) || String(u).trim())
         .filter(Boolean);
-      const primaryImg = mappedImages[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
-      const secondaryImg = mappedImages[1] || primaryImg;
-      const galleryArr = mappedImages.length > 0 ? mappedImages : [primaryImg];
+      // Fixed 6-slot gallery: pack Woo images into slots 0..n (empties preserve later fabric/video slots)
+      const galleryArr = Array.from({ length: 6 }, (_, i) => mappedImages[i] || '');
+      const filledImages = galleryArr.filter(Boolean);
+      const primaryImg =
+        filledImages[0] || '/src/assets/images/shirt_white_signature_1795248293653.jpg';
+      const secondaryImg = filledImages[1] || primaryImg;
+      if (!galleryArr[0]) galleryArr[0] = primaryImg;
       const sizes =
         Array.isArray(row.sizes) && row.sizes.length > 0
           ? row.sizes

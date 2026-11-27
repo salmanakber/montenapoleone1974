@@ -6,8 +6,18 @@ import {
   isWooCommerceCsvHeader,
   parseWooCommerceCsv,
   resolveVariantPriceAndStock,
+  resolveWooCategorySegment,
 } from './commerce.ts';
 import type { Product } from '../types.ts';
+
+test('maps Norwegian Woo category labels to canonical storefront slugs', () => {
+  assert.equal(resolveWooCategorySegment('Flanell skjorte').slug, 'flannel');
+  assert.equal(resolveWooCategorySegment('Linskjorte').slug, 'linen');
+  assert.equal(resolveWooCategorySegment('Business skjorte').slug, 'business');
+  assert.equal(resolveWooCategorySegment('Stretch Skjorter').slug, 'stretch');
+  assert.equal(resolveWooCategorySegment('Oxford skjorte').slug, 'oxford');
+  assert.equal(resolveWooCategorySegment('Bedriftsavtale').slug, 'b2b');
+});
 
 test('parses real WooCommerce products CSV with images, gallery, variations, and hierarchical categories', () => {
   const csvPath = path.resolve(process.cwd(), 'public/assets/aistudio/products_d57ace78.csv');
@@ -32,9 +42,16 @@ test('parses real WooCommerce products CSV with images, gallery, variations, and
   assert.ok(f61.fits.length >= 1, 'Expected F61 to parse Fit options');
   assert.ok(f61.sizes.length >= 1, 'Expected F61 to parse Size options');
 
-  // Verify double-space category hierarchy ("Herre Skjorter  Flanell skjorte") split properly
+  // Verify double-space category hierarchy maps onto canonical storefront slugs
   const hasChildCategory = parsed.categories.some((c) => Boolean(c.parentSlug));
   assert.equal(hasChildCategory, true, 'Expected parent > child categories from double-space separator');
+  const flannel = parsed.categories.find((c) => c.slug === 'flannel');
+  assert.ok(flannel, 'Expected Flanell skjorte to map to canonical slug "flannel"');
+  const f61Cats = parsed.rows.find((r) => r.sku === 'F61')?.categoryPaths || [];
+  assert.ok(
+    f61Cats.some((p) => /flannel|Flannel/i.test(p)),
+    `Expected F61 category path to resolve to Flannel, got ${JSON.stringify(f61Cats)}`
+  );
   // Ensure every parent product has at least one image or valid fallback check
   const withImages = parsed.rows.filter((r) => r.images.length > 0);
   assert.ok(withImages.length >= 140, `Expected most imported products to include images, got ${withImages.length}`);

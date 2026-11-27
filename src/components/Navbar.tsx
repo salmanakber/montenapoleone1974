@@ -46,6 +46,8 @@ interface NavbarProps {
   topBanner?: TopBannerSettings;
   copy: RegionCopy;
   cartCount: number;
+  /** Total piece quantity (B2B sizes summed); optional for bag aria text */
+  cartPieceCount?: number;
   wishlistCount: number;
   onSelectRegion: (code: RegionCode) => void;
   onNavigate: (view: AppView, opts?: { category?: string }) => void;
@@ -127,6 +129,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   topBanner,
   copy,
   cartCount,
+  cartPieceCount,
   wishlistCount,
   onSelectRegion,
   onNavigate,
@@ -494,7 +497,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 setB2cOpen(false);
                 onOpenBag();
               }}
-              aria-label={`Shopping bag (${cartCount} items)`}
+              aria-label={
+                cartPieceCount && cartPieceCount !== cartCount
+                  ? `Shopping bag (${cartCount} items, ${cartPieceCount} pcs)`
+                  : `Shopping bag (${cartCount} items)`
+              }
+              title={
+                cartPieceCount && cartPieceCount !== cartCount
+                  ? `${cartCount} items · ${cartPieceCount} pcs`
+                  : undefined
+              }
               className="relative p-1.5 flex items-center gap-1.5 hover:opacity-75 transition-opacity cursor-pointer"
             >
               <ShoppingBag className="w-5 h-5" />
