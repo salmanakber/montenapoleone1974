@@ -43,7 +43,11 @@ import {
   CuffShowcaseIllustration,
   TailoringZoneSketch,
 } from './TailoringIllustrations.tsx';
-import { isProductVideoUrl, resolveFilledGalleryMedia } from '../utils/productGallery.ts';
+import {
+  isProductVideoUrl,
+  PRODUCT_GALLERY_SLOTS,
+  resolveGallerySlotsForDisplay,
+} from '../utils/productGallery.ts';
 
 interface ProductDetailViewProps {
   product: Product;
@@ -167,7 +171,8 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     const top = ref.current.getBoundingClientRect().top + window.scrollY - 82;
     window.scrollTo({ top, behavior: 'smooth' });
   };
-  const gallery = resolveFilledGalleryMedia(product);
+  /** Fixed 6 slots — empty strings render as light-gray placeholders. */
+  const gallery = resolveGallerySlotsForDisplay(product);
 
   const orderedCollars = useMemo(
     () => resolveOrderedTailoringOptions('collar', product.collars, tailoringOptions),
@@ -565,10 +570,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <ChevronLeft className="w-4 h-4" />
           </button>
 
-          {/* MOBILE ONLY (< md): Compact Swipeable Image Slider */}
+          {/* MOBILE ONLY (< md): Compact Swipeable Image Slider (fixed slots) */}
           <div className="md:hidden px-3" data-testid="mobile-pdp-slider">
             <div
-              className="relative aspect-[4/3] bg-[#E6E6E6] overflow-hidden"
+              className="relative aspect-[4/3] bg-[#E8E8E8] overflow-hidden"
               onTouchStart={(e) => {
                 touchStartX.current = e.touches[0]?.clientX ?? null;
               }}
@@ -588,23 +593,36 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 touchStartX.current = null;
               }}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  if (isProductVideoUrl(gallery[mobileSlide] || '')) return;
-                  setLightboxIndex(mobileSlide);
-                  setLightboxZoomed(false);
-                }}
-                className="w-full h-full block cursor-zoom-in"
-                aria-label={`${product.title} slide ${mobileSlide + 1}`}
-              >
-                <ProductGalleryMedia
-                  src={gallery[mobileSlide] || product.primary_image}
-                  alt={`${product.title} slide ${mobileSlide + 1}`}
-                  className="w-full h-full"
-                  fitClassName="object-cover"
-                />
-              </button>
+              {gallery[mobileSlide] ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isProductVideoUrl(gallery[mobileSlide] || '')) return;
+                    setLightboxIndex(mobileSlide);
+                    setLightboxZoomed(false);
+                  }}
+                  className={`w-full h-full block ${
+                    isProductVideoUrl(gallery[mobileSlide]) ? 'cursor-default' : 'cursor-zoom-in'
+                  }`}
+                  aria-label={`${product.title} slide ${mobileSlide + 1}`}
+                >
+                  <ProductGalleryMedia
+                    src={gallery[mobileSlide]}
+                    alt={`${product.title} slide ${mobileSlide + 1}`}
+                    className="w-full h-full"
+                    fitClassName="object-cover"
+                  />
+                </button>
+              ) : (
+                <div
+                  className="w-full h-full bg-[#E8E8E8] flex flex-col items-center justify-center gap-1 text-neutral-400"
+                  aria-label={`${PRODUCT_GALLERY_SLOTS[mobileSlide]?.label || `Slot ${mobileSlide + 1}`} unavailable`}
+                >
+                  <span className="text-[11px] uppercase tracking-wider">
+                    {PRODUCT_GALLERY_SLOTS[mobileSlide]?.shortLabel || `Slot ${mobileSlide + 1}`}
+                  </span>
+                </div>
+              )}
 
               <span className="absolute top-3 right-3 px-2 py-0.5 bg-white/90 border border-black/10 text-[11px] font-mono-tabular text-[#1A1A1A]">
                 {mobileSlide + 1} / {gallery.length}
@@ -637,14 +655,18 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             {gallery.length > 1 && (
               <div className="mt-2 space-y-1.5">
                 <div className="flex items-center justify-center gap-1.5">
-                  {gallery.map((_, idx) => (
+                  {gallery.map((thumb, idx) => (
                     <button
                       key={`dot-${idx}`}
                       type="button"
                       onClick={() => setMobileSlide(idx)}
                       aria-label={`Select image ${idx + 1}`}
                       className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                        idx === mobileSlide ? 'w-5 bg-[#142B4E]' : 'w-1.5 bg-neutral-300'
+                        idx === mobileSlide
+                          ? 'w-5 bg-[#142B4E]'
+                          : thumb
+                            ? 'w-1.5 bg-neutral-300'
+                            : 'w-1.5 bg-neutral-200'
                       }`}
                     />
                   ))}
@@ -655,16 +677,20 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       key={`mobile-thumb-${idx}`}
                       type="button"
                       onClick={() => setMobileSlide(idx)}
-                      className={`w-10 h-11 shrink-0 overflow-hidden border-2 bg-[#E6E6E6] cursor-pointer ${
+                      className={`w-10 h-11 shrink-0 overflow-hidden border-2 bg-[#E8E8E8] cursor-pointer ${
                         idx === mobileSlide ? 'border-[#142B4E]' : 'border-transparent opacity-70'
                       }`}
                     >
-                      {isProductVideoUrl(thumb) ? (
-                        <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
-                          Video
-                        </div>
+                      {thumb ? (
+                        isProductVideoUrl(thumb) ? (
+                          <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
+                            Video
+                          </div>
+                        ) : (
+                          <img src={thumb} alt="" className="w-full h-full object-cover" />
+                        )
                       ) : (
-                        <img src={thumb} alt="" className="w-full h-full object-cover" />
+                        <div className="w-full h-full bg-[#E8E8E8]" />
                       )}
                     </button>
                   ))}
@@ -673,7 +699,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             )}
           </div>
 
-          {/* DESKTOP: taller portrait tiles so shirts are not cropped oddly */}
+          {/* DESKTOP: fixed 6 slots — missing media = light gray placeholder */}
           <div
             data-testid="desktop-pdp-gallery"
             className="hidden md:grid md:grid-cols-2 gap-3"
@@ -684,27 +710,41 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 .filter((_, pos) => pos % 2 === 0)
                 .map(({ imgUrl, idx }) => (
                   <button
-                    key={`${imgUrl}-${idx}`}
+                    key={`gallery-slot-${idx}`}
                     type="button"
                     onClick={() => {
-                      if (isProductVideoUrl(imgUrl)) return;
+                      if (!imgUrl || isProductVideoUrl(imgUrl)) return;
                       setLightboxIndex(idx);
                       setLightboxZoomed(false);
                     }}
-                    aria-label={`Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden text-left block w-full ${
-                      isProductVideoUrl(imgUrl) ? 'cursor-default' : 'cursor-zoom-in'
+                    aria-label={
+                      imgUrl
+                        ? `Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`
+                        : `${PRODUCT_GALLERY_SLOTS[idx]?.label || `Slot ${idx + 1}`} unavailable`
+                    }
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E8E8] overflow-hidden text-left block w-full ${
+                      imgUrl && !isProductVideoUrl(imgUrl) ? 'cursor-zoom-in' : 'cursor-default'
                     }`}
                   >
-                    <ProductGalleryMedia
-                      src={imgUrl}
-                      alt={`${product.title} view ${idx + 1}`}
-                      className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
-                      fitClassName="object-contain object-center"
-                    />
-                    {!isProductVideoUrl(imgUrl) && (
-                      <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
-                        <ZoomIn className="w-3.5 h-3.5" />
+                    {imgUrl ? (
+                      <>
+                        <ProductGalleryMedia
+                          src={imgUrl}
+                          alt={`${product.title} view ${idx + 1}`}
+                          className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                          fitClassName="object-contain object-center"
+                        />
+                        {!isProductVideoUrl(imgUrl) && (
+                          <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-neutral-400 pointer-events-none">
+                        <span className="text-[11px] uppercase tracking-wider">
+                          {PRODUCT_GALLERY_SLOTS[idx]?.shortLabel || `Slot ${idx + 1}`}
+                        </span>
                       </span>
                     )}
                   </button>
@@ -717,27 +757,41 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 .filter((_, pos) => pos % 2 === 1)
                 .map(({ imgUrl, idx }) => (
                   <button
-                    key={`${imgUrl}-${idx}`}
+                    key={`gallery-slot-${idx}`}
                     type="button"
                     onClick={() => {
-                      if (isProductVideoUrl(imgUrl)) return;
+                      if (!imgUrl || isProductVideoUrl(imgUrl)) return;
                       setLightboxIndex(idx);
                       setLightboxZoomed(false);
                     }}
-                    aria-label={`Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden text-left block w-full ${
-                      isProductVideoUrl(imgUrl) ? 'cursor-default' : 'cursor-zoom-in'
+                    aria-label={
+                      imgUrl
+                        ? `Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`
+                        : `${PRODUCT_GALLERY_SLOTS[idx]?.label || `Slot ${idx + 1}`} unavailable`
+                    }
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E8E8] overflow-hidden text-left block w-full ${
+                      imgUrl && !isProductVideoUrl(imgUrl) ? 'cursor-zoom-in' : 'cursor-default'
                     }`}
                   >
-                    <ProductGalleryMedia
-                      src={imgUrl}
-                      alt={`${product.title} view ${idx + 1}`}
-                      className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
-                      fitClassName="object-contain object-center"
-                    />
-                    {!isProductVideoUrl(imgUrl) && (
-                      <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
-                        <ZoomIn className="w-3.5 h-3.5" />
+                    {imgUrl ? (
+                      <>
+                        <ProductGalleryMedia
+                          src={imgUrl}
+                          alt={`${product.title} view ${idx + 1}`}
+                          className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                          fitClassName="object-contain object-center"
+                        />
+                        {!isProductVideoUrl(imgUrl) && (
+                          <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-neutral-400 pointer-events-none">
+                        <span className="text-[11px] uppercase tracking-wider">
+                          {PRODUCT_GALLERY_SLOTS[idx]?.shortLabel || `Slot ${idx + 1}`}
+                        </span>
                       </span>
                     )}
                   </button>
@@ -1813,7 +1867,11 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             </button>
 
             <div className="max-h-[76vh] max-w-4xl overflow-auto flex items-center justify-center">
-              {isProductVideoUrl(gallery[lightboxIndex]) ? (
+              {!gallery[lightboxIndex] ? (
+                <div className="w-[min(70vw,420px)] aspect-[3/4] bg-[#E8E8E8] flex items-center justify-center text-neutral-400 text-xs uppercase tracking-wider">
+                  {PRODUCT_GALLERY_SLOTS[lightboxIndex]?.shortLabel || `Slot ${lightboxIndex + 1}`}
+                </div>
+              ) : isProductVideoUrl(gallery[lightboxIndex]) ? (
                 <ProductGalleryMedia
                   src={gallery[lightboxIndex]}
                   alt={`${product.title} studio angle ${lightboxIndex + 1}`}
@@ -1849,18 +1907,28 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           <div className="px-6 py-4 flex items-center justify-center gap-2.5">
             {gallery.map((thumb, idx) => (
               <button
-                key={`${thumb}-thumb-${idx}`}
+                key={`lightbox-thumb-${idx}`}
                 type="button"
                 onClick={() => {
                   setLightboxIndex(idx);
                   setLightboxZoomed(false);
                 }}
                 aria-label={`View photo ${idx + 1}`}
-                className={`w-14 h-14 overflow-hidden border-2 transition-all cursor-pointer ${
+                className={`w-14 h-14 overflow-hidden border-2 transition-all cursor-pointer bg-[#E8E8E8] ${
                   idx === lightboxIndex ? 'border-[#142B4E] opacity-100' : 'border-transparent opacity-60 hover:opacity-100'
                 }`}
               >
-                <img src={thumb} alt="" className="w-full h-full object-cover" />
+                {thumb ? (
+                  isProductVideoUrl(thumb) ? (
+                    <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
+                      Video
+                    </div>
+                  ) : (
+                    <img src={thumb} alt="" className="w-full h-full object-cover" />
+                  )
+                ) : (
+                  <div className="w-full h-full bg-[#E8E8E8]" />
+                )}
               </button>
             ))}
           </div>

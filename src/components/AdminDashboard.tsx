@@ -255,8 +255,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [csvPreview, setCsvPreview] = useState<{ rows: CsvImportRow[]; errors: string[] } | null>(null);
   const [csvResultMsg, setCsvResultMsg] = useState<string | null>(null);
 
-  // Products pagination, search & bulk delete
+  // Products pagination, search, filters & bulk delete
   const [productSearch, setProductSearch] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState('all');
+  const [productStatusFilter, setProductStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [productFlagFilter, setProductFlagFilter] = useState<
+    'all' | 'featured' | 'outlet' | 'b2b' | 'top_seller'
+  >('all');
   const [productPage, setProductPage] = useState(1);
   const [productPageSize, setProductPageSize] = useState<10 | 25 | 50>(10);
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
@@ -539,7 +544,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     setProductPage(1);
-  }, [productSearch, productPageSize]);
+  }, [
+    productSearch,
+    productCategoryFilter,
+    productStatusFilter,
+    productFlagFilter,
+    productPageSize,
+  ]);
 
   useEffect(() => {
     if (!authToken || !authUser) return;
@@ -2444,8 +2455,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               {(() => {
                 const pq = productSearch.trim().toLowerCase();
+                const usableFilterCats = categories.filter(
+                  (c) => c.slug !== 'all' && c.slug !== 'b2b' && c.active !== false
+                );
                 const filteredProducts = products
                   .filter((p) => {
+                    if (productCategoryFilter !== 'all') {
+                      const slugs =
+                        p.category_slugs && p.category_slugs.length > 0
+                          ? p.category_slugs
+                          : [p.category_slug];
+                      if (!slugs.includes(productCategoryFilter)) return false;
+                    }
+                    if (productStatusFilter === 'active' && !p.active) return false;
+                    if (productStatusFilter === 'inactive' && p.active) return false;
+                    if (productFlagFilter === 'featured' && !p.is_featured) return false;
+                    if (productFlagFilter === 'outlet' && !p.is_outlet) return false;
+                    if (productFlagFilter === 'b2b' && !p.is_b2b_eligible) return false;
+                    if (productFlagFilter === 'top_seller') {
+                      const hit = skuSalesRank.get(String(p.sku || '').toUpperCase());
+                      if (!hit || hit.units <= 0 || hit.rank > 10) return false;
+                    }
                     if (!pq) return true;
                     return (
                       p.sku.toLowerCase().includes(pq) ||
@@ -2478,25 +2508,93 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 const allPageSelected =
                   pagedProducts.length > 0 &&
                   pagedProducts.every((p) => selectedProductIds.includes(p.id));
+                const filtersActive =
+                  productCategoryFilter !== 'all' ||
+                  productStatusFilter !== 'all' ||
+                  productFlagFilter !== 'all' ||
+                  Boolean(pq);
 
                 return (
                   <div className="space-y-3">
-                    {/* Products Search, Pagination Size & Bulk Delete Bar */}
+                    {/* Products Search, Filters, Pagination Size & Bulk Delete Bar */}
                     <div
                       data-testid="admin-products-toolbar"
                       className="flex flex-wrap items-center justify-between gap-3 bg-[#FAFAFA] border border-neutral-200 p-3 text-xs"
                     >
-                      <div className="flex flex-wrap items-center gap-3">
-                        <div className="relative w-60 sm:w-72">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <div className="relative w-52 sm:w-64">
                           <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                           <input
                             type="search"
                             value={productSearch}
                             onChange={(e) => setProductSearch(e.target.value)}
-                            placeholder="Search SKU, title, or category..."
+                            placeholder="Search SKU, title..."
                             className="w-full pl-8 pr-3 py-1.5 border border-neutral-300 bg-white outline-none focus:border-[#142B4E]"
                           />
                         </div>
+                        <select
+                          aria-label="Filter by category"
+                          data-testid="admin-products-category-filter"
+                          value={productCategoryFilter}
+                          onChange={(e) => setProductCategoryFilter(e.target.value)}
+                          className="px-2.5 py-1.5 border border-neutral-300 bg-white outline-none max-w-[180px]"
+                        >
+                          <option value="all">All categories</option>
+                          {usableFilterCats.map((c) => (
+                            <option key={c.slug} value={c.slug}>
+                              {c.name_en || c.slug}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="Filter by status"
+                          data-testid="admin-products-status-filter"
+                          value={productStatusFilter}
+                          onChange={(e) =>
+                            setProductStatusFilter(e.target.value as 'all' | 'active' | 'inactive')
+                          }
+                          className="px-2.5 py-1.5 border border-neutral-300 bg-white outline-none"
+                        >
+                          <option value="all">All status</option>
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                        <select
+                          aria-label="Filter by flag"
+                          data-testid="admin-products-flag-filter"
+                          value={productFlagFilter}
+                          onChange={(e) =>
+                            setProductFlagFilter(
+                              e.target.value as
+                                | 'all'
+                                | 'featured'
+                                | 'outlet'
+                                | 'b2b'
+                                | 'top_seller'
+                            )
+                          }
+                          className="px-2.5 py-1.5 border border-neutral-300 bg-white outline-none"
+                        >
+                          <option value="all">All flags</option>
+                          <option value="featured">Featured</option>
+                          <option value="outlet">Outlet</option>
+                          <option value="b2b">B2B eligible</option>
+                          <option value="top_seller">Top sellers</option>
+                        </select>
+                        {filtersActive && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProductSearch('');
+                              setProductCategoryFilter('all');
+                              setProductStatusFilter('all');
+                              setProductFlagFilter('all');
+                            }}
+                            className="px-2.5 py-1.5 border border-neutral-300 text-neutral-600 hover:border-[#142B4E] hover:text-[#142B4E] cursor-pointer"
+                          >
+                            Clear filters
+                          </button>
+                        )}
                         <select
                           aria-label="Products per page"
                           value={productPageSize}
@@ -2727,7 +2825,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {pagedProducts.length === 0 && (
                             <tr>
                               <td colSpan={7} className="p-6 text-center text-neutral-500">
-                                No products match "{productSearch}".
+                                No products match the current search/filters.
                               </td>
                             </tr>
                           )}
@@ -4130,9 +4228,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
                   Keep this order so uploads always land in the right place. Fabric close-ups always
-                  go to slot 5 and videos to slot 6. Empty slots stay visible here but are hidden on
-                  the storefront (images show in sequence). Listing image defaults to the first shirt
-                  photo — never the fabric close-up.
+                  go to slot 5 and videos to slot 6. Empty slots stay in position here and show as
+                  light-gray placeholders on the product page. Listing image defaults to the first
+                  shirt photo — never the fabric close-up.
                 </p>
               </div>
 
@@ -5333,8 +5431,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                     <p className="text-[10px] text-neutral-500 mt-0.5">
                       1 Folded shirt (main) · 2 Ghost mannequin-front · 3 Sideway · 4 Shirt with model · 5
-                      Fabric close up · 6 Short video clip. Empty slots stay hidden. Pick any image as
-                      listing (default: first filled).
+                      Fabric close up · 6 Short video clip. Empty slots stay in place (gray on storefront).
+                      Listing defaults to the first shirt photo.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

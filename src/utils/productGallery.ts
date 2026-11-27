@@ -251,17 +251,29 @@ export function resolveListingImage(product: {
   );
 }
 
-/** Storefront: only filled media, preserving fixed slot order (no blank tiles). */
+/**
+ * Storefront PDP: always 6 fixed slots ('' = missing).
+ * Empty slots render as light-gray placeholders so position stays meaningful.
+ */
+export function resolveGallerySlotsForDisplay(product: {
+  gallery?: string[] | null;
+  primary_image?: string;
+  secondary_image?: string;
+}): string[] {
+  return canonicalizeGallerySlots(
+    product.gallery,
+    product.primary_image,
+    product.secondary_image
+  );
+}
+
+/** Catalog hover / compact UIs: filled media only, still in slot order. */
 export function resolveFilledGalleryMedia(product: {
   gallery?: string[] | null;
   primary_image?: string;
   secondary_image?: string;
 }): string[] {
-  const slots = canonicalizeGallerySlots(
-    product.gallery,
-    product.primary_image,
-    product.secondary_image
-  );
+  const slots = resolveGallerySlotsForDisplay(product);
   const filled = slots.filter(Boolean);
   if (filled.length > 0) return filled;
   return [product.primary_image, product.secondary_image].filter(Boolean) as string[];
