@@ -15,9 +15,51 @@ import {
 } from 'lucide-react';
 import type {
   CategoryRecord,
+  CategoryScope,
   DatabaseOverviewResponse,
   MenuItemRecord,
 } from '../types.ts';
+
+function categoryOptionLabel(c: Pick<CategoryRecord, 'slug' | 'name_en' | 'parent_id'>): string {
+  const name = (c.name_en || c.slug).trim();
+  const prefix = c.parent_id ? '↳ ' : '';
+  return name === c.slug ? `${prefix}${c.slug}` : `${prefix}${name} (${c.slug})`;
+}
+
+function CategoryTargetSelect({
+  value,
+  categories,
+  onChange,
+  ariaLabel,
+}: {
+  value: string;
+  categories: CategoryRecord[];
+  onChange: (next: string) => void;
+  ariaLabel: string;
+}) {
+  const known = new Set(['all', ...categories.map((c) => c.slug)]);
+  const orphan = value && !known.has(value) ? value : null;
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
+    >
+      <option value="all">All products (all)</option>
+      {orphan && (
+        <option value={orphan}>
+          {orphan} (missing category)
+        </option>
+      )}
+      {categories.map((c) => (
+        <option key={c.slug} value={c.slug}>
+          {categoryOptionLabel(c)}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 interface MenuManagerPanelProps {
   authToken: string;
@@ -39,7 +81,7 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
   // Add Menu Item state
   const [newSlot, setNewSlot] = useState<'mega_card' | 'nav_link'>('mega_card');
   const [newTargetType, setNewTargetType] = useState<'category' | 'view'>('category');
-  const [newTargetValue, setNewTargetValue] = useState('linen');
+  const [newTargetValue, setNewTargetValue] = useState('all');
   const [newSortOrder, setNewSortOrder] = useState(5);
   const [newTitleEn, setNewTitleEn] = useState('');
   const [newTitleNo, setNewTitleNo] = useState('');
@@ -56,6 +98,8 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
   const [catNameNo, setCatNameNo] = useState('');
   const [catNameIt, setCatNameIt] = useState('');
   const [catNameVn, setCatNameVn] = useState('');
+  const [catParentId, setCatParentId] = useState('');
+  const [catScope, setCatScope] = useState<CategoryScope>('both');
 
   const loadMenuData = useCallback(async () => {
     setLoading(true);
@@ -192,6 +236,9 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
       body: JSON.stringify({
         slug: catSlug.trim().toLowerCase(),
         sort_order: catSortOrder,
+        parent_id: catParentId ? Number(catParentId) : null,
+        scope: catScope,
+        active: true,
         name_en: catNameEn.trim(),
         name_no: catNameNo.trim() || catNameEn.trim(),
         name_it: catNameIt.trim() || catNameEn.trim(),
@@ -205,6 +252,8 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
       setCatNameNo('');
       setCatNameIt('');
       setCatNameVn('');
+      setCatParentId('');
+      setCatScope('both');
       setFeedback('Added localized storefront category.');
       onRefreshStorefront();
       await loadMenuData();
@@ -212,6 +261,8 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
       setFeedback(d.error || 'Could not create category.');
     }
   };
+
+  const topLevelCategories = categories.filter((c) => !c.parent_id);
 
   return (
     <div className="space-y-8">
@@ -371,46 +422,49 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
                     <select
                       aria-label={`Target type for ${item.title_en}`}
                       value={item.target_type}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextType = e.target.value as 'category' | 'view';
                         setMenuItems((prev) =>
                           prev.map((m) =>
                             m.id === item.id
-                              ? { ...m, target_type: e.target.value as 'category' | 'view' }
+                              ? {
+                                  ...m,
+                                  target_type: nextType,
+                                  target_value:
+                                    nextType === 'category'
+                                      ? categories[0]?.slug || 'all'
+                                      : 'catalog',
+                                }
                               : m
                           )
-                        )
-                      }
+                        );
+                      }}
                       className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
                     >
                       <option value="category">Category</option>
-                      <option value="view">Page View</option>
+                      <option value="view">Page link</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase text-neutral-500 mb-0.5">Target</label>
+                    <label className="block text-[10px] uppercase text-neutral-500 mb-0.5">
+                      {item.target_type === 'category' ? 'Category' : 'Link'}
+                    </label>
                     {item.target_type === 'category' ? (
-                      <select
-                        aria-label={`Category target for ${item.title_en}`}
+                      <CategoryTargetSelect
+                        ariaLabel={`Category target for ${item.title_en}`}
                         value={item.target_value}
-                        onChange={(e) =>
+                        categories={categories}
+                        onChange={(next) =>
                           setMenuItems((prev) =>
                             prev.map((m) =>
-                              m.id === item.id ? { ...m, target_value: e.target.value } : m
+                              m.id === item.id ? { ...m, target_value: next } : m
                             )
                           )
                         }
-                        className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
-                      >
-                        <option value="all">all</option>
-                        {categories.map((c) => (
-                          <option key={c.slug} value={c.slug}>
-                            {c.slug}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     ) : (
                       <select
-                        aria-label={`View target for ${item.title_en}`}
+                        aria-label={`View link for ${item.title_en}`}
                         value={item.target_value}
                         onChange={(e) =>
                           setMenuItems((prev) =>
@@ -421,10 +475,10 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
                         }
                         className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
                       >
-                        <option value="catalog">catalog</option>
-                        <option value="b2b">b2b</option>
-                        <option value="home">home</option>
-                        <option value="account">account</option>
+                        <option value="catalog">Catalog page</option>
+                        <option value="b2b">B2B page</option>
+                        <option value="home">Home</option>
+                        <option value="account">Account</option>
                       </select>
                     )}
                   </div>
@@ -525,30 +579,26 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
               </select>
             </div>
             <div>
-              <label className="block text-[10px] uppercase text-neutral-500 mb-1">Target Destination</label>
+              <label className="block text-[10px] uppercase text-neutral-500 mb-1">
+                {newTargetType === 'category' ? 'Category' : 'Link'}
+              </label>
               {newTargetType === 'category' ? (
-                <select
+                <CategoryTargetSelect
+                  ariaLabel="Category destination"
                   value={newTargetValue}
-                  onChange={(e) => setNewTargetValue(e.target.value)}
-                  className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
-                >
-                  <option value="all">all</option>
-                  {categories.map((c) => (
-                    <option key={c.slug} value={c.slug}>
-                      {c.slug}
-                    </option>
-                  ))}
-                </select>
+                  categories={categories}
+                  onChange={setNewTargetValue}
+                />
               ) : (
                 <select
                   value={newTargetValue}
                   onChange={(e) => setNewTargetValue(e.target.value)}
                   className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white"
                 >
-                  <option value="catalog">catalog</option>
-                  <option value="b2b">b2b</option>
-                  <option value="home">home</option>
-                  <option value="account">account</option>
+                  <option value="catalog">Catalog page</option>
+                  <option value="b2b">B2B page</option>
+                  <option value="home">Home</option>
+                  <option value="account">Account</option>
                 </select>
               )}
             </div>
@@ -627,21 +677,30 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
 
       {/* STOREFRONT CATEGORIES */}
       <section className="space-y-4 pt-4 border-t border-neutral-200">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-1.5">
-          <Layers className="w-3.5 h-3.5" />
-          <span>Catalog & Drawer Categories ({categories.length})</span>
-        </h2>
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#142B4E] flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5" />
+            <span>Catalog & Drawer Categories ({categories.length})</span>
+          </h2>
+          <p className="text-[11px] text-neutral-500 mt-1 max-w-3xl">
+            These drive catalog tabs and the mobile drawer. Choose parent category and scope from the
+            dropdowns — no free-typed slugs for hierarchy.
+          </p>
+        </div>
 
         <div className="border border-neutral-200 bg-white overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead className="bg-[#F7F7F7] border-b border-neutral-200 text-neutral-600 uppercase text-[11px]">
               <tr>
                 <th className="p-2.5">Slug</th>
-                <th className="p-2.5 w-20">Order</th>
+                <th className="p-2.5">Parent</th>
+                <th className="p-2.5">Scope</th>
+                <th className="p-2.5 w-16">Order</th>
                 <th className="p-2.5">English</th>
                 <th className="p-2.5">Norsk</th>
                 <th className="p-2.5">Italiano</th>
                 <th className="p-2.5">Tiếng Việt</th>
+                <th className="p-2.5">Shown</th>
                 <th className="p-2.5 text-right">Actions</th>
               </tr>
             </thead>
@@ -649,6 +708,54 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
               {categories.map((cat) => (
                 <tr key={cat.id}>
                   <td className="p-2.5 font-mono-tabular font-semibold text-[#142B4E]">{cat.slug}</td>
+                  <td className="p-2.5 min-w-[140px]">
+                    <select
+                      aria-label={`Parent category for ${cat.slug}`}
+                      value={cat.parent_id ? String(cat.parent_id) : ''}
+                      onChange={(e) =>
+                        setCategories((prev) =>
+                          prev.map((c) =>
+                            c.id === cat.id
+                              ? {
+                                  ...c,
+                                  parent_id: e.target.value ? Number(e.target.value) : null,
+                                }
+                              : c
+                          )
+                        )
+                      }
+                      className="w-full px-2 py-1 border border-neutral-300 bg-white"
+                    >
+                      <option value="">— Top level —</option>
+                      {topLevelCategories
+                        .filter((other) => other.id !== cat.id)
+                        .map((other) => (
+                          <option key={other.id} value={other.id}>
+                            {other.name_en || other.slug}
+                          </option>
+                        ))}
+                    </select>
+                  </td>
+                  <td className="p-2.5 min-w-[130px]">
+                    <select
+                      aria-label={`Scope for ${cat.slug}`}
+                      value={cat.scope || 'both'}
+                      onChange={(e) =>
+                        setCategories((prev) =>
+                          prev.map((c) =>
+                            c.id === cat.id
+                              ? { ...c, scope: e.target.value as CategoryScope }
+                              : c
+                          )
+                        )
+                      }
+                      className="w-full px-2 py-1 border border-neutral-300 bg-white"
+                    >
+                      <option value="both">B2C & B2B</option>
+                      <option value="b2c">B2C only</option>
+                      <option value="b2b">B2B only</option>
+                    </select>
+                  </td>
                   <td className="p-2.5">
                     <input
                       type="number"
@@ -712,6 +819,26 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
                       className="w-full px-2 py-1 border border-neutral-300"
                     />
                   </td>
+                  <td className="p-2.5">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        aria-label={`Show ${cat.slug} in catalog/drawer`}
+                        checked={cat.active !== false}
+                        onChange={(e) =>
+                          setCategories((prev) =>
+                            prev.map((c) =>
+                              c.id === cat.id ? { ...c, active: e.target.checked } : c
+                            )
+                          )
+                        }
+                        className="accent-[#142B4E]"
+                      />
+                      <span className="text-[11px] text-neutral-600">
+                        {cat.active !== false ? 'Yes' : 'No'}
+                      </span>
+                    </label>
+                  </td>
                   <td className="p-2.5 text-right whitespace-nowrap space-x-1.5">
                     <button
                       type="button"
@@ -737,7 +864,7 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
 
         <form
           onSubmit={handleCreateCategory}
-          className="border border-neutral-200 bg-[#FAFAFA] p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2 items-end text-xs"
+          className="border border-neutral-200 bg-[#FAFAFA] p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9 gap-2 items-end text-xs"
         >
           <div>
             <label className="block text-[10px] uppercase text-neutral-500 mb-1">Slug *</label>
@@ -748,6 +875,35 @@ export const MenuManagerPanel: React.FC<MenuManagerPanelProps> = ({
               onChange={(e) => setCatSlug(e.target.value)}
               className="w-full px-2 py-1.5 border border-neutral-300 bg-white font-mono-tabular"
             />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase text-neutral-500 mb-1">Parent</label>
+            <select
+              aria-label="Parent category"
+              value={catParentId}
+              onChange={(e) => setCatParentId(e.target.value)}
+              className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
+            >
+              <option value="">— Top level —</option>
+              {topLevelCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name_en || c.slug}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase text-neutral-500 mb-1">Scope</label>
+            <select
+              aria-label="Category scope"
+              value={catScope}
+              onChange={(e) => setCatScope(e.target.value as CategoryScope)}
+              className="w-full px-2 py-1.5 border border-neutral-300 bg-white"
+            >
+              <option value="both">B2C & B2B</option>
+              <option value="b2c">B2C only</option>
+              <option value="b2b">B2B only</option>
+            </select>
           </div>
           <div>
             <label className="block text-[10px] uppercase text-neutral-500 mb-1">Order</label>
