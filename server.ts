@@ -128,8 +128,15 @@ app.use(
 );
 app.use('/size-guides', express.static(path.resolve(process.cwd(), 'dist', 'size-guides')));
 
-// Safe multer configuration for image uploads
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Safe multer configuration for product images + short gallery video clips
+const ALLOWED_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+]);
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
@@ -138,18 +145,21 @@ const upload = multer({
         'image/jpeg': '.jpg',
         'image/png': '.png',
         'image/webp': '.webp',
+        'video/mp4': '.mp4',
+        'video/webm': '.webm',
+        'video/quicktime': '.mov',
       };
       const ext = extMap[file.mimetype] || '.jpg';
       const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
       cb(null, safeName);
     },
   }),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  limits: { fileSize: 40 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_MIME.has(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only JPG, PNG, and WebP images are permitted.'));
+      cb(new Error('Only JPG, PNG, WebP images or MP4/WebM/MOV videos are permitted.'));
     }
   },
 });
@@ -268,6 +278,19 @@ function getHomePageSettings(): HomePageSettings {
   const ids = Array.isArray(raw.featuredProductIds)
     ? raw.featuredProductIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
     : DEFAULT_HOME_PAGE_SETTINGS.featuredProductIds;
+  const legacyGuideImages = new Set([
+    '/src/assets/images/editorial_tailoring_guide_1795248294030.jpg',
+  ]);
+  const legacyInspirationImages = new Set([
+    '/src/assets/images/hero_linen_coastal_1795248294948.jpg',
+  ]);
+  const guideImage = String(raw.guideImage || DEFAULT_HOME_PAGE_SETTINGS.guideImage);
+  const inspirationImage = String(
+    raw.inspirationImage || DEFAULT_HOME_PAGE_SETTINGS.inspirationImage
+  );
+  const inspirationTargetValue = String(
+    raw.inspirationTargetValue || DEFAULT_HOME_PAGE_SETTINGS.inspirationTargetValue
+  );
   return {
     ...DEFAULT_HOME_PAGE_SETTINGS,
     ...raw,
@@ -285,6 +308,16 @@ function getHomePageSettings(): HomePageSettings {
       raw.showGuideInspiration !== undefined
         ? Boolean(raw.showGuideInspiration)
         : DEFAULT_HOME_PAGE_SETTINGS.showGuideInspiration,
+    guideImage: legacyGuideImages.has(guideImage)
+      ? DEFAULT_HOME_PAGE_SETTINGS.guideImage
+      : guideImage,
+    inspirationImage: legacyInspirationImages.has(inspirationImage)
+      ? DEFAULT_HOME_PAGE_SETTINGS.inspirationImage
+      : inspirationImage,
+    inspirationTargetValue:
+      inspirationTargetValue === 'about'
+        ? DEFAULT_HOME_PAGE_SETTINGS.inspirationTargetValue
+        : inspirationTargetValue,
   };
 }
 
@@ -824,7 +857,8 @@ app.get('/api/storefront/bootstrap', (req, res) => {
       preorder_allowed: Boolean(p.preorder_allowed),
       primary_image: String(p.primary_image),
       secondary_image: String(p.secondary_image),
-      gallery: gallery.slice(0, 4),
+      // Keep up to 6 fixed gallery slots (incl. empty strings for position); storefront hides blanks.
+      gallery: Array.isArray(gallery) ? gallery.slice(0, 6) : [],
       collars: JSON.parse(String(p.collars_json)) as string[],
       cuffs: JSON.parse(String(p.cuffs_json)) as string[],
       sizes: JSON.parse(String(p.sizes_json)) as string[],
@@ -2682,6 +2716,10 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
   const fabricSpec = String(b.fabric_spec || '100% Italian Cotton');
   const primaryImage = String(b.primary_image || '/src/assets/images/shirt_white_signature_1795248293653.jpg');
   const secondaryImage = String(b.secondary_image || primaryImage);
+  const gallerySlots = Array.isArray(b.gallery)
+    ? Array.from({ length: 6 }, (_, i) => String(b.gallery[i] || '').trim())
+    : [primaryImage, secondaryImage, '', '', '', ''];
+  if (!gallerySlots[0]) gallerySlots[0] = primaryImage;
   const sizes =
     Array.isArray(b.sizes) && b.sizes.length > 0
       ? b.sizes.map((s: unknown) => String(s).trim()).filter(Boolean)
@@ -2717,7 +2755,7 @@ app.post('/api/admin/products', requirePermission('manage_products'), (req: Auth
           b.preorder_allowed ? 1 : 0,
           primaryImage,
           secondaryImage,
-          JSON.stringify([primaryImage, secondaryImage]),
+          JSON.stringify(gallerySlots),
           JSON.stringify(['Spread', 'Semi Spread', 'Button Down', 'Cutaway']),
           JSON.stringify(['Angle', 'Modern', 'Rounded', 'Single French']),
           JSON.stringify(sizes)
@@ -2856,8 +2894,8 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         b.preorder_allowed !== undefined ? (b.preorder_allowed ? 1 : 0) : Number(existing.preorder_allowed),
         String(b.primary_image || existing.primary_image),
         String(b.secondary_image || existing.secondary_image),
-        Array.isArray(b.gallery) && b.gallery.length > 0
-          ? JSON.stringify(b.gallery)
+        Array.isArray(b.gallery)
+          ? JSON.stringify(Array.from({ length: 6 }, (_, i) => String(b.gallery[i] || '').trim()))
           : String(existing.gallery_json),
         JSON.stringify(nextSizes),
         productId

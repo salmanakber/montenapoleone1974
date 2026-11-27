@@ -45,6 +45,7 @@ import { HeroAndHome } from './components/HeroAndHome.tsx';
 import { CatalogView } from './components/CatalogView.tsx';
 import { ProductDetailView } from './components/ProductDetailView.tsx';
 import { AboutUsView } from './components/AboutUsView.tsx';
+import { ArticlesView } from './components/ArticlesView.tsx';
 import { InfoPagesView } from './components/InfoPagesView.tsx';
 import { CartDrawer, resolveCartChannel } from './components/CartDrawer.tsx';
 import { CheckoutView } from './components/CheckoutView.tsx';
@@ -59,6 +60,10 @@ import {
   resolveInfoPageSlug,
   type InfoPageSlug,
 } from './content/infoPages.ts';
+import {
+  resolveArticleSlug,
+  type ArticleSlug,
+} from './content/articles.ts';
 
 const DEFAULT_REGION: RegionConfig = {
   code: 'en',
@@ -162,6 +167,14 @@ export default function App() {
       return resolveInfoPageSlug(initialRoute.infoPage || initialRoute.slug) || 'returns';
     }
     return 'returns';
+  });
+  const [articleSlug, setArticleSlug] = useState<ArticleSlug>(() => {
+    if (initialRoute.view === 'article') {
+      return (
+        resolveArticleSlug(initialRoute.articleSlug || initialRoute.slug) || 'fabric-guide'
+      );
+    }
+    return 'fabric-guide';
   });
   const [reviewToken, setReviewToken] = useState<string | null>(() => {
     try {
@@ -498,6 +511,11 @@ export default function App() {
       if (parsed.view === 'info') {
         setInfoPage(resolveInfoPageSlug(parsed.infoPage || parsed.slug) || 'returns');
       }
+      if (parsed.view === 'article') {
+        setArticleSlug(
+          resolveArticleSlug(parsed.articleSlug || parsed.slug) || 'fabric-guide'
+        );
+      }
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -518,7 +536,9 @@ export default function App() {
         ? b2bProductSlug
         : activeView === 'info'
           ? infoPage
-          : selectedSlug,
+          : activeView === 'article'
+            ? articleSlug
+            : selectedSlug,
       activeView === 'admin' ? adminTab : undefined
     );
   };
@@ -576,7 +596,7 @@ export default function App() {
         category: selectedCategory,
         categoryRecord: catRecord,
         product: activeView === 'product' ? activeProduct : null,
-        slug: activeView === 'info' ? infoPage : undefined,
+        slug: activeView === 'info' ? infoPage : activeView === 'article' ? articleSlug : undefined,
         origin,
       });
 
@@ -647,7 +667,7 @@ export default function App() {
     } catch {
       // ignore DOM head sync errors in non-browser contexts
     }
-  }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct, infoPage]);
+  }, [activeView, activeRegion, regionCode, selectedCategory, categories, activeProduct, infoPage, articleSlug]);
 
   const navigate = (
     view: AppView,
@@ -657,6 +677,7 @@ export default function App() {
       reviewToken?: string | null;
       adminTab?: AdminTab;
       infoPage?: InfoPageSlug;
+      articleSlug?: ArticleSlug;
     }
   ) => {
     const nextCat = opts?.category !== undefined ? opts.category : selectedCategory;
@@ -665,6 +686,12 @@ export default function App() {
         ? opts.infoPage
         : view === 'info'
           ? infoPage
+          : null;
+    const nextArticle =
+      opts?.articleSlug !== undefined
+        ? opts.articleSlug
+        : view === 'article'
+          ? articleSlug
           : null;
     const nextSlug =
       opts?.slug !== undefined
@@ -675,14 +702,21 @@ export default function App() {
             ? b2bProductSlug
             : view === 'info'
               ? nextInfo
-              : null;
+              : view === 'article'
+                ? nextArticle
+                : null;
     const nextAdminTab = opts?.adminTab !== undefined ? opts.adminTab : adminTab;
     if (opts?.category !== undefined) setSelectedCategory(opts.category);
-    if (opts?.slug !== undefined && view !== 'info') setSelectedSlug(opts.slug);
+    if (opts?.slug !== undefined && view !== 'info' && view !== 'article') setSelectedSlug(opts.slug);
     if (opts?.infoPage !== undefined) setInfoPage(opts.infoPage);
     else if (view === 'info' && opts?.slug) {
       const resolved = resolveInfoPageSlug(opts.slug);
       if (resolved) setInfoPage(resolved);
+    }
+    if (opts?.articleSlug !== undefined) setArticleSlug(opts.articleSlug);
+    else if (view === 'article' && opts?.slug) {
+      const resolved = resolveArticleSlug(opts.slug);
+      if (resolved) setArticleSlug(resolved);
     }
     if (opts?.adminTab !== undefined) setAdminTab(opts.adminTab);
     if (opts?.reviewToken !== undefined) {
@@ -696,7 +730,11 @@ export default function App() {
       regionCode,
       view,
       nextCat,
-      view === 'info' ? nextInfo || infoPage : nextSlug,
+      view === 'info'
+        ? nextInfo || infoPage
+        : view === 'article'
+          ? nextArticle || articleSlug
+          : nextSlug,
       view === 'admin' ? nextAdminTab : undefined
     );
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -973,6 +1011,10 @@ export default function App() {
             onNavigateCatalog={(category = 'all') => navigate('catalog', { category })}
             onNavigateB2B={() => navigate('b2b')}
             onNavigateAbout={() => navigate('about')}
+            onNavigateArticle={(slug) => {
+              const resolved = resolveArticleSlug(slug) || 'fabric-guide';
+              navigate('article', { articleSlug: resolved, slug: resolved });
+            }}
             onOpenProduct={(slug) => navigate('product', { slug })}
             onOpenSizeGuide={() => setInfoModal('size_guide')}
           />
@@ -1004,6 +1046,15 @@ export default function App() {
             copy={copy}
             page={infoPage}
             onNavigatePage={(page) => navigate('info', { infoPage: page, slug: page })}
+            onNavigateCatalog={() => navigate('catalog', { category: 'all' })}
+            onNavigateHome={() => navigate('home')}
+          />
+        ) : activeView === 'article' ? (
+          <ArticlesView
+            region={activeRegion}
+            copy={copy}
+            slug={articleSlug}
+            onNavigateArticle={(slug) => navigate('article', { articleSlug: slug, slug })}
             onNavigateCatalog={() => navigate('catalog', { category: 'all' })}
             onNavigateHome={() => navigate('home')}
           />

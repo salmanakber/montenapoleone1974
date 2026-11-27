@@ -29,6 +29,7 @@ export type AppView =
   | 'b2b'
   | 'about'
   | 'info'
+  | 'article'
   | 'checkout'
   | 'account'
   | 'admin';

@@ -14,6 +14,7 @@ interface HeroAndHomeProps {
   onNavigateCatalog: (category?: string) => void;
   onNavigateB2B: () => void;
   onNavigateAbout?: () => void;
+  onNavigateArticle?: (slug: string) => void;
   onOpenProduct: (slug: string) => void;
   onOpenSizeGuide: () => void;
 }
@@ -33,6 +34,7 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
   onNavigateCatalog,
   onNavigateB2B,
   onNavigateAbout,
+  onNavigateArticle,
   onOpenProduct,
   onOpenSizeGuide,
 }) => {
@@ -45,8 +47,27 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
     return String(s[key] || s[`${prefix}_en` as keyof HeroSlideRecord] || '');
   };
 
+  const openArticleFromTarget = (value: string) => {
+    if (!onNavigateArticle) return false;
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw.startsWith('article/')) {
+      onNavigateArticle(raw.slice('article/'.length) || 'fabric-guide');
+      return true;
+    }
+    if (
+      raw === 'fabric-guide' ||
+      raw === 'sustainable-fashion' ||
+      raw === 'oversikt-over-skjortestoffer'
+    ) {
+      onNavigateArticle(raw);
+      return true;
+    }
+    return false;
+  };
+
   const runTarget = (type: 'category' | 'view', value: string) => {
     if (type === 'view') {
+      if (openArticleFromTarget(value)) return;
       if (value === 'b2b') onNavigateB2B();
       else if (value === 'about' && onNavigateAbout) onNavigateAbout();
       else onNavigateCatalog('all');
@@ -354,7 +375,10 @@ export const HeroAndHome: React.FC<HeroAndHomeProps> = ({
               </h2>
               <button
                 type="button"
-                onClick={onOpenSizeGuide}
+                onClick={() => {
+                  if (onNavigateArticle) onNavigateArticle('fabric-guide');
+                  else onOpenSizeGuide();
+                }}
                 className="relative aspect-[16/10] w-full overflow-hidden bg-[#E6E6E6] group cursor-pointer block text-left"
               >
                 <img

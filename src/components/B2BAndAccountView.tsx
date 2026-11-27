@@ -40,6 +40,8 @@ import {
   resolveOrderedTailoringOptions,
 } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
+import { ProductGalleryMedia } from './ProductGalleryMedia.tsx';
+import { resolveFilledGalleryMedia } from '../utils/productGallery.ts';
 
 const B2B_SIZES = ['S / 37', 'M / 39', 'L / 41', 'XL / 43', '2XL / 45', '3XL / 48'] as const;
 
@@ -799,10 +801,7 @@ export const B2BView: React.FC<B2BViewProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-7 items-start">
             {/* Left Enlarged Scroll-Reveal Studio Images */}
             <div className="lg:col-span-6 grid grid-cols-2 gap-1.5">
-              {(activeProduct.gallery.length > 0
-                ? activeProduct.gallery
-                : [activeProduct.primary_image, activeProduct.secondary_image]
-              ).map((imgUrl, idx) => (
+              {resolveFilledGalleryMedia(activeProduct).map((imgUrl, idx) => (
                 <motion.div
                   key={`${imgUrl}-${idx}`}
                   initial={{ opacity: 0, y: 14 }}
@@ -811,11 +810,11 @@ export const B2BView: React.FC<B2BViewProps> = ({
                   transition={{ duration: 0.4, delay: (idx % 2) * 0.06 }}
                   className="aspect-[3/4] min-h-[260px] bg-[#E8E6E2] overflow-hidden"
                 >
-                  <img
+                  <ProductGalleryMedia
                     src={imgUrl}
                     alt={`${activeProduct.title} ${idx + 1}`}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain object-center hover:scale-[1.02] transition-transform duration-300"
+                    className="w-full h-full hover:scale-[1.02] transition-transform duration-300"
+                    fitClassName="object-contain object-center"
                   />
                 </motion.div>
               ))}

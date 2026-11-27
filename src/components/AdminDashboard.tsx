@@ -102,6 +102,12 @@ import {
 } from './AdminHeroPromoAi.tsx';
 import { AdminCategoriesPanel } from './AdminCategoriesPanel.tsx';
 import { ApiVaultAndOnboardingPanel, EmailsResendPanel } from './AdminEmailsAndVault.tsx';
+import {
+  isProductVideoUrl,
+  normalizeGallerySlots,
+  PRODUCT_GALLERY_SLOTS,
+} from '../utils/productGallery.ts';
+import { ProductGalleryMedia } from './ProductGalleryMedia.tsx';
 
 interface AdminDashboardProps {
   authToken: string | null;
@@ -257,7 +263,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Product & Menu Editor Modal
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [editGallerySlots, setEditGallerySlots] = useState<string[]>(['', '', '']);
+  const [editGallerySlots, setEditGallerySlots] = useState<string[]>(() =>
+    normalizeGallerySlots([])
+  );
   const [dragGalleryIdx, setDragGalleryIdx] = useState<number | null>(null);
   const [dragOverGalleryIdx, setDragOverGalleryIdx] = useState<number | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
@@ -293,6 +301,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newPriceIt, setNewPriceIt] = useState(159);
   const [newPriceVn, setNewPriceVn] = useState(4290000);
   const [newPrimaryImg, setNewPrimaryImg] = useState('/src/assets/images/shirt_white_signature_1795248293653.jpg');
+  const [newGallerySlots, setNewGallerySlots] = useState<string[]>(() =>
+    normalizeGallerySlots(['/src/assets/images/shirt_white_signature_1795248293653.jpg'])
+  );
   const [newFits, setNewFits] = useState<string[]>(['Regular Fit', 'Slim Fit']);
   const [newSizes, setNewSizes] = useState<string[]>([
     '38 / S',
@@ -988,15 +999,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           .map((v) => v.size_label)
       )
     );
-    const cleanedGallerySlots = editGallerySlots.map((u) => u.trim()).filter(Boolean);
-    const orderedGallery = Array.from(
-      new Set([editingProduct.primary_image, ...cleanedGallerySlots].filter(Boolean))
-    );
+    // Keep fixed 6-slot positions (empty string = unused). Slot 0 = Folded shirt (main).
+    const orderedGallery = normalizeGallerySlots(editGallerySlots);
+    const nextPrimary =
+      orderedGallery[0] ||
+      orderedGallery.find(Boolean) ||
+      editingProduct.primary_image ||
+      '';
     const nextSecondary =
-      cleanedGallerySlots[0] || editingProduct.secondary_image || editingProduct.primary_image;
+      orderedGallery[1] ||
+      orderedGallery.find((u, i) => i > 0 && Boolean(u)) ||
+      nextPrimary;
 
     const payload: Product = {
       ...editingProduct,
+      primary_image: nextPrimary,
       secondary_image: nextSecondary,
       gallery: orderedGallery,
       category_slug: assigned[0],
@@ -1046,8 +1063,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           fabric_spec: newFabric,
           is_featured: true,
           preorder_allowed: true,
-          primary_image: newPrimaryImg,
-          secondary_image: newPrimaryImg,
+          primary_image: normalizeGallerySlots(newGallerySlots)[0] || newPrimaryImg,
+          secondary_image:
+            normalizeGallerySlots(newGallerySlots).find((u, i) => i > 0 && u) ||
+            normalizeGallerySlots(newGallerySlots)[0] ||
+            newPrimaryImg,
+          gallery: normalizeGallerySlots(newGallerySlots),
           sizes: newSizes,
           fits: newFits,
           localizations: {
@@ -1067,6 +1088,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setNewSku('');
       setNewTitleEn('');
       setNewCategories(['business']);
+      setNewPrimaryImg('/src/assets/images/shirt_white_signature_1795248293653.jpg');
+      setNewGallerySlots(
+        normalizeGallerySlots(['/src/assets/images/shirt_white_signature_1795248293653.jpg'])
+      );
       setNewFits(['Regular Fit', 'Slim Fit']);
       setNewSizes(['38 / S', '39 / M', '40 / M', '41 / L', '42 / L', '43 / XL']);
       setNewStockQty(12);
@@ -2477,21 +2502,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       if (!cloned.variants || cloned.variants.length === 0) {
                                         cloned.variants = variants.filter((v) => v.product_id === p.id);
                                       }
-                                      const rawGallery = Array.isArray(cloned.gallery) ? cloned.gallery : [];
-                                      const extraGallery = rawGallery.filter(
-                                        (u) => Boolean(u) && u !== cloned.primary_image
+                                      setEditGallerySlots(
+                                        normalizeGallerySlots(
+                                          cloned.gallery,
+                                          cloned.primary_image,
+                                          cloned.secondary_image
+                                        )
                                       );
-                                      if (
-                                        extraGallery.length === 0 &&
-                                        cloned.secondary_image &&
-                                        cloned.secondary_image !== cloned.primary_image
-                                      ) {
-                                        extraGallery.push(cloned.secondary_image);
-                                      }
-                                      while (extraGallery.length < 3) {
-                                        extraGallery.push('');
-                                      }
-                                      setEditGallerySlots(extraGallery);
                                       setDragGalleryIdx(null);
                                       setDragOverGalleryIdx(null);
                                       setEditVarFitInput('');
@@ -3878,149 +3895,98 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               data-testid="edit-product-gallery-editor"
               className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-3 text-xs"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
-                    Product Media
-                  </div>
-                  <p className="text-[11px] text-neutral-500 mt-0.5">
-                    Primary lead photo + horizontal gallery strip. Drag cards or use arrows to reorder.
-                  </p>
+              <div>
+                <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                  Product Gallery — Fixed 6 Slots
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEditGallerySlots((prev) => [...prev, ''])}
-                  className="px-3 py-1.5 border border-[#142B4E] text-[#142B4E] bg-white hover:bg-[#142B4E] hover:text-white text-[11px] uppercase tracking-wider font-medium cursor-pointer"
-                >
-                  + Add Gallery Slot
-                </button>
+                <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
+                  Keep this order so uploads always land in the right place. Empty slots are hidden on
+                  the storefront (no blank tiles). Slot 6 is a muted autoplay video.
+                </p>
               </div>
 
-              <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
-                {/* Primary Main Image Card */}
-                <div className="snap-start shrink-0 w-[160px] sm:w-[180px] bg-white border-2 border-[#142B4E] p-2.5 space-y-2">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold">
-                      Primary
-                    </span>
-                    <span className="text-[9px] text-neutral-500 font-mono-tabular">Lead</span>
-                  </div>
-                  <div className="aspect-[4/5] w-full bg-[#ECECEC] overflow-hidden border border-neutral-200 flex items-center justify-center">
-                    {editingProduct.primary_image ? (
-                      <img
-                        src={editingProduct.primary_image}
-                        alt="Primary product"
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-[10px] text-neutral-400">No photo</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setMediaPickerTarget('primary')}
-                    className="w-full py-1.5 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[10px] uppercase tracking-wider font-medium cursor-pointer"
-                  >
-                    Choose Media
-                  </button>
-                </div>
-
-                {/* Draggable Gallery Slots */}
-                {editGallerySlots.map((slotUrl, idx) => (
-                  <div
-                    key={`gallery-slot-${idx}`}
-                    data-testid={`gallery-slot-${idx}`}
-                    draggable
-                    onDragStart={() => setDragGalleryIdx(idx)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      if (dragOverGalleryIdx !== idx) setDragOverGalleryIdx(idx);
-                    }}
-                    onDragLeave={() => {
-                      if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
-                        handleMoveGallerySlot(dragGalleryIdx, idx);
-                      }
-                      setDragGalleryIdx(null);
-                      setDragOverGalleryIdx(null);
-                    }}
-                    onDragEnd={() => {
-                      setDragGalleryIdx(null);
-                      setDragOverGalleryIdx(null);
-                    }}
-                    className={`snap-start shrink-0 w-[148px] sm:w-[160px] bg-white border p-2 space-y-1.5 transition-all cursor-grab active:cursor-grabbing ${
-                      dragOverGalleryIdx === idx
-                        ? 'border-[#142B4E] ring-2 ring-[#142B4E]/30 bg-slate-50'
-                        : 'border-neutral-200 hover:border-neutral-400'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="inline-flex items-center gap-0.5 font-semibold text-[10px] text-[#142B4E]">
-                        <GripVertical className="w-3 h-3 text-neutral-400 shrink-0" />
-                        <span>#{idx + 1}</span>
-                      </div>
-                      <div className="flex items-center gap-0.5">
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => handleMoveGallerySlot(idx, idx - 1)}
-                          aria-label={`Move gallery image ${idx + 1} left`}
-                          className="p-0.5 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                        >
-                          <ArrowLeft className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={idx === editGallerySlots.length - 1}
-                          onClick={() => handleMoveGallerySlot(idx, idx + 1)}
-                          aria-label={`Move gallery image ${idx + 1} right`}
-                          className="p-0.5 text-neutral-500 hover:text-black disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                        >
-                          <ArrowRight className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditGallerySlots((prev) =>
-                              prev.length > 3
-                                ? prev.filter((_, j) => j !== idx)
-                                : prev.map((v, j) => (j === idx ? '' : v))
-                            )
-                          }
-                          aria-label={`Clear gallery slot ${idx + 1}`}
-                          className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
-                      {slotUrl ? (
-                        <img
-                          src={slotUrl}
-                          alt={`Gallery ${idx + 1}`}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover pointer-events-none"
-                        />
-                      ) : (
-                        <span className="text-[9px] text-neutral-400 text-center px-1">Empty</span>
-                      )}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
-                      className="w-full py-1 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] font-medium cursor-pointer bg-[#FAFAFA]"
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {PRODUCT_GALLERY_SLOTS.map((slot) => {
+                  const idx = slot.index;
+                  const slotUrl = editGallerySlots[idx] || '';
+                  return (
+                    <div
+                      key={slot.id}
+                      data-testid={`gallery-slot-${idx}`}
+                      className={`bg-white border p-2 space-y-1.5 ${
+                        idx === 0 ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                      }`}
                     >
-                      Choose Media
-                    </button>
-                  </div>
-                ))}
+                      <div className="space-y-0.5 min-h-[42px]">
+                        <div className="flex items-center justify-between gap-1">
+                          <span
+                            className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
+                              slot.kind === 'video'
+                                ? 'bg-[#4F8A47] text-white'
+                                : idx === 0
+                                  ? 'bg-[#142B4E] text-white'
+                                  : 'bg-neutral-100 text-[#142B4E]'
+                            }`}
+                          >
+                            {slot.kind === 'video' ? 'Video' : `#${idx + 1}`}
+                          </span>
+                          {slotUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditGallerySlots((prev) => {
+                                  const next = normalizeGallerySlots(prev);
+                                  next[idx] = '';
+                                  return next;
+                                })
+                              }
+                              aria-label={`Clear ${slot.label}`}
+                              className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="text-[10px] font-semibold text-[#1A1A1A] leading-snug">
+                          {slot.label}
+                        </div>
+                        <div className="text-[9px] text-neutral-500 leading-snug">{slot.hint}</div>
+                      </div>
+
+                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                        {slotUrl ? (
+                          isProductVideoUrl(slotUrl) ? (
+                            <ProductGalleryMedia
+                              src={slotUrl}
+                              alt={slot.label}
+                              className="w-full h-full pointer-events-none"
+                              fitClassName="object-cover"
+                            />
+                          ) : (
+                            <img
+                              src={slotUrl}
+                              alt={slot.label}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover pointer-events-none"
+                            />
+                          )
+                        ) : (
+                          <span className="text-[9px] text-neutral-400 text-center px-1">
+                            {slot.kind === 'video' ? 'No video' : 'No image'}
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
+                        className="w-full py-1.5 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] font-medium cursor-pointer bg-[#FAFAFA]"
+                      >
+                        {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -4681,16 +4647,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       mediaPickerTarget?.type === 'gallery'
                     ) {
                       const targetIdx = mediaPickerTarget.index;
-                      setEditGallerySlots((prev) => {
-                        const next = [...prev];
-                        while (next.length <= targetIdx) next.push('');
-                        next[targetIdx] = url;
-                        return next;
-                      });
-                      if (targetIdx === 0 && editingProduct) {
-                        setEditingProduct((prev) =>
-                          prev ? { ...prev, secondary_image: url } : prev
-                        );
+                      if (creatingProduct) {
+                        setNewGallerySlots((prev) => {
+                          const next = normalizeGallerySlots(prev);
+                          next[targetIdx] = url;
+                          return next;
+                        });
+                        if (targetIdx === 0) setNewPrimaryImg(url);
+                      } else {
+                        setEditGallerySlots((prev) => {
+                          const next = normalizeGallerySlots(prev);
+                          next[targetIdx] = url;
+                          return next;
+                        });
+                        if (targetIdx === 0 && editingProduct) {
+                          setEditingProduct((prev) =>
+                            prev ? { ...prev, primary_image: url } : prev
+                          );
+                        }
                       }
                     } else if (editingProduct) {
                       setEditingProduct((prev) =>
@@ -4706,6 +4680,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       );
                     } else if (creatingProduct) {
                       setNewPrimaryImg(url);
+                      setNewGallerySlots((prev) => {
+                        const next = normalizeGallerySlots(prev);
+                        next[0] = url;
+                        return next;
+                      });
                     }
                   };
                   apply(asset.url);
@@ -4720,12 +4699,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               {mediaPickerPreview ? (
                 <>
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={mediaPickerPreview.url}
-                      alt={mediaPickerPreview.alt_text || mediaPickerPreview.original_name}
-                      referrerPolicy="no-referrer"
-                      className="w-11 h-11 object-cover border border-neutral-200 bg-[#F4F4F4] shrink-0"
-                    />
+                    {String(mediaPickerPreview.mime_type || '').startsWith('video/') ||
+                    isProductVideoUrl(mediaPickerPreview.url) ? (
+                      <video
+                        src={mediaPickerPreview.url}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="w-11 h-11 object-cover border border-neutral-200 bg-[#F4F4F4] shrink-0 pointer-events-none"
+                      />
+                    ) : (
+                      <img
+                        src={mediaPickerPreview.url}
+                        alt={mediaPickerPreview.alt_text || mediaPickerPreview.original_name}
+                        referrerPolicy="no-referrer"
+                        className="w-11 h-11 object-cover border border-neutral-200 bg-[#F4F4F4] shrink-0"
+                      />
+                    )}
                     <div className="min-w-0 text-xs">
                       <div className="font-semibold text-[#142B4E] truncate max-w-[260px] sm:max-w-md">
                         {mediaPickerPreview.original_name}
@@ -4752,12 +4742,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         mediaPickerTarget?.type === 'gallery'
                       ) {
                         const targetIdx = mediaPickerTarget.index;
-                        setEditGallerySlots((prev) => {
-                          const next = [...prev];
-                          while (next.length <= targetIdx) next.push('');
-                          next[targetIdx] = asset.url;
-                          return next;
-                        });
+                        if (creatingProduct) {
+                          setNewGallerySlots((prev) => {
+                            const next = normalizeGallerySlots(prev);
+                            next[targetIdx] = asset.url;
+                            return next;
+                          });
+                          if (targetIdx === 0) setNewPrimaryImg(asset.url);
+                        } else {
+                          setEditGallerySlots((prev) => {
+                            const next = normalizeGallerySlots(prev);
+                            next[targetIdx] = asset.url;
+                            return next;
+                          });
+                          if (targetIdx === 0) {
+                            setEditingProduct((prev) =>
+                              prev ? { ...prev, primary_image: asset.url } : prev
+                            );
+                          }
+                        }
                       } else if (editingProduct) {
                         setEditingProduct((prev) =>
                           prev
@@ -4776,6 +4779,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         );
                       } else if (creatingProduct) {
                         setNewPrimaryImg(asset.url);
+                        setNewGallerySlots((prev) => {
+                          const next = normalizeGallerySlots(prev);
+                          next[0] = asset.url;
+                          return next;
+                        });
                       }
                       mediaPickerCbRef.current = null;
                       setMediaPickerPreview(null);
@@ -4784,7 +4792,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="px-6 py-2.5 bg-[#142B4E] hover:bg-[#0f213d] text-white text-xs uppercase tracking-[0.16em] font-semibold inline-flex items-center gap-2 cursor-pointer"
                   >
                     <Check className="w-4 h-4" />
-                    <span>Choose Image</span>
+                    <span>Choose Media</span>
                   </button>
                 </>
               ) : (
@@ -4919,25 +4927,87 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 border border-neutral-200 p-2.5 bg-[#FAFAFA]">
-                  <img
-                    src={newPrimaryImg}
-                    alt=""
-                    referrerPolicy="no-referrer"
-                    className="w-14 h-14 object-cover bg-[#E6E6E6] border border-neutral-200 shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-0.5">Primary image</div>
-                    <span className="block truncate text-neutral-600 font-mono-tabular text-[10px]">
-                      {newPrimaryImg}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setMediaPickerTarget('primary')}
-                      className="mt-1 text-[#142B4E] hover:underline cursor-pointer"
-                    >
-                      Pick from Media
-                    </button>
+                <div
+                  data-testid="create-product-gallery-editor"
+                  className="border border-neutral-200 bg-[#FAFAFA] p-3 space-y-2.5"
+                >
+                  <div>
+                    <div className="font-semibold uppercase tracking-wider text-[#142B4E] text-[11px]">
+                      Product Gallery — Fixed 6 Slots
+                    </div>
+                    <p className="text-[10px] text-neutral-500 mt-0.5">
+                      1 Folded shirt (main) · 2 Ghost mannequin-front · 3 Sideway · 4 Shirt with model · 5
+                      Fabric close up · 6 Short video clip. Empty slots stay hidden on the storefront.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {PRODUCT_GALLERY_SLOTS.map((slot) => {
+                      const idx = slot.index;
+                      const slotUrl = newGallerySlots[idx] || '';
+                      return (
+                        <div
+                          key={slot.id}
+                          className={`bg-white border p-2 space-y-1 ${
+                            idx === 0 ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
+                                slot.kind === 'video'
+                                  ? 'bg-[#4F8A47] text-white'
+                                  : idx === 0
+                                    ? 'bg-[#142B4E] text-white'
+                                    : 'bg-neutral-100 text-[#142B4E]'
+                              }`}
+                            >
+                              {slot.kind === 'video' ? 'Video' : `#${idx + 1}`}
+                            </span>
+                            {slotUrl && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setNewGallerySlots((prev) => {
+                                    const next = normalizeGallerySlots(prev);
+                                    next[idx] = '';
+                                    if (idx === 0) setNewPrimaryImg('');
+                                    return next;
+                                  })
+                                }
+                                className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
+                                aria-label={`Clear ${slot.label}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-semibold text-[#1A1A1A] leading-snug">
+                            {slot.label}
+                          </div>
+                          <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center">
+                            {slotUrl ? (
+                              <ProductGalleryMedia
+                                src={slotUrl}
+                                alt={slot.label}
+                                className="w-full h-full pointer-events-none"
+                                fitClassName="object-cover"
+                              />
+                            ) : (
+                              <span className="text-[9px] text-neutral-400 text-center px-1">
+                                {slot.kind === 'video' ? 'No video' : 'No image'}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
+                            className="w-full py-1.5 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] font-medium cursor-pointer bg-white"
+                          >
+                            {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 

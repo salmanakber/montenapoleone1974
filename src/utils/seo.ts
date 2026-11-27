@@ -7,6 +7,7 @@ export type StorefrontView =
   | 'b2b'
   | 'about'
   | 'info'
+  | 'article'
   | 'checkout'
   | 'account'
   | 'admin';
@@ -17,6 +18,7 @@ export interface ParsedRoute {
   category?: string;
   slug?: string;
   infoPage?: string;
+  articleSlug?: string;
   adminTab?: AdminTab;
 }
 
@@ -138,6 +140,25 @@ export function parseStorefrontUrl(pathname: string): ParsedRoute {
   }
 
   if (
+    head === 'article' ||
+    head === 'articles' ||
+    head === 'oversikt-over-skjortestoffer' ||
+    head === 'fabric-guide' ||
+    head === 'sustainable-fashion'
+  ) {
+    const articleSlug =
+      head === 'article' || head === 'articles'
+        ? tail || 'fabric-guide'
+        : head;
+    return {
+      region,
+      view: 'article',
+      articleSlug,
+      slug: articleSlug,
+    };
+  }
+
+  if (
     head === 'info' ||
     head === 'returns' ||
     head === 'returns-exchanges' ||
@@ -207,6 +228,10 @@ export function buildStorefrontPath(params: {
       return params.slug ? `/${rc}/b2b/${encodeURIComponent(params.slug)}` : `/${rc}/b2b`;
     case 'about':
       return `/${rc}/about-us`;
+    case 'article': {
+      const page = (params.slug || 'fabric-guide').trim() || 'fabric-guide';
+      return `/${rc}/article/${encodeURIComponent(page)}`;
+    }
     case 'info': {
       const page = (params.slug || 'returns').trim() || 'returns';
       return `/${rc}/info/${encodeURIComponent(page)}`;
@@ -286,7 +311,10 @@ export function buildSeoMetadata(params: {
 }): SeoMetadataResult {
   const baseOrigin = (params.origin || 'https://montenapoleone1974.com').replace(/\/+$/, '');
   const rc = params.region.code;
-  const pathSlug = params.view === 'info' ? params.slug : params.product?.slug;
+  const pathSlug =
+    params.view === 'info' || params.view === 'article'
+      ? params.slug
+      : params.product?.slug;
   const canonicalPath = buildStorefrontPath({
     regionCode: rc,
     view: params.view,
@@ -627,6 +655,48 @@ export function buildSeoMetadata(params: {
       ogSiteName: 'Monte Napoleone 1974',
       ogImage: resolveImage('/src/assets/images/editorial_tailoring_guide_1795248294030.jpg'),
       ogImageAlt: 'Monte Napoleone 1974 Heritage Treviso Atelier',
+      robots: 'index, follow, max-image-preview:large',
+      hreflangs,
+      jsonLd: [orgSchema, websiteSchema],
+    };
+  }
+
+  if (params.view === 'article') {
+    const articleKey = (params.slug || 'fabric-guide').toLowerCase();
+    const articleMeta: Record<string, { title: string; description: string; keywords: string; image: string }> = {
+      'fabric-guide': {
+        title: 'Shirt Fabric Overview – Monte Napoleone 1974',
+        description:
+          'Broadcloth, twill, oxford, linen and more — a clear guide to the weaves used in Monte Napoleone dress shirts.',
+        keywords: 'shirt fabrics, broadcloth, twill, oxford cloth, Monte Napoleone fabric guide',
+        image: '/uploads/articles/fabric-guide-hero.jpg',
+      },
+      'oversikt-over-skjortestoffer': {
+        title: 'Oversikt over skjortestoffer – Monte Napoleone 1974',
+        description:
+          'Broadcloth, twill, oxford, lin og mer — oversikten over vevene i Monte Napoleone dresskjorter.',
+        keywords: 'skjortestoffer, broadcloth, twill, oxford, Monte Napoleone stoffguide',
+        image: '/uploads/articles/fabric-guide-hero.jpg',
+      },
+      'sustainable-fashion': {
+        title: 'Quality & Sustainability – Monte Napoleone 1974',
+        description:
+          'Buy less and choose shirts that last. Why timeless quality is kinder to the planet than fast fashion.',
+        keywords: 'sustainable fashion, buy less, quality shirts, Monte Napoleone',
+        image: '/uploads/articles/sustainable-fashion-hero.jpg',
+      },
+    };
+    const meta = articleMeta[articleKey] || articleMeta['fabric-guide'];
+    return {
+      title: clampSeoText(meta.title, 28, 62, 'Monte Napoleone'),
+      description: clampSeoText(meta.description, 110, 160, 'Monte Napoleone 1974.'),
+      keywords: meta.keywords,
+      canonicalUrl,
+      ogType: 'article',
+      ogLocale,
+      ogSiteName: 'Monte Napoleone 1974',
+      ogImage: resolveImage(meta.image),
+      ogImageAlt: meta.title,
       robots: 'index, follow, max-image-preview:large',
       hreflangs,
       jsonLd: [orgSchema, websiteSchema],

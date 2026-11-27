@@ -121,8 +121,8 @@ export interface RegionCopy {
     sectionFitCollarCuff: string;
     sectionEmbroideryNotes: string;
     supplierNotesPlaceholder: string;
-    saveAddColourSticky: string;
-    belowMoqSuffix: string;
+      saveAddColourSticky: string;
+      belowMoqSuffix: string;
   };
   checkout: {
     bagTitle: string;

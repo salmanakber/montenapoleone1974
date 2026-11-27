@@ -37,11 +37,13 @@ import {
   resolveVariantPriceAndStock,
 } from '../utils/commerce.ts';
 import { ProductHoverCard } from './ProductHoverCard.tsx';
+import { ProductGalleryMedia } from './ProductGalleryMedia.tsx';
 import {
   CUFF_SPECS,
   CuffShowcaseIllustration,
   TailoringZoneSketch,
 } from './TailoringIllustrations.tsx';
+import { isProductVideoUrl, resolveFilledGalleryMedia } from '../utils/productGallery.ts';
 
 interface ProductDetailViewProps {
   product: Product;
@@ -165,10 +167,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     const top = ref.current.getBoundingClientRect().top + window.scrollY - 82;
     window.scrollTo({ top, behavior: 'smooth' });
   };
-  const gallery =
-    product.gallery && product.gallery.length > 0
-      ? product.gallery
-      : [product.primary_image, product.secondary_image].filter(Boolean);
+  const gallery = resolveFilledGalleryMedia(product);
 
   const orderedCollars = useMemo(
     () => resolveOrderedTailoringOptions('collar', product.collars, tailoringOptions),
@@ -589,16 +588,23 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 touchStartX.current = null;
               }}
             >
-              <img
-                src={gallery[mobileSlide] || product.primary_image}
-                alt={`${product.title} slide ${mobileSlide + 1}`}
-                referrerPolicy="no-referrer"
+              <button
+                type="button"
                 onClick={() => {
+                  if (isProductVideoUrl(gallery[mobileSlide] || '')) return;
                   setLightboxIndex(mobileSlide);
                   setLightboxZoomed(false);
                 }}
-                className="w-full h-full object-cover cursor-zoom-in"
-              />
+                className="w-full h-full block cursor-zoom-in"
+                aria-label={`${product.title} slide ${mobileSlide + 1}`}
+              >
+                <ProductGalleryMedia
+                  src={gallery[mobileSlide] || product.primary_image}
+                  alt={`${product.title} slide ${mobileSlide + 1}`}
+                  className="w-full h-full"
+                  fitClassName="object-cover"
+                />
+              </button>
 
               <span className="absolute top-3 right-3 px-2 py-0.5 bg-white/90 border border-black/10 text-[11px] font-mono-tabular text-[#1A1A1A]">
                 {mobileSlide + 1} / {gallery.length}
@@ -653,7 +659,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                         idx === mobileSlide ? 'border-[#142B4E]' : 'border-transparent opacity-70'
                       }`}
                     >
-                      <img src={thumb} alt="" className="w-full h-full object-cover" />
+                      {isProductVideoUrl(thumb) ? (
+                        <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
+                          Video
+                        </div>
+                      ) : (
+                        <img src={thumb} alt="" className="w-full h-full object-cover" />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -675,21 +687,26 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     key={`${imgUrl}-${idx}`}
                     type="button"
                     onClick={() => {
+                      if (isProductVideoUrl(imgUrl)) return;
                       setLightboxIndex(idx);
                       setLightboxZoomed(false);
                     }}
-                    aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className="group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden cursor-zoom-in text-left block w-full"
+                    aria-label={`Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`}
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden text-left block w-full ${
+                      isProductVideoUrl(imgUrl) ? 'cursor-default' : 'cursor-zoom-in'
+                    }`}
                   >
-                    <img
+                    <ProductGalleryMedia
                       src={imgUrl}
                       alt={`${product.title} view ${idx + 1}`}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain object-center transition-transform duration-500 group-hover:scale-[1.02]"
+                      className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                      fitClassName="object-contain object-center"
                     />
-                    <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
-                      <ZoomIn className="w-3.5 h-3.5" />
-                    </span>
+                    {!isProductVideoUrl(imgUrl) && (
+                      <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </span>
+                    )}
                   </button>
                 ))}
             </motion.div>
@@ -703,21 +720,26 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     key={`${imgUrl}-${idx}`}
                     type="button"
                     onClick={() => {
+                      if (isProductVideoUrl(imgUrl)) return;
                       setLightboxIndex(idx);
                       setLightboxZoomed(false);
                     }}
-                    aria-label={`Open lightbox image ${idx + 1} of ${gallery.length} for ${product.title}`}
-                    className="group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden cursor-zoom-in text-left block w-full"
+                    aria-label={`Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`}
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E6E2] overflow-hidden text-left block w-full ${
+                      isProductVideoUrl(imgUrl) ? 'cursor-default' : 'cursor-zoom-in'
+                    }`}
                   >
-                    <img
+                    <ProductGalleryMedia
                       src={imgUrl}
                       alt={`${product.title} view ${idx + 1}`}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain object-center transition-transform duration-500 group-hover:scale-[1.02]"
+                      className="w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                      fitClassName="object-contain object-center"
                     />
-                    <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
-                      <ZoomIn className="w-3.5 h-3.5" />
-                    </span>
+                    {!isProductVideoUrl(imgUrl) && (
+                      <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </span>
+                    )}
                   </button>
                 ))}
             </motion.div>
@@ -1791,15 +1813,24 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             </button>
 
             <div className="max-h-[76vh] max-w-4xl overflow-auto flex items-center justify-center">
-              <img
-                src={gallery[lightboxIndex]}
-                alt={`${product.title} studio angle ${lightboxIndex + 1}`}
-                referrerPolicy="no-referrer"
-                onClick={() => setLightboxZoomed((prev) => !prev)}
-                className={`max-h-[74vh] w-auto object-contain transition-transform duration-300 cursor-zoom-in ${
-                  lightboxZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100'
-                }`}
-              />
+              {isProductVideoUrl(gallery[lightboxIndex]) ? (
+                <ProductGalleryMedia
+                  src={gallery[lightboxIndex]}
+                  alt={`${product.title} studio angle ${lightboxIndex + 1}`}
+                  className="max-h-[74vh] w-auto"
+                  fitClassName="object-contain"
+                />
+              ) : (
+                <img
+                  src={gallery[lightboxIndex]}
+                  alt={`${product.title} studio angle ${lightboxIndex + 1}`}
+                  referrerPolicy="no-referrer"
+                  onClick={() => setLightboxZoomed((prev) => !prev)}
+                  className={`max-h-[74vh] w-auto object-contain transition-transform duration-300 cursor-zoom-in ${
+                    lightboxZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100'
+                  }`}
+                />
+              )}
             </div>
 
             <button

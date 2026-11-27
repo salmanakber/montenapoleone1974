@@ -267,7 +267,7 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
             multiple
             className="hidden"
             onChange={(e) => handleFiles(e.target.files)}
@@ -410,12 +410,22 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
                   className="w-full text-left cursor-pointer"
                 >
                   <div className="aspect-square bg-[#E6E6E6] overflow-hidden">
-                    <img
-                      src={asset.url}
-                      alt={asset.alt_text || asset.original_name}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
+                    {String(asset.mime_type || '').startsWith('video/') ? (
+                      <video
+                        src={asset.url}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="w-full h-full object-cover pointer-events-none"
+                      />
+                    ) : (
+                      <img
+                        src={asset.url}
+                        alt={asset.alt_text || asset.original_name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
                   </div>
                   <div className="mt-1.5 px-1">
                     <div className="text-[11px] font-medium truncate text-[#1A1A1A]">
@@ -453,12 +463,23 @@ export const MediaLibraryPanel: React.FC<MediaLibraryPanelProps> = ({
               </div>
 
               <div className="aspect-[4/3] bg-[#E6E6E6] overflow-hidden border border-neutral-200">
-                <img
-                  src={activeAsset.url}
-                  alt={activeAsset.alt_text}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-contain"
-                />
+                {String(activeAsset.mime_type || '').startsWith('video/') ? (
+                  <video
+                    src={activeAsset.url}
+                    muted
+                    playsInline
+                    controls
+                    preload="metadata"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <img
+                    src={activeAsset.url}
+                    alt={activeAsset.alt_text}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-contain"
+                  />
+                )}
               </div>
 
               <div className="text-[11px] font-mono-tabular text-neutral-600 space-y-0.5">
