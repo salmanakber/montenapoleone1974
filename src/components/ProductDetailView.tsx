@@ -822,7 +822,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     )}
                   </button>
                 ))}
-            </motion.div>
+            </div>
           </div>
         </div>
 
