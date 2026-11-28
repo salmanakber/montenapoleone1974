@@ -102,6 +102,15 @@ export interface RegionCopy {
     reviewPlural: string;
     verifiedLabel: string;
     noRatingsYet: string;
+    viewMeasurementDiagram: string;
+    measurementDiagramTitle: string;
+    tailoringPolicyHeading: string;
+    tailoringPolicyReturnsTitle: string;
+    tailoringPolicyReturnsBody: string;
+    tailoringPolicyDeliveryTitle: string;
+    tailoringPolicyDeliveryBody: string;
+    tailoringPolicyDismiss: string;
+    optionalBadge: string;
   };
   b2b: {
     portalTitle: string;
@@ -332,6 +341,17 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       reviewPlural: 'reviews',
       verifiedLabel: 'verified',
       noRatingsYet: 'No ratings yet',
+      viewMeasurementDiagram: 'View diagram',
+      measurementDiagramTitle: 'Measurement diagram',
+      tailoringPolicyHeading: 'Made-to-measure notice',
+      tailoringPolicyReturnsTitle: 'Cancellation & returns for made-to-measure shirts',
+      tailoringPolicyReturnsBody:
+        'All made-to-measure shirts are 100% personalized to the customer’s preferences. Therefore we do NOT accept returns for any reason, except manufacturing defects.',
+      tailoringPolicyDeliveryTitle: 'Delivery times for made-to-measure shirts',
+      tailoringPolicyDeliveryBody:
+        'Made-to-measure shirts require additional work and piece changes, so we may add up to seven (7) days beyond normal delivery times.',
+      tailoringPolicyDismiss: 'Understood',
+      optionalBadge: 'Optional',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -673,6 +693,17 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       reviewPlural: 'anmeldelser',
       verifiedLabel: 'verifisert',
       noRatingsYet: 'Ingen vurderinger ennå',
+      viewMeasurementDiagram: 'Se diagram',
+      measurementDiagramTitle: 'Målediagram',
+      tailoringPolicyHeading: 'Varsel om skreddersøm',
+      tailoringPolicyReturnsTitle: 'Kansellering og retur for skreddersydde skjorter',
+      tailoringPolicyReturnsBody:
+        'Alle skreddersydde skjorter er 100 % tilpasset kundens preferanser. Derfor godtar vi IKKE retur av noen grunn, bortsett fra produksjonsfeil.',
+      tailoringPolicyDeliveryTitle: 'Leveringstid for skreddersydde skjorter',
+      tailoringPolicyDeliveryBody:
+        'Skreddersydde skjorter krever ekstra arbeid og endring av deler, så vi kan legge til inntil syv (7) dager utover normal leveringstid.',
+      tailoringPolicyDismiss: 'Forstått',
+      optionalBadge: 'Valgfritt',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -987,6 +1018,17 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       reviewPlural: 'recensioni',
       verifiedLabel: 'verificata',
       noRatingsYet: 'Nessuna valutazione ancora',
+      viewMeasurementDiagram: 'Vedi diagramma',
+      measurementDiagramTitle: 'Diagramma delle misure',
+      tailoringPolicyHeading: 'Avviso su misura',
+      tailoringPolicyReturnsTitle: 'Cancellazione e reso per camicie su misura',
+      tailoringPolicyReturnsBody:
+        'Tutte le camicie su misura sono personalizzate al 100% secondo le preferenze del cliente. Pertanto NON accettiamo resi per alcun motivo, tranne difetti di fabbricazione.',
+      tailoringPolicyDeliveryTitle: 'Tempi di consegna per camicie su misura',
+      tailoringPolicyDeliveryBody:
+        'Le camicie su misura richiedono lavoro aggiuntivo e cambio pezzi, quindi potremmo aggiungere fino a sette (7) giorni rispetto ai tempi di consegna normali.',
+      tailoringPolicyDismiss: 'Ho capito',
+      optionalBadge: 'Opzionale',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',
@@ -1269,6 +1311,17 @@ export const TRANSLATIONS: Record<RegionCode, RegionCopy> = {
       reviewPlural: 'đánh giá',
       verifiedLabel: 'đã xác minh',
       noRatingsYet: 'Chưa có đánh giá',
+      viewMeasurementDiagram: 'Xem sơ đồ',
+      measurementDiagramTitle: 'Sơ đồ số đo',
+      tailoringPolicyHeading: 'Thông báo may đo',
+      tailoringPolicyReturnsTitle: 'Hủy đơn & đổi trả áo may đo',
+      tailoringPolicyReturnsBody:
+        'Tất cả áo may đo được cá nhân hóa 100% theo sở thích của khách hàng. Vì vậy chúng tôi KHÔNG chấp nhận đổi trả vì bất kỳ lý do nào, trừ lỗi sản xuất.',
+      tailoringPolicyDeliveryTitle: 'Thời gian giao hàng cho áo may đo',
+      tailoringPolicyDeliveryBody:
+        'Áo may đo cần thêm công đoạn và thay đổi chi tiết, vì vậy chúng tôi có thể cộng thêm tối đa bảy (7) ngày so với thời gian giao hàng thông thường.',
+      tailoringPolicyDismiss: 'Đã hiểu',
+      optionalBadge: 'Tùy chọn',
     },
     b2b: {
       portalTitle: 'MONTE CONNECTED B2B',

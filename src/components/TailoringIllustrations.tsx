@@ -44,10 +44,31 @@ export const TailoringZoneSketch: React.FC<{
   sizeLabel?: string;
   cmValue?: number;
   preferSvg?: boolean;
-}> = ({ zone, customImageUrl, sizeLabel, cmValue, preferSvg = true }) => {
+  /** thumb = row chip; diagram = large popup preview */
+  variant?: 'thumb' | 'diagram';
+  onActivate?: () => void;
+}> = ({
+  zone,
+  customImageUrl,
+  sizeLabel,
+  cmValue,
+  preferSvg = true,
+  variant = 'thumb',
+  onActivate,
+}) => {
+  const isDiagram = variant === 'diagram';
   if (!preferSvg && customImageUrl && customImageUrl.trim().length > 0) {
     return (
-      <div className="w-12 h-12 rounded bg-[#F0F0F0] border border-black/10 overflow-hidden relative shrink-0">
+      <button
+        type="button"
+        onClick={onActivate}
+        disabled={!onActivate}
+        className={`${
+          isDiagram ? 'w-56 h-56' : 'w-12 h-12'
+        } rounded-none bg-[#F0F0F0] border border-black/10 overflow-hidden relative shrink-0 ${
+          onActivate ? 'cursor-pointer hover:border-[#142B4E]/ : ''
+        }`}
+      >
         <img
           src={customImageUrl}
           alt={`${zone} sketch`}
@@ -59,7 +80,7 @@ export const TailoringZoneSketch: React.FC<{
             {cmValue}cm
           </span>
         )}
-      </div>
+      </button>
     );
   }
 
@@ -68,14 +89,23 @@ export const TailoringZoneSketch: React.FC<{
       ? Math.max(0.82, Math.min(1.18, cmValue / ZONE_BASE_CM[zone]))
       : 1;
 
+  const Wrapper: React.ElementType = onActivate ? 'button' : 'div';
+
   return (
-    <div
-      className="w-12 h-12 rounded bg-[#F0F0F0] border border-black/10 flex flex-col items-center justify-center relative shrink-0 overflow-hidden"
+    <Wrapper
+      type={onActivate ? 'button' : undefined}
+      onClick={onActivate}
+      className={`${
+        isDiagram ? 'w-56 h-56 sm:w-64 sm:h-64' : 'w-12 h-12'
+      } rounded-none bg-[#F0F0F0] border border-black/10 flex flex-col items-center justify-center relative shrink-0 overflow-hidden ${
+        onActivate ? 'cursor-pointer hover:border-[#142B4E] transition-colors' : ''
+      }`}
       title={sizeLabel ? `${sizeLabel}: ${cmValue ?? ''} cm` : undefined}
+      aria-label={onActivate ? `Open ${zone} diagram` : undefined}
     >
       <svg
         viewBox="0 0 48 48"
-        className="w-10 h-10 text-neutral-500 transition-transform duration-300"
+        className={`${isDiagram ? 'w-48 h-48' : 'w-10 h-10'} text-neutral-500 transition-transform duration-300`}
         style={{ transform: `scale(${0.92 + (scale - 1) * 0.35})` }}
         fill="none"
         stroke="currentColor"
@@ -132,11 +162,15 @@ export const TailoringZoneSketch: React.FC<{
         )}
       </svg>
       {cmValue !== undefined && (
-        <span className="text-[8px] font-mono-tabular font-semibold text-[#142B4E] -mt-1 leading-none pb-0.5">
+        <span
+          className={`${
+            isDiagram ? 'text-sm mt-1' : 'text-[8px] -mt-1 pb-0.5'
+          } font-mono-tabular font-semibold text-[#142B4E] leading-none`}
+        >
           {cmValue}cm
         </span>
       )}
-    </div>
+    </Wrapper>
   );
 };
 

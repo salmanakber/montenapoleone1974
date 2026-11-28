@@ -724,10 +724,15 @@ export const B2BView: React.FC<B2BViewProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveProduct(null)}
-                className="inline-flex items-center gap-1.5 text-xs text-[#142B4E] hover:underline font-medium cursor-pointer"
+                aria-label={copy.b2b.backToShirtCatalog}
+                className="group inline-flex items-center h-8 max-w-[min(80vw,280px)] bg-white border border-black/10 text-[#142B4E] overflow-hidden cursor-pointer"
               >
-                <ChevronLeft className="w-4 h-4" />
-                <span>{copy.b2b.backToShirtCatalog}</span>
+                <span className="w-8 h-8 shrink-0 flex items-center justify-center">
+                  <ChevronLeft className="w-4 h-4" />
+                </span>
+                <span className="max-w-0 opacity-0 group-hover:max-w-[240px] group-hover:opacity-100 group-focus-visible:max-w-[240px] group-focus-visible:opacity-100 transition-all duration-300 ease-out overflow-hidden whitespace-nowrap pr-0 group-hover:pr-3 group-focus-visible:pr-3 text-[11px] uppercase tracking-wider font-medium">
+                  {copy.b2b.backToShirtCatalog}
+                </span>
               </button>
               {/* Quick Scroll Section Pills */}
               <div className="hidden md:flex items-center gap-1.5 text-[11px]">

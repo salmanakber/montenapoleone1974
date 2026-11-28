@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, useScroll, useTransform } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Building2,
   Check,
@@ -149,12 +149,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 }) => {
   const [showStickyBar, setShowStickyBar] = useState(false);
   const desktopSectionRef = useRef<HTMLDivElement>(null);
-  const { scrollYProgress: sectionProgress } = useScroll({
-    target: desktopSectionRef,
-    offset: ['start start', 'end end'],
-  });
-  const yColLeft = useTransform(sectionProgress, [0, 1], [0, -18]);
-  const yColRight = useTransform(sectionProgress, [0, 1], [14, -14]);
+  // Gallery columns stay aligned (no opposing parallax drift).
 
   const fitSectionRef = useRef<HTMLButtonElement>(null);
   const collarSectionRef = useRef<HTMLDivElement>(null);
@@ -245,7 +240,26 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [tailoringOpen, setTailoringOpen] = useState(true);
   const [showMoreMeasurements, setShowMoreMeasurements] = useState(true);
   const [activeTailorEditor, setActiveTailorEditor] = useState<TailoringZoneKey | null>(null);
+  const [diagramZone, setDiagramZone] = useState<{
+    key: TailoringZoneKey;
+    label: string;
+    cm: number;
+  } | null>(null);
+  const [tailoringPolicyOpen, setTailoringPolicyOpen] = useState(false);
+  const tailoringPolicyTimer = useRef<number | null>(null);
   const [descExpanded, setDescExpanded] = useState(false);
+
+  const showTailoringPolicyNotice = () => {
+    setTailoringPolicyOpen(true);
+    if (tailoringPolicyTimer.current) window.clearTimeout(tailoringPolicyTimer.current);
+    tailoringPolicyTimer.current = window.setTimeout(() => setTailoringPolicyOpen(false), 10000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (tailoringPolicyTimer.current) window.clearTimeout(tailoringPolicyTimer.current);
+    };
+  }, []);
 
   // Verified Purchaser-Only Product Reviews State
   const [reviewsData, setReviewsData] = useState<ProductReviewsResponse>({
@@ -572,9 +586,14 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             type="button"
             onClick={onBack}
             aria-label={copy.pdp.backToCatalog}
-            className="absolute top-3 left-3 z-10 w-8 h-8 bg-white/90 hover:bg-white border border-black/10 flex items-center justify-center text-[#1A1A1A] shadow-sm cursor-pointer"
+            className="group absolute top-3 left-3 z-10 inline-flex items-center h-8 max-w-[min(70vw,220px)] bg-white/95 hover:bg-white border border-black/10 text-[#1A1A1A] shadow-sm cursor-pointer overflow-hidden"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <span className="w-8 h-8 shrink-0 flex items-center justify-center">
+              <ChevronLeft className="w-4 h-4" />
+            </span>
+            <span className="max-w-0 opacity-0 group-hover:max-w-[180px] group-hover:opacity-100 group-focus-visible:max-w-[180px] group-focus-visible:opacity-100 transition-all duration-300 ease-out overflow-hidden whitespace-nowrap pr-0 group-hover:pr-3 group-focus-visible:pr-3 text-[11px] uppercase tracking-wider font-medium">
+              {copy.pdp.backToCatalog}
+            </span>
           </button>
 
           {/* MOBILE ONLY (< md): Compact Swipeable Image Slider (fixed slots) */}
@@ -711,7 +730,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             data-testid="desktop-pdp-gallery"
             className="hidden md:grid md:grid-cols-2 gap-3"
           >
-            <motion.div style={{ y: yColLeft }} className="space-y-3">
+            <div className="space-y-3">
               {gallery
                 .map((imgUrl, idx) => ({ imgUrl, idx }))
                 .filter((_, pos) => pos % 2 === 0)
@@ -756,9 +775,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     )}
                   </button>
                 ))}
-            </motion.div>
+            </div>
 
-            <motion.div style={{ y: yColRight }} className="space-y-3">
+            <div className="space-y-3">
               {gallery
                 .map((imgUrl, idx) => ({ imgUrl, idx }))
                 .filter((_, pos) => pos % 2 === 1)
@@ -1023,20 +1042,27 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               <ChevronRight className="w-4 h-4 text-neutral-500" />
             </button>
 
-            {/* Module 2: Choose collar (optional) with Blue Radio Dots */}
-            <div ref={collarSectionRef} className="border border-black/15 bg-white">
+            {/* Module 2: Choose collar (optional) */}
+            <div ref={collarSectionRef} className="border border-black/10 bg-white">
               <button
                 type="button"
                 onClick={() => setCollarOpen((prev) => !prev)}
                 aria-expanded={collarOpen}
-                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#FAFAFA] cursor-pointer"
+                className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-[#FAFAFA] cursor-pointer"
               >
-                <div>
-                  <span className="text-xs font-medium text-[#1A1A1A]">{copy.pdp.chooseCollar}</span>
-                  <div className="text-[11px] text-neutral-500 mt-0.5">{collar}</div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
+                      {copy.pdp.chooseCollar.replace(/\s*\(.*?\)\s*$/, '')}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wider text-neutral-500 border border-neutral-200 px-1.5 py-0.5">
+                      {copy.pdp.optionalBadge}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-neutral-600 mt-1 truncate">{collar}</div>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 text-neutral-500 transition-transform ${
+                  className={`w-4 h-4 text-neutral-500 transition-transform shrink-0 ${
                     collarOpen ? 'rotate-180' : ''
                   }`}
                 />
@@ -1045,49 +1071,49 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               {collarOpen && (
                 <div
                   data-testid="pdp-collar-grid"
-                  className="p-3 grid grid-cols-2 gap-3 border-t border-black/10 bg-[#FAFAFA]"
+                  className="px-3 pb-3 pt-1 grid grid-cols-2 gap-2 border-t border-black/5"
                 >
                   {orderedCollars.map((c) => {
                     const selected = collar === c.name;
-                    const hint = c.subtitle || COLLAR_META[c.name]?.hint || 'Bespoke option';
+                    const hint = c.subtitle || COLLAR_META[c.name]?.hint || '';
                     return (
                       <button
                         key={c.name}
                         type="button"
                         onClick={() => setCollar(c.name)}
-                        className={`group overflow-hidden border text-center flex flex-col transition-all cursor-pointer bg-white ${
+                        className={`group text-left overflow-hidden border bg-white transition-colors cursor-pointer ${
                           selected
-                            ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
-                            : 'border-black/10 hover:border-black/35'
+                            ? 'border-[#142B4E]'
+                            : 'border-neutral-200 hover:border-neutral-400'
                         }`}
                       >
-                        <div className="relative w-full h-32 sm:h-36 bg-[#F4F3F1] border-b border-black/10 overflow-hidden flex items-center justify-center p-1">
+                        <div className="relative aspect-[5/4] bg-[#F3F3F3] overflow-hidden flex items-center justify-center">
                           {c.imageUrl ? (
                             <img
                               src={c.imageUrl}
                               alt={c.name}
                               referrerPolicy="no-referrer"
-                              className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                              className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-400"
                             />
                           ) : (
                             <CollarIllustration name={c.name} />
                           )}
-                          <span
-                            className={`absolute top-2 left-2 w-4 h-4 rounded-full bg-white/95 border shadow-sm flex items-center justify-center ${
-                              selected ? 'border-[#1D63DC]' : 'border-neutral-300'
-                            }`}
-                          >
-                            {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
-                          </span>
                           {c.isDefault && (
-                            <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
+                            <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-white/95 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold border border-black/5">
                               {copy.pdp.defaultBadge}
                             </span>
                           )}
+                          {selected && (
+                            <span className="absolute bottom-0 inset-x-0 h-0.5 bg-[#142B4E]" />
+                          )}
                         </div>
-                        <div className="px-2.5 py-2.5 w-full bg-white">
-                          <div className="text-xs font-medium text-[#1A1A1A] truncate">{c.name}</div>
-                          <div className="text-[10px] text-neutral-500 mt-0.5 truncate">{hint}</div>
+                        <div className="px-2.5 py-2">
+                          <div className="text-[11px] font-semibold text-[#1A1A1A] truncate">
+                            {c.name}
+                          </div>
+                          {hint && (
+                            <div className="text-[10px] text-neutral-500 mt-0.5 truncate">{hint}</div>
+                          )}
                         </div>
                       </button>
                     );
@@ -1096,31 +1122,35 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               )}
             </div>
 
-            {/* Module 3: Choose cuff (optional) — Backend-Editable Visual Cuff Showcase */}
-            <div ref={cuffSectionRef} className="border border-black/15 bg-white">
+            {/* Module 3: Choose cuff (optional) */}
+            <div ref={cuffSectionRef} className="border border-black/10 bg-white">
               <button
                 type="button"
                 onClick={() => setCuffOpen((prev) => !prev)}
                 aria-expanded={cuffOpen}
-                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#FAFAFA] cursor-pointer"
+                className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-[#FAFAFA] cursor-pointer"
               >
-                <div>
-                  <span className="text-xs font-medium text-[#1A1A1A]">{copy.pdp.chooseCuff}</span>
-                  <div className="text-[11px] text-neutral-500 mt-0.5">{cuff}</div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
+                      {copy.pdp.chooseCuff.replace(/\s*\(.*?\)\s*$/, '')}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wider text-neutral-500 border border-neutral-200 px-1.5 py-0.5">
+                      {copy.pdp.optionalBadge}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-neutral-600 mt-1 truncate">{cuff}</div>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 text-neutral-500 transition-transform ${
+                  className={`w-4 h-4 text-neutral-500 transition-transform shrink-0 ${
                     cuffOpen ? 'rotate-180' : ''
                   }`}
                 />
               </button>
 
               {cuffOpen && (
-                <div className="border-t border-black/10 bg-[#FAFAFA] p-3 space-y-3">
-                  <div className="text-[11px] text-neutral-500 px-0.5">
-                    {copy.pdp.cuffShowcaseCaption}
-                  </div>
-                  <div data-testid="pdp-cuff-grid" className="grid grid-cols-2 gap-3">
+                <div className="border-t border-black/5 px-3 pb-3 pt-1 space-y-2.5">
+                  <div data-testid="pdp-cuff-grid" className="grid grid-cols-2 gap-2">
                     {orderedCuffs.map((cf) => {
                       const selected = cuff === cf.name;
                       const subtitle = cf.subtitle || CUFF_SPECS[cf.name]?.subtitle;
@@ -1129,40 +1159,40 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           key={cf.name}
                           type="button"
                           onClick={() => setCuff(cf.name)}
-                          className={`group overflow-hidden border text-center flex flex-col transition-all cursor-pointer bg-white ${
+                          className={`group text-left overflow-hidden border bg-white transition-colors cursor-pointer ${
                             selected
-                              ? 'border-[#142B4E] ring-1 ring-[#142B4E] shadow-sm'
-                              : 'border-black/10 hover:border-black/35'
+                              ? 'border-[#142B4E]'
+                              : 'border-neutral-200 hover:border-neutral-400'
                           }`}
                         >
-                          <div className="relative w-full h-32 sm:h-36 bg-[#F4F3F1] border-b border-black/10 overflow-hidden flex items-center justify-center p-1">
+                          <div className="relative aspect-[5/4] bg-[#F3F3F3] overflow-hidden flex items-center justify-center">
                             {cf.imageUrl ? (
                               <img
                                 src={cf.imageUrl}
                                 alt={cf.name}
                                 referrerPolicy="no-referrer"
-                                className="w-full h-full object-contain group-hover:scale-[1.03] transition-transform duration-300"
+                                className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-400"
                               />
                             ) : (
                               <CuffShowcaseIllustration name={cf.name} selected={selected} />
                             )}
-                            <span
-                              className={`absolute top-2 left-2 w-4 h-4 rounded-full bg-white/95 border shadow-sm flex items-center justify-center ${
-                                selected ? 'border-[#1D63DC]' : 'border-neutral-300'
-                              }`}
-                            >
-                              {selected && <span className="w-2 h-2 rounded-full bg-[#1D63DC]" />}
-                            </span>
                             {cf.isDefault && (
-                              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider font-semibold shadow-sm">
+                              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-white/95 text-[#142B4E] text-[9px] uppercase tracking-wider font-semibold border border-black/5">
                                 {copy.pdp.defaultBadge}
                               </span>
                             )}
+                            {selected && (
+                              <span className="absolute bottom-0 inset-x-0 h-0.5 bg-[#142B4E]" />
+                            )}
                           </div>
-                          <div className="px-2.5 py-2.5 w-full bg-white">
-                            <div className="text-xs font-medium text-[#1A1A1A] truncate">{cf.name}</div>
+                          <div className="px-2.5 py-2">
+                            <div className="text-[11px] font-semibold text-[#1A1A1A] truncate">
+                              {cf.name}
+                            </div>
                             {subtitle && (
-                              <div className="text-[10px] text-neutral-500 mt-0.5 truncate">{subtitle}</div>
+                              <div className="text-[10px] text-neutral-500 mt-0.5 truncate">
+                                {subtitle}
+                              </div>
                             )}
                           </div>
                         </button>
@@ -1170,7 +1200,6 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     })}
                   </div>
 
-                  {/* Active Cuff Craftsmanship Preview Banner */}
                   {(() => {
                     const activeOpt = orderedCuffs.find((x) => x.name === cuff);
                     const specFallback = CUFF_SPECS[cuff];
@@ -1178,25 +1207,25 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     const stitchText = activeOpt?.stitchSpec || specFallback?.stitchSpec;
                     if (!detailText && !stitchText) return null;
                     return (
-                      <div className="p-2.5 bg-white border border-black/10 flex items-center gap-3 text-[11px]">
-                        <div className="shrink-0 w-16 h-16 bg-[#F4F3F1] border border-black/10 overflow-hidden flex items-center justify-center p-0.5">
+                      <div className="px-3 py-2.5 bg-[#F7F7F7] border border-black/5 flex items-start gap-3 text-[11px]">
+                        <div className="shrink-0 w-14 h-14 bg-white border border-black/5 overflow-hidden flex items-center justify-center relative">
                           {activeOpt?.imageUrl ? (
                             <img
                               src={activeOpt.imageUrl}
                               alt={cuff}
                               referrerPolicy="no-referrer"
-                              className="w-full h-full object-contain"
+                              className="absolute inset-0 w-full h-full object-cover"
                             />
                           ) : (
                             <CuffShowcaseIllustration name={cuff} selected />
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <div className="font-semibold text-[#142B4E]">
-                            {cuff} — {copy.pdp.atelierSpec}
+                        <div className="min-w-0 pt-0.5">
+                          <div className="font-semibold uppercase tracking-wider text-[10px] text-[#142B4E]">
+                            {cuff} · {copy.pdp.atelierSpec}
                           </div>
                           {detailText && (
-                            <div className="text-neutral-600 leading-snug mt-0.5">{detailText}</div>
+                            <div className="text-neutral-600 leading-snug mt-1">{detailText}</div>
                           )}
                           {stitchText && (
                             <div className="text-[10px] font-mono-tabular text-neutral-500 mt-1">
@@ -1211,15 +1240,22 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               )}
             </div>
 
-            {/* Module 4: Tailoring (optional) / Skreddersøm (valgfritt) — Matching Screenshot Control */}
-            <div ref={tailoringSectionRef} className="border border-black/15 bg-white">
+            {/* Module 4: Tailoring (optional) */}
+            <div ref={tailoringSectionRef} className="border border-black/10 bg-white">
               <button
                 type="button"
                 onClick={() => setTailoringOpen((prev) => !prev)}
                 aria-expanded={tailoringOpen}
-                className="w-full px-4 py-3 bg-[#C8C8C8] hover:bg-[#BFBFBF] text-[#1A1A1A] flex items-center justify-between text-left transition-colors cursor-pointer"
+                className="w-full px-4 py-3.5 bg-[#F0F0F0] hover:bg-[#E8E8E8] text-[#1A1A1A] flex items-center justify-between text-left transition-colors cursor-pointer"
               >
-                <span className="text-xs font-medium">{copy.pdp.tailoringOptional}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[#142B4E]">
+                    {copy.pdp.tailoringOptional.replace(/\s*\(.*?\)\s*$/, '')}
+                  </span>
+                  <span className="text-[9px] uppercase tracking-wider text-neutral-500 border border-neutral-300 px-1.5 py-0.5 bg-white">
+                    {copy.pdp.optionalBadge}
+                  </span>
+                </div>
                 <ChevronDown
                   className={`w-4 h-4 text-[#1A1A1A] transition-transform ${
                     tailoringOpen ? 'rotate-180' : ''
@@ -1257,6 +1293,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                               zone={zone.key}
                               sizeLabel={`${fit} · ${size}`}
                               cmValue={adjustedCm}
+                              onActivate={() =>
+                                setDiagramZone({
+                                  key: zone.key,
+                                  label: zone.label,
+                                  cm: adjustedCm,
+                                })
+                              }
                             />
                             <div className="min-w-0">
                               <div className="font-semibold text-[13px] text-[#1A1A1A] leading-tight">
@@ -1268,12 +1311,25 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                                   {zone.baseCm} cm
                                 </span>
                                 {isModified && (
-                                  <span className="text-[#1D63DC] font-semibold">
+                                  <span className="text-[#142B4E] font-semibold">
                                     {' '}
                                     → {adjustedCm} cm ({zone.adjustmentCm > 0 ? `+${zone.adjustmentCm}` : zone.adjustmentCm} cm)
                                   </span>
                                 )}
                               </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDiagramZone({
+                                    key: zone.key,
+                                    label: zone.label,
+                                    cm: adjustedCm,
+                                  })
+                                }
+                                className="text-[10px] text-[#142B4E] hover:underline mt-0.5 cursor-pointer"
+                              >
+                                {copy.pdp.viewMeasurementDiagram}
+                              </button>
                               <div className="text-[11px] font-medium text-[#2E7D32] mt-0.5">
                                 {zone.isPaid
                                   ? formatRegionalPrice(unitSurcharge, region.code)
@@ -1286,7 +1342,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                             type="button"
                             onClick={() => setActiveTailorEditor(isEditing ? null : zone.key)}
                             aria-label={`${copy.pdp.change} ${zone.label}`}
-                            className="text-xs font-medium text-[#1D63DC] hover:underline shrink-0 cursor-pointer"
+                            className="text-xs font-medium text-[#142B4E] hover:underline shrink-0 cursor-pointer"
                           >
                             {isEditing ? copy.pdp.tailoringDone : copy.pdp.change}
                           </button>
@@ -1301,13 +1357,19 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                                 max={6}
                                 step={0.5}
                                 value={zone.adjustmentCm}
-                                onChange={(e) => zone.setAdjustmentCm(Number(e.target.value))}
+                                onChange={(e) => {
+                                  zone.setAdjustmentCm(Number(e.target.value));
+                                  showTailoringPolicyNotice();
+                                }}
                                 aria-label={`${zone.label} adjustment cm`}
                                 className="flex-1 accent-[#142B4E]"
                               />
                               <button
                                 type="button"
-                                onClick={() => zone.setAdjustmentCm(0)}
+                                onClick={() => {
+                                  zone.setAdjustmentCm(0);
+                                  showTailoringPolicyNotice();
+                                }}
                                 className="text-[10px] px-2 py-0.5 border border-black/15 text-neutral-600 hover:text-black cursor-pointer"
                               >
                                 {copy.pdp.tailoringReset}
@@ -1941,6 +2003,115 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Tailoring measurement diagram */}
+      <AnimatePresence>
+        {diagramZone && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-[#142B4E]/35 cursor-pointer"
+              aria-label="Close diagram"
+              onClick={() => setDiagramZone(null)}
+            />
+            <motion.div
+              role="dialog"
+              aria-label={copy.pdp.measurementDiagramTitle}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              className="relative w-full max-w-md bg-white border border-black/10 shadow-2xl p-5 sm:p-6"
+            >
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                    {copy.pdp.measurementDiagramTitle}
+                  </div>
+                  <div className="text-sm font-semibold text-[#142B4E] mt-0.5">
+                    {diagramZone.label}
+                  </div>
+                  <div className="text-[11px] font-mono-tabular text-neutral-600 mt-1">
+                    {fit} · {size} · {diagramZone.cm} cm
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDiagramZone(null)}
+                  className="p-1 text-neutral-500 hover:text-black cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex justify-center py-2 bg-[#F7F7F7] border border-black/5">
+                <TailoringZoneSketch
+                  zone={diagramZone.key}
+                  sizeLabel={`${fit} · ${size}`}
+                  cmValue={diagramZone.cm}
+                  variant="diagram"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Made-to-measure policy notice when tailoring values change */}
+      <AnimatePresence>
+        {tailoringPolicyOpen && (
+          <motion.aside
+            role="status"
+            aria-live="polite"
+            initial={{ opacity: 0, y: 24, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: 16, x: '-50%' }}
+            className="fixed bottom-24 lg:bottom-8 left-1/2 z-[70] w-[min(94vw,420px)] bg-white border border-[#142B4E]/20 shadow-2xl"
+          >
+            <div className="h-0.5 bg-[#142B4E]" />
+            <div className="p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                  {copy.pdp.tailoringPolicyHeading}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTailoringPolicyOpen(false)}
+                  className="p-0.5 text-neutral-400 hover:text-black cursor-pointer"
+                  aria-label={copy.pdp.tailoringPolicyDismiss}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-2.5 text-[11px] leading-relaxed text-[#1A1A1A]">
+                <div>
+                  <div className="font-semibold uppercase tracking-wide text-[10px] text-neutral-500 mb-1">
+                    {copy.pdp.tailoringPolicyReturnsTitle}
+                  </div>
+                  <p>{copy.pdp.tailoringPolicyReturnsBody}</p>
+                </div>
+                <div className="border-t border-black/5 pt-2.5">
+                  <div className="font-semibold uppercase tracking-wide text-[10px] text-neutral-500 mb-1">
+                    {copy.pdp.tailoringPolicyDeliveryTitle}
+                  </div>
+                  <p>{copy.pdp.tailoringPolicyDeliveryBody}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTailoringPolicyOpen(false)}
+                className="w-full py-2 bg-[#142B4E] text-white text-[10px] uppercase tracking-wider font-semibold cursor-pointer hover:bg-[#0f213d]"
+              >
+                {copy.pdp.tailoringPolicyDismiss}
+              </button>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
     </main>
   );
 };
