@@ -111,10 +111,13 @@ import {
   isFabricCloseupUrl,
   isProductVideoUrl,
   normalizeGallerySlots,
+  normalizeGalleryVisibility,
   PRODUCT_GALLERY_SLOTS,
   resolveListingImage,
   resolveListingSlotIndex,
+  swapGallerySlotImages,
 } from '../utils/productGallery.ts';
+import { CategoryTargetSelect } from './AdminMenuAndDatabase.tsx';
 import { ProductGalleryMedia } from './ProductGalleryMedia.tsx';
 
 interface AdminDashboardProps {
@@ -278,6 +281,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editGallerySlots, setEditGallerySlots] = useState<string[]>(() =>
     normalizeGallerySlots([])
+  );
+  const [editGalleryVisibility, setEditGalleryVisibility] = useState<boolean[]>(() =>
+    normalizeGalleryVisibility(undefined)
   );
   /** Which gallery slot is the catalog/listing (front) image. Default = first filled. */
   const [editListingSlotIndex, setEditListingSlotIndex] = useState(0);
@@ -1026,16 +1032,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleMoveGallerySlot = (fromIdx: number, toIdx: number) => {
-    if (fromIdx === toIdx || toIdx < 0 || toIdx >= editGallerySlots.length) return;
-    setEditGallerySlots((prev) => {
-      // Swap in place (do not splice — that shifts fixed slot positions).
-      const next = canonicalizeGallerySlots(prev);
-      const fromUrl = next[fromIdx] || '';
-      const toUrl = next[toIdx] || '';
-      next[fromIdx] = toUrl;
-      next[toIdx] = fromUrl;
-      return canonicalizeGallerySlots(next);
+    // Swap images between fixed slots — never reorder the slot labels themselves.
+    setEditGallerySlots((prev) => swapGallerySlotImages(prev, fromIdx, toIdx));
+    setEditListingSlotIndex((listingIdx) => {
+      if (listingIdx === fromIdx) return toIdx;
+      if (listingIdx === toIdx) return fromIdx;
+      return listingIdx;
     });
+    setDragGalleryIdx(null);
+    setDragOverGalleryIdx(null);
   };
 
   const handleSaveProductEdit = async () => {
@@ -1075,6 +1080,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       primary_image: nextPrimary,
       secondary_image: nextSecondary,
       gallery: orderedGallery,
+      gallery_slot_visible: normalizeGalleryVisibility(editGalleryVisibility),
+      listing_slot_index: listingIdx,
       category_slug: assigned[0],
       category_slugs: assigned,
       sizes: activeVariantSizes.length > 0 ? activeVariantSizes : editingProduct.sizes,
@@ -1143,6 +1150,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           cloned.secondary_image
         );
         setEditGallerySlots(slots);
+        setEditGalleryVisibility(normalizeGalleryVisibility(cloned.gallery_slot_visible));
         setEditListingSlotIndex(resolveListingSlotIndex(slots, null, cloned.primary_image));
         setEditProductTab('gallery');
         setEditingProduct(cloned);
@@ -2769,6 +2777,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                           cloned.secondary_image
                                         );
                                         setEditGallerySlots(slots);
+                                        setEditGalleryVisibility(
+                                          normalizeGalleryVisibility(cloned.gallery_slot_visible)
+                                        );
                                         setEditListingSlotIndex(
                                           resolveListingSlotIndex(
                                             slots,
@@ -2984,6 +2995,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <HeroSliderAdminPanel
                   authToken={authToken}
                   slides={heroSlides}
+                  categories={categories}
                   onRefresh={loadAdminData}
                   onRefreshStorefront={onRefreshStorefront}
                   onPickImage={(cb) => {
@@ -2997,6 +3009,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     authToken={authToken}
                     homePage={homePage}
                     products={products}
+                    categories={categories}
                     onRefresh={loadAdminData}
                     onRefreshStorefront={onRefreshStorefront}
                     onPickImage={(cb) => {
@@ -3015,6 +3028,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             hasPermission(authUser, 'manage_settings') && (
               <PromotionsAndBulkAdminPanel
                 authToken={authToken}
+                categories={categories}
                 topBanner={topBanner}
                 promoRules={promoRules}
                 bulkDiscount={bulkDiscount}
@@ -4230,10 +4244,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Product Gallery — Fixed 6 Slots
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
-                  Keep this order so uploads always land in the right place. Fabric close-ups always
-                  go to slot 5 and videos to slot 6. Empty slots stay in position here and show as
-                  light-gray placeholders on the product page. Listing image defaults to the first
-                  shirt photo — never the fabric close-up.
+                  Slot labels stay fixed. Drag an image onto another slot to swap media only.
+                  Fabric close-up files always pin to slot 5; videos to slot 6. Empty visible slots
+                  show gray on the product page — uncheck “Show on product page” to hide a slot.
                 </p>
               </div>
 
@@ -4241,6 +4254,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {PRODUCT_GALLERY_SLOTS.map((slot) => {
                   const idx = slot.index;
                   const slotUrl = editGallerySlots[idx] || '';
+                  const slotVisible = editGalleryVisibility[idx] !== false;
                   const isListing =
                     Boolean(slotUrl) &&
                     !isProductVideoUrl(slotUrl) &&
@@ -4249,12 +4263,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       editListingSlotIndex,
                       editingProduct.primary_image
                     ) === idx;
+                  const isDragOver = dragOverGalleryIdx === idx && dragGalleryIdx !== idx;
                   return (
                     <div
                       key={slot.id}
                       data-testid={`gallery-slot-${idx}`}
-                      className={`bg-white border p-2 space-y-1.5 ${
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
+                          setDragOverGalleryIdx(idx);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from =
+                          dragGalleryIdx ??
+                          Number(e.dataTransfer.getData('text/plain'));
+                        if (Number.isFinite(from)) handleMoveGallerySlot(Number(from), idx);
+                      }}
+                      className={`bg-white border p-2 space-y-1.5 transition-colors ${
                         isListing ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                      } ${slotVisible ? '' : 'opacity-70'} ${
+                        isDragOver ? 'ring-2 ring-[#142B4E] bg-[#F3F6FA]' : ''
                       }`}
                     >
                       <div className="space-y-0.5 min-h-[42px]">
@@ -4300,7 +4333,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="text-[9px] text-neutral-500 leading-snug">{slot.hint}</div>
                       </div>
 
-                      <div className="aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center relative">
+                      <div
+                        draggable={Boolean(slotUrl)}
+                        onDragStart={(e) => {
+                          if (!slotUrl) return;
+                          setDragGalleryIdx(idx);
+                          e.dataTransfer.setData('text/plain', String(idx));
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragEnd={() => {
+                          setDragGalleryIdx(null);
+                          setDragOverGalleryIdx(null);
+                        }}
+                        className={`aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center relative ${
+                          slotUrl ? 'cursor-grab active:cursor-grabbing' : ''
+                        } ${dragGalleryIdx === idx ? 'opacity-50' : ''}`}
+                      >
                         {slotUrl ? (
                           isProductVideoUrl(slotUrl) ? (
                             <ProductGalleryMedia
@@ -4319,7 +4367,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           )
                         ) : (
                           <span className="text-[9px] text-neutral-400 text-center px-1">
-                            {slot.kind === 'video' ? 'No video' : 'No image'}
+                            {slot.kind === 'video' ? 'No video' : 'Drop image here'}
                           </span>
                         )}
                         {isListing && (
@@ -4329,6 +4377,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         )}
                       </div>
 
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => handleMoveGallerySlot(idx, idx - 1)}
+                          aria-label={`Swap image with previous slot`}
+                          className="flex-1 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === PRODUCT_GALLERY_SLOTS.length - 1}
+                          onClick={() => handleMoveGallerySlot(idx, idx + 1)}
+                          aria-label={`Swap image with next slot`}
+                          className="flex-1 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
+                        >
+                          →
+                        </button>
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
@@ -4336,6 +4405,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       >
                         {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
                       </button>
+                      <label className="flex items-center gap-1.5 px-0.5 py-0.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={slotVisible}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setEditGalleryVisibility((prev) => {
+                              const next = normalizeGalleryVisibility(prev);
+                              next[idx] = checked;
+                              return next;
+                            });
+                          }}
+                          className="accent-[#142B4E]"
+                        />
+                        <span className="text-[9px] text-neutral-600 leading-snug">
+                          Show on product page
+                        </span>
+                      </label>
                       {slotUrl && slot.kind !== 'video' && (
                         <button
                           type="button"
@@ -4562,6 +4649,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       ))}
                     </select>
                   </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={editVarFitInput}
+                      onChange={(e) => setEditVarFitInput(e.target.value)}
+                      placeholder="Custom body fit name…"
+                      className="flex-1 px-2 py-1.5 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = editVarFitInput.trim();
+                        if (!clean) return;
+                        setEditVarSelectedFits((prev) =>
+                          prev.includes(clean) ? prev : [...prev, clean]
+                        );
+                        setEditVarFitInput('');
+                      }}
+                      className="px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] text-[10px] uppercase tracking-wider cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -4618,6 +4727,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={editVarSizeInput}
+                      onChange={(e) => setEditVarSizeInput(e.target.value)}
+                      placeholder="Custom size (e.g. 47 / 5XL)…"
+                      className="flex-1 px-2 py-1.5 border border-neutral-300 text-[11px] outline-none focus:border-[#142B4E] font-mono-tabular"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = editVarSizeInput.trim();
+                        if (!clean) return;
+                        setEditVarSelectedSizes((prev) =>
+                          prev.includes(clean) ? prev : [...prev, clean]
+                        );
+                        setEditVarSizeInput('');
+                      }}
+                      className="px-2.5 py-1.5 border border-[#142B4E] text-[#142B4E] text-[10px] uppercase tracking-wider cursor-pointer"
+                    >
+                      Add
+                    </button>
                   </div>
                 </div>
               </div>

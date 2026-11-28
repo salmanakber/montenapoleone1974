@@ -26,7 +26,7 @@ function categoryOptionLabel(c: Pick<CategoryRecord, 'slug' | 'name_en' | 'paren
   return name === c.slug ? `${prefix}${c.slug}` : `${prefix}${name} (${c.slug})`;
 }
 
-function CategoryTargetSelect({
+export function CategoryTargetSelect({
   value,
   categories,
   onChange,

@@ -413,6 +413,11 @@ export function initializeDatabase(): void {
   ensureColumn('newsletter_subscribers', 'mailchimp_member_id', 'TEXT');
   ensureColumn('newsletter_subscribers', 'synced_at', 'TEXT');
   ensureColumn('products', 'category_slugs_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(
+    'products',
+    'gallery_slot_visible_json',
+    "TEXT NOT NULL DEFAULT '[true,true,true,true,true,true]'"
+  );
   ensureColumn('product_localizations', 'seo_title', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('product_localizations', 'seo_description', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('product_localizations', 'seo_keywords', "TEXT NOT NULL DEFAULT ''");

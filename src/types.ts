@@ -217,6 +217,10 @@ export interface Product {
   primary_image: string;
   secondary_image: string;
   gallery: string[];
+  /** Per-slot storefront visibility (length 6). Hidden slots are omitted on PDP. */
+  gallery_slot_visible?: boolean[];
+  /** Preferred catalog/listing slot index within the fixed gallery. */
+  listing_slot_index?: number | null;
   collars: string[];
   cuffs: string[];
   sizes: string[];

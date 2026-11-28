@@ -1,6 +1,6 @@
 /**
- * Fixed product gallery order — used in admin product editor and PDP.
- * Slot index is stable so future bulk image uploads map correctly.
+ * Fixed product gallery slots — labels/order never change.
+ * Only media URLs move between slots. Fabric close-ups belong in Slot 05.
  *
  * 0 Folded shirt (main)
  * 1 Ghost mannequin - front
@@ -72,18 +72,19 @@ export function isProductVideoUrl(url: string | null | undefined): boolean {
   return /\.(mp4|webm|mov|ogg|m4v)$/i.test(clean);
 }
 
-/** Fabric macro shots by filename / path (dedicated uploads or named detail shots). */
+/**
+ * Fabric Slot 05 only — match committed fabric-closeup assets / clear fabric paths.
+ * Intentionally narrow so shirt/side/model photos are never pulled into Slot 05.
+ */
 export function isFabricCloseupUrl(url: string | null | undefined): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].toLowerCase();
   const file = clean.split('/').pop() || clean;
   return (
-    clean.includes('fabric-closeup') ||
     clean.includes('/fabric-closeups/') ||
     clean.includes('/media/fabric-closeups/') ||
-    /close[-_]?up/.test(file) ||
-    /fabric[-_]?(detail|macro|swatch|texture)/.test(file) ||
-    /(^|[-_])(swatch|macro|detailed?)([-_.]|$)/.test(file)
+    file.startsWith('fabric-closeup-') ||
+    /fabric[-_]?close[-_]?up/.test(file)
   );
 }
 
@@ -91,116 +92,83 @@ function isListingEligibleUrl(url: string | null | undefined): boolean {
   return Boolean(url) && !isProductVideoUrl(url) && !isFabricCloseupUrl(url);
 }
 
+export function normalizeGalleryVisibility(
+  visible: boolean[] | null | undefined
+): boolean[] {
+  const raw = Array.isArray(visible) ? visible : [];
+  return Array.from({ length: PRODUCT_GALLERY_SLOT_COUNT }, (_, i) =>
+    raw[i] === undefined || raw[i] === null ? true : Boolean(raw[i])
+  );
+}
+
+/** Pad/trim to 6 fixed slots — never pack empties or invent mid-slot fills. */
+export function padGallerySlots(gallery: string[] | null | undefined): string[] {
+  const raw = Array.isArray(gallery) ? gallery.map((u) => String(u || '').trim()) : [];
+  return Array.from({ length: PRODUCT_GALLERY_SLOT_COUNT }, (_, i) => raw[i] || '');
+}
+
 /**
- * Keep admin + PDP slot positions fixed:
- * - shirt photos stay in 0–3 (sparse empties allowed → gray on storefront)
- * - fabric close-up always slot 4 (5th tile)
- * - short video always slot 5 (6th tile)
- *
- * Woo often packs [folded, ghost, fabric] into slots 0–2; when slot 4 is empty and
- * only the first three shirt slots are filled, the 3rd image is promoted to fabric.
+ * Pin fabric → Slot 05 and video → Slot 06 when those URLs appear in the wrong index.
+ * Other shirt images stay exactly where they are (empty mid-slots stay empty).
  */
 export function canonicalizeGallerySlots(
   gallery: string[] | null | undefined,
   primary?: string | null,
-  secondary?: string | null
+  _secondary?: string | null
 ): string[] {
-  const slots = normalizeGallerySlots(gallery, primary, secondary);
+  const slots = padGallerySlots(gallery);
+
+  // Only seed slot 0 from primary when the whole gallery is empty.
+  const primaryTrim = String(primary || '').trim();
+  if (primaryTrim && !slots.some(Boolean)) {
+    if (isFabricCloseupUrl(primaryTrim)) slots[FABRIC_CLOSEUP_SLOT_INDEX] = primaryTrim;
+    else if (isProductVideoUrl(primaryTrim)) slots[SHORT_VIDEO_SLOT_INDEX] = primaryTrim;
+    else slots[0] = primaryTrim;
+  }
+
   let fabric = '';
   let video = '';
-
   for (let i = 0; i < slots.length; i++) {
     const u = slots[i];
     if (!u) continue;
     if (isFabricCloseupUrl(u)) {
       if (!fabric) fabric = u;
-      slots[i] = '';
+      if (i !== FABRIC_CLOSEUP_SLOT_INDEX) slots[i] = '';
       continue;
     }
     if (isProductVideoUrl(u)) {
       if (!video) video = u;
-      slots[i] = '';
+      if (i !== SHORT_VIDEO_SLOT_INDEX) slots[i] = '';
     }
   }
-
-  // Classic 3-shot Woo pack: [main, ghost, fabric-detail] landed in 0/1/2
-  if (
-    !fabric &&
-    !slots[FABRIC_CLOSEUP_SLOT_INDEX] &&
-    slots[0] &&
-    slots[1] &&
-    slots[2] &&
-    !slots[3]
-  ) {
-    fabric = slots[2];
-    slots[2] = '';
-  }
-
-  // Non-fabric media that landed on fabric/video tiles → first empty shirt slot
-  for (const i of [FABRIC_CLOSEUP_SLOT_INDEX, SHORT_VIDEO_SLOT_INDEX]) {
-    const u = slots[i];
-    if (!u || isFabricCloseupUrl(u) || isProductVideoUrl(u)) continue;
-    const dest = slots.findIndex((x, idx) => idx < FABRIC_CLOSEUP_SLOT_INDEX && !x);
-    if (dest >= 0) slots[dest] = u;
-    slots[i] = '';
-  }
-
   if (fabric) slots[FABRIC_CLOSEUP_SLOT_INDEX] = fabric;
   if (video) slots[SHORT_VIDEO_SLOT_INDEX] = video;
   return slots;
 }
 
-/** Always return exactly 6 slots (pad / trim) for admin editing. */
+/** @deprecated alias — prefer padGallerySlots / canonicalizeGallerySlots */
 export function normalizeGallerySlots(
   gallery: string[] | null | undefined,
   primary?: string | null,
   secondary?: string | null
 ): string[] {
-  const raw = Array.isArray(gallery) ? gallery.map((u) => String(u || '').trim()) : [];
-  const slots = Array.from({ length: PRODUCT_GALLERY_SLOT_COUNT }, (_, i) => raw[i] || '');
-  const primaryTrim = String(primary || '').trim();
-  const secondaryTrim = String(secondary || '').trim();
-  // Only backfill primary/secondary into empty early slots when they are not already in the gallery
-  // (avoids duplicating a lone fabric-closeup into slot 0).
-  if (
-    primaryTrim &&
-    !slots.includes(primaryTrim) &&
-    isListingEligibleUrl(primaryTrim)
-  ) {
-    if (!slots[0]) slots[0] = primaryTrim;
-  }
-  if (
-    secondaryTrim &&
-    secondaryTrim !== primaryTrim &&
-    !slots.includes(secondaryTrim) &&
-    isListingEligibleUrl(secondaryTrim)
-  ) {
-    if (!slots[1]) slots[1] = secondaryTrim;
-  }
-  // Fabric / video that only exist on primary should still land in their fixed slots
-  if (primaryTrim && isFabricCloseupUrl(primaryTrim) && !slots.includes(primaryTrim)) {
-    slots[FABRIC_CLOSEUP_SLOT_INDEX] = primaryTrim;
-  }
-  if (primaryTrim && isProductVideoUrl(primaryTrim) && !slots.includes(primaryTrim)) {
-    slots[SHORT_VIDEO_SLOT_INDEX] = primaryTrim;
-  }
-  return slots;
+  return canonicalizeGallerySlots(gallery, primary, secondary);
 }
 
 /**
- * Place a media URL into the gallery. Fabric close-ups and videos always map to
- * their fixed slots (5 / 6), even if the admin clicked another tile.
+ * Place a media URL into a chosen slot (swap-friendly).
+ * Fabric close-up files always land in Slot 05; videos in Slot 06.
  */
 export function assignGallerySlotUrl(
   gallery: string[] | null | undefined,
   targetIndex: number,
   url: string
 ): string[] {
-  const next = canonicalizeGallerySlots(gallery);
+  const next = padGallerySlots(gallery);
   const clean = String(url || '').trim();
   if (!clean) {
     if (targetIndex >= 0 && targetIndex < PRODUCT_GALLERY_SLOT_COUNT) next[targetIndex] = '';
-    return next;
+    return canonicalizeGallerySlots(next);
   }
   for (let i = 0; i < next.length; i++) {
     if (next[i] === clean) next[i] = '';
@@ -208,13 +176,31 @@ export function assignGallerySlotUrl(
   let dest = targetIndex;
   if (isFabricCloseupUrl(clean)) dest = FABRIC_CLOSEUP_SLOT_INDEX;
   else if (isProductVideoUrl(clean)) dest = SHORT_VIDEO_SLOT_INDEX;
-  else if (dest === FABRIC_CLOSEUP_SLOT_INDEX || dest === SHORT_VIDEO_SLOT_INDEX) {
-    dest = next.findIndex((u, i) => i < FABRIC_CLOSEUP_SLOT_INDEX && !u);
-    if (dest < 0) dest = 0;
-  }
   if (dest < 0 || dest >= PRODUCT_GALLERY_SLOT_COUNT) dest = 0;
   next[dest] = clean;
-  return next;
+  return canonicalizeGallerySlots(next);
+}
+
+/** Swap two slot images in place — slot labels stay fixed. */
+export function swapGallerySlotImages(
+  gallery: string[] | null | undefined,
+  fromIdx: number,
+  toIdx: number
+): string[] {
+  const next = padGallerySlots(gallery);
+  if (
+    fromIdx === toIdx ||
+    fromIdx < 0 ||
+    toIdx < 0 ||
+    fromIdx >= PRODUCT_GALLERY_SLOT_COUNT ||
+    toIdx >= PRODUCT_GALLERY_SLOT_COUNT
+  ) {
+    return next;
+  }
+  const a = next[fromIdx];
+  next[fromIdx] = next[toIdx];
+  next[toIdx] = a;
+  return canonicalizeGallerySlots(next);
 }
 
 /** Index of the preferred listing/front image within the 6-slot gallery. */
@@ -270,30 +256,44 @@ export function resolveListingImage(product: {
   );
 }
 
+export type GalleryDisplaySlot = {
+  index: number;
+  url: string;
+  visible: boolean;
+};
+
 /**
- * Storefront PDP: always 6 fixed slots ('' = missing).
- * Empty slots render as light-gray placeholders so position stays meaningful.
+ * Storefront PDP slots: fixed order. Hidden slots are omitted.
+ * Visible + empty → light-gray placeholder. Visible + url → media.
  */
 export function resolveGallerySlotsForDisplay(product: {
   gallery?: string[] | null;
   primary_image?: string;
   secondary_image?: string;
-}): string[] {
-  return canonicalizeGallerySlots(
+  gallery_slot_visible?: boolean[] | null;
+}): GalleryDisplaySlot[] {
+  const slots = canonicalizeGallerySlots(
     product.gallery,
     product.primary_image,
     product.secondary_image
   );
+  const visibility = normalizeGalleryVisibility(product.gallery_slot_visible);
+  return slots.map((url, index) => ({
+    index,
+    url,
+    visible: visibility[index],
+  }));
 }
 
-/** Catalog hover / compact UIs: filled media only, still in slot order. */
+/** Catalog hover / compact UIs: filled + visible media only, still in slot order. */
 export function resolveFilledGalleryMedia(product: {
   gallery?: string[] | null;
   primary_image?: string;
   secondary_image?: string;
+  gallery_slot_visible?: boolean[] | null;
 }): string[] {
-  const slots = resolveGallerySlotsForDisplay(product);
-  const filled = slots.filter(Boolean);
+  const display = resolveGallerySlotsForDisplay(product);
+  const filled = display.filter((s) => s.visible && s.url).map((s) => s.url);
   if (filled.length > 0) return filled;
   return [product.primary_image, product.secondary_image].filter(Boolean) as string[];
 }

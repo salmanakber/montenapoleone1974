@@ -13,6 +13,7 @@ import {
 import type {
   AiAdminSettings,
   BulkDiscountSettings,
+  CategoryRecord,
   HeroSlideRecord,
   HomePageSettings,
   Product,
@@ -21,6 +22,7 @@ import type {
   TopBannerVisibility,
 } from '../types.ts';
 import { DEFAULT_HOME_PAGE_SETTINGS, DEFAULT_TOP_BANNER_SETTINGS } from '../utils/commerce.ts';
+import { CategoryTargetSelect } from './AdminMenuAndDatabase.tsx';
 
 // ---------------------------------------------------------------------------
 // 1. HERO SLIDER MANAGER PANEL
@@ -29,6 +31,7 @@ import { DEFAULT_HOME_PAGE_SETTINGS, DEFAULT_TOP_BANNER_SETTINGS } from '../util
 interface HeroSliderAdminPanelProps {
   authToken: string;
   slides: HeroSlideRecord[];
+  categories?: CategoryRecord[];
   onRefresh: () => void;
   onRefreshStorefront: () => void;
   onPickImage: (cb: (url: string) => void) => void;
@@ -37,6 +40,7 @@ interface HeroSliderAdminPanelProps {
 export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
   authToken,
   slides,
+  categories = [],
   onRefresh,
   onRefreshStorefront,
   onPickImage,
@@ -277,12 +281,27 @@ export const HeroSliderAdminPanel: React.FC<HeroSliderAdminPanelProps> = ({
               <div>
                 <label className="block text-[10px] uppercase text-neutral-500 mb-1">Target Value & Order</label>
                 <div className="flex gap-1.5">
-                  <input
-                    value={slide.target_value}
-                    onChange={(e) => updateDraft(slide.id, { target_value: e.target.value })}
-                    className="flex-1 min-w-0 px-2.5 py-1.5 border border-neutral-300 font-mono-tabular"
-                    placeholder="all / linen / b2b"
-                  />
+                  {slide.target_type === 'view' ? (
+                    <select
+                      value={slide.target_value}
+                      onChange={(e) => updateDraft(slide.id, { target_value: e.target.value })}
+                      className="flex-1 min-w-0 px-2.5 py-1.5 border border-neutral-300 bg-white"
+                      aria-label="Hero slide page target"
+                    >
+                      <option value="b2b">B2B portal</option>
+                      <option value="about">About / Heritage</option>
+                      <option value="catalog">Catalog</option>
+                    </select>
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <CategoryTargetSelect
+                        value={slide.target_value || 'all'}
+                        categories={categories}
+                        onChange={(next) => updateDraft(slide.id, { target_value: next })}
+                        ariaLabel="Hero slide category target"
+                      />
+                    </div>
+                  )}
                   <input
                     type="number"
                     value={slide.sort_order}
@@ -435,6 +454,7 @@ interface HomePageSettingsAdminPanelProps {
   authToken: string;
   homePage: HomePageSettings;
   products?: Product[];
+  categories?: CategoryRecord[];
   onRefresh: () => void;
   onRefreshStorefront: () => void;
   onPickImage: (cb: (url: string) => void) => void;
@@ -495,6 +515,7 @@ export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProp
   authToken,
   homePage,
   products = [],
+  categories = [],
   onRefresh,
   onRefreshStorefront,
   onPickImage,
@@ -615,30 +636,47 @@ export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProp
   const TargetRow: React.FC<{
     typeField: keyof HomePageSettings;
     valueField: keyof HomePageSettings;
-  }> = ({ typeField, valueField }) => (
-    <div className="grid grid-cols-2 gap-2">
-      <label className="block">
-        <span className="text-[10px] text-neutral-500 uppercase">Link type</span>
-        <select
-          value={String(draft[typeField] || 'category')}
-          onChange={(e) => setField(typeField, e.target.value)}
-          className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-xs"
-        >
-          <option value="category">Catalog category</option>
-          <option value="view">Page view (b2b / about)</option>
-        </select>
-      </label>
-      <label className="block">
-        <span className="text-[10px] text-neutral-500 uppercase">Target</span>
-        <input
-          value={String(draft[valueField] || '')}
-          onChange={(e) => setField(valueField, e.target.value)}
-          placeholder="linen / business / b2b / about"
-          className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 text-xs font-mono-tabular"
-        />
-      </label>
-    </div>
-  );
+  }> = ({ typeField, valueField }) => {
+    const linkType = String(draft[typeField] || 'category');
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-[10px] text-neutral-500 uppercase">Link type</span>
+          <select
+            value={linkType}
+            onChange={(e) => setField(typeField, e.target.value)}
+            className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-xs"
+          >
+            <option value="category">Catalog category</option>
+            <option value="view">Page view (b2b / about)</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] text-neutral-500 uppercase">Target</span>
+          {linkType === 'view' ? (
+            <select
+              value={String(draft[valueField] || 'b2b')}
+              onChange={(e) => setField(valueField, e.target.value)}
+              className="mt-0.5 w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-xs"
+            >
+              <option value="b2b">B2B portal</option>
+              <option value="about">About / Heritage</option>
+              <option value="catalog">Catalog</option>
+            </select>
+          ) : (
+            <div className="mt-0.5">
+              <CategoryTargetSelect
+                value={String(draft[valueField] || 'all')}
+                categories={categories}
+                onChange={(next) => setField(valueField, next)}
+                ariaLabel="Homepage section category target"
+              />
+            </div>
+          )}
+        </label>
+      </div>
+    );
+  };
 
   return (
     <form onSubmit={save} className="border border-neutral-200 bg-white p-5 space-y-6 text-xs">
@@ -880,6 +918,7 @@ export const HomePageSettingsAdminPanel: React.FC<HomePageSettingsAdminPanelProp
 
 interface PromotionsAndBulkAdminPanelProps {
   authToken: string;
+  categories?: CategoryRecord[];
   topBanner?: TopBannerSettings;
   promoRules: PromotionPopupSettings;
   bulkDiscount: BulkDiscountSettings;
@@ -889,6 +928,7 @@ interface PromotionsAndBulkAdminPanelProps {
 
 export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelProps> = ({
   authToken,
+  categories = [],
   topBanner = DEFAULT_TOP_BANNER_SETTINGS,
   promoRules,
   bulkDiscount,
@@ -1066,11 +1106,11 @@ export const PromotionsAndBulkAdminPanel: React.FC<PromotionsAndBulkAdminPanelPr
           </div>
           <div>
             <label className="block text-[11px] text-neutral-500 mb-1">Catalog Category Filter</label>
-            <input
+            <CategoryTargetSelect
               value={bannerDraft.linkCategory || 'all'}
-              onChange={(e) => setBannerDraft((b) => ({ ...b, linkCategory: e.target.value }))}
-              placeholder="all / linen / business"
-              className="w-full px-3 py-2 border border-neutral-300 font-mono-tabular"
+              categories={categories}
+              onChange={(next) => setBannerDraft((b) => ({ ...b, linkCategory: next }))}
+              ariaLabel="Top banner catalog category"
             />
           </div>
           <div className="grid grid-cols-2 gap-2">

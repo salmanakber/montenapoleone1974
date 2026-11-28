@@ -113,7 +113,13 @@ import {
   evaluateStorefrontAgentTurn,
   type AgentCatalogProduct,
 } from './src/utils/agentLogic.ts';
-import { canonicalizeGallerySlots, resolveListingImage } from './src/utils/productGallery.ts';
+import {
+  canonicalizeGallerySlots,
+  FABRIC_CLOSEUP_SLOT_INDEX,
+  isFabricCloseupUrl,
+  normalizeGalleryVisibility,
+  resolveListingImage,
+} from './src/utils/productGallery.ts';
 
 dotenv.config();
 initializeDatabase();
@@ -184,19 +190,47 @@ function repairInflatedNokImportPrices(): void {
   );
 }
 
-/** Move fabric close-ups to slot 5 and videos to slot 6; fix listing primary when it was a fabric shot. */
+/** Map F## article codes → committed fabric close-up URLs under /media/fabric-closeups. */
+function loadFabricCloseupMediaMap(): Map<string, string> {
+  const map = new Map<string, string>();
+  const dir = path.resolve(process.cwd(), 'public', 'media', 'fabric-closeups');
+  if (!fs.existsSync(dir)) return map;
+  for (const file of fs.readdirSync(dir)) {
+    const m = String(file).toLowerCase().match(/^fabric-closeup-(f\d+)-/);
+    if (!m) continue;
+    map.set(m[1], `/media/fabric-closeups/${file}`);
+  }
+  return map;
+}
+
+/** Prefer the longest F## match from SKU/slug (e.g. f97 over f9). */
+function extractFabricArticleCode(sku: string, slug: string): string | null {
+  const hay = `${sku} ${slug}`.toLowerCase();
+  const matches = [...hay.matchAll(/(?:^|[^a-z0-9])f0*(\d{1,3})(?=[^a-z0-9]|$)/g)];
+  if (matches.length === 0) return null;
+  let best = matches[0][1];
+  for (const m of matches) {
+    if (m[1].length > best.length || Number(m[1]) > Number(best)) best = m[1];
+  }
+  return `f${Number(best)}`;
+}
+
+/**
+ * Slot 05 only: attach / rewrite fabric-closeup files. Shirt slots 01–04 and video stay untouched
+ * except when a fabric-closeup URL was wrongly stored outside Slot 05 (then it moves to 05).
+ */
 function repairGalleryFabricSlots(): void {
+  const fabricMedia = loadFabricCloseupMediaMap();
   const rows = db
-    .prepare('SELECT id, primary_image, secondary_image, gallery_json FROM products')
+    .prepare('SELECT id, sku, slug, primary_image, gallery_json FROM products')
     .all() as Array<{
     id: number;
+    sku: string;
+    slug: string;
     primary_image: string;
-    secondary_image: string;
     gallery_json: string;
   }>;
-  const update = db.prepare(
-    'UPDATE products SET primary_image = ?, secondary_image = ?, gallery_json = ? WHERE id = ?'
-  );
+  const update = db.prepare('UPDATE products SET primary_image = ?, gallery_json = ? WHERE id = ?');
   let fixed = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
@@ -207,33 +241,59 @@ function repairGalleryFabricSlots(): void {
       } catch {
         gallery = [];
       }
-      const nextGallery = canonicalizeGallerySlots(
-        gallery,
-        row.primary_image,
-        row.secondary_image
-      );
-      const nextPrimary = resolveListingImage({
-        gallery: nextGallery,
-        primary_image: row.primary_image,
-        secondary_image: row.secondary_image,
-      });
-      const nextSecondary =
-        nextGallery.find((u) => Boolean(u) && u !== nextPrimary) ||
-        nextPrimary ||
-        row.secondary_image;
+      while (gallery.length < 6) gallery.push('');
+      gallery = gallery.slice(0, 6);
+      const before = [...gallery];
+
+      // Rewrite fabric-closeup filenames to committed /media paths; clear them from non-05 slots.
+      let foundFabric = '';
+      for (let i = 0; i < gallery.length; i++) {
+        const u = gallery[i];
+        if (!u || !isFabricCloseupUrl(u)) continue;
+        const file = u.split('?')[0].split('/').pop()?.toLowerCase() || '';
+        const m = file.match(/^(fabric-closeup-(f\d+)-.+)$/);
+        const rewritten =
+          (m && fabricMedia.get(m[2])) ||
+          (m ? `/media/fabric-closeups/${m[1]}` : u);
+        if (!foundFabric) foundFabric = rewritten;
+        if (i !== FABRIC_CLOSEUP_SLOT_INDEX) gallery[i] = '';
+      }
+
+      const code = extractFabricArticleCode(row.sku, row.slug);
+      const mediaUrl = code ? fabricMedia.get(code) : undefined;
+      const nextFabric = mediaUrl || foundFabric || gallery[FABRIC_CLOSEUP_SLOT_INDEX] || '';
+      if (nextFabric && isFabricCloseupUrl(nextFabric)) {
+        gallery[FABRIC_CLOSEUP_SLOT_INDEX] = nextFabric;
+      }
+
+      let nextPrimary = row.primary_image;
+      if (isFabricCloseupUrl(nextPrimary)) {
+        nextPrimary =
+          gallery.find((u, i) => Boolean(u) && i !== FABRIC_CLOSEUP_SLOT_INDEX && !isFabricCloseupUrl(u)) ||
+          nextPrimary;
+      }
+
       if (
-        JSON.stringify(nextGallery) !== JSON.stringify(Array.from({ length: 6 }, (_, i) => gallery[i] || '')) ||
-        nextPrimary !== row.primary_image ||
-        nextSecondary !== row.secondary_image
+        JSON.stringify(gallery) !== JSON.stringify(before) ||
+        nextPrimary !== row.primary_image
       ) {
-        update.run(nextPrimary, nextSecondary, JSON.stringify(nextGallery), row.id);
+        update.run(nextPrimary, JSON.stringify(gallery), row.id);
         fixed++;
       }
     }
   });
   tx();
   if (fixed > 0) {
-    console.log(`[repair] Canonicalized gallery slots for ${fixed} product(s)`);
+    console.log(`[repair] Slot 05 fabric close-ups updated for ${fixed} product(s)`);
+  }
+}
+
+function parseGallerySlotVisible(raw: unknown): boolean[] {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw;
+    return normalizeGalleryVisibility(Array.isArray(parsed) ? parsed : undefined);
+  } catch {
+    return normalizeGalleryVisibility(undefined);
   }
 }
 
@@ -1038,8 +1098,9 @@ app.get('/api/storefront/bootstrap', (req, res) => {
           : null,
       primary_image: String(p.primary_image),
       secondary_image: String(p.secondary_image),
-      // Keep up to 6 fixed gallery slots (incl. empty strings for position); storefront hides blanks.
+      // Keep up to 6 fixed gallery slots (incl. empty strings for position); storefront shows gray blanks.
       gallery: Array.isArray(gallery) ? gallery.slice(0, 6) : [],
+      gallery_slot_visible: parseGallerySlotVisible(p.gallery_slot_visible_json),
       collars: JSON.parse(String(p.collars_json)) as string[],
       cuffs: JSON.parse(String(p.cuffs_json)) as string[],
       sizes: JSON.parse(String(p.sizes_json)) as string[],
@@ -1152,6 +1213,7 @@ app.get('/api/storefront/product/:slug', (req, res) => {
       primary_image: String(p.primary_image),
       secondary_image: String(p.secondary_image),
       gallery: JSON.parse(String(p.gallery_json)) as string[],
+      gallery_slot_visible: parseGallerySlotVisible(p.gallery_slot_visible_json),
       collars: JSON.parse(String(p.collars_json)) as string[],
       cuffs: JSON.parse(String(p.cuffs_json)) as string[],
       sizes: JSON.parse(String(p.sizes_json)) as string[],
@@ -2878,6 +2940,7 @@ app.get('/api/admin/products', requireStaffOrOwner, (_req, res) => {
         preorder_allowed: Boolean(p.preorder_allowed),
         active: Boolean(p.active),
         gallery: JSON.parse(String(p.gallery_json)),
+        gallery_slot_visible: parseGallerySlotVisible(p.gallery_slot_visible_json),
         collars: JSON.parse(String(p.collars_json)),
         cuffs: JSON.parse(String(p.cuffs_json)),
         sizes: JSON.parse(String(p.sizes_json)),
@@ -3251,10 +3314,14 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         nextGallery.find((u) => Boolean(u) && u !== nextPrimary) ||
         nextPrimary ||
         String(b.secondary_image || existing.secondary_image);
+      const nextVisibility = Array.isArray(b.gallery_slot_visible)
+        ? normalizeGalleryVisibility(b.gallery_slot_visible)
+        : parseGallerySlotVisible(existing.gallery_slot_visible_json);
 
       db.prepare(
         `UPDATE products SET category_slug = ?, category_slugs_json = ?, fabric_spec = ?, is_featured = ?, is_b2b_eligible = ?,
-         is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?, sizes_json = ?
+         is_outlet = ?, preorder_allowed = ?, primary_image = ?, secondary_image = ?, gallery_json = ?,
+         gallery_slot_visible_json = ?, sizes_json = ?
          WHERE id = ?`
       ).run(
         nextPrimaryCat,
@@ -3267,6 +3334,7 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
         nextPrimary,
         nextSecondary,
         JSON.stringify(nextGallery),
+        JSON.stringify(nextVisibility),
         JSON.stringify(nextSizes),
         productId
       );
@@ -5134,10 +5202,28 @@ app.post('/api/admin/import/woocommerce', requireStaffOrOwner, async (req: Authe
       const mappedImages = (row.images || [])
         .map((u) => mirroredImageMap.get(String(u).trim()) || String(u).trim())
         .filter(Boolean);
-      // Fixed 6-slot gallery: pack Woo images into slots 0..n (empties preserve later fabric/video slots)
-      const galleryArr = canonicalizeGallerySlots(
-        Array.from({ length: 6 }, (_, i) => mappedImages[i] || '')
+      // Fixed 6-slot gallery: shirt photos fill 0–3 in order; fabric → slot 5; video → slot 6.
+      // Never slide fabric into empty Sideway/Model slots.
+      const packed = Array.from({ length: 6 }, () => '');
+      let shirtIdx = 0;
+      for (const u of mappedImages) {
+        if (isFabricCloseupUrl(u)) {
+          packed[FABRIC_CLOSEUP_SLOT_INDEX] = u;
+        } else if (/\.(mp4|webm|mov|ogg|m4v)$/i.test(u.split('?')[0])) {
+          packed[5] = u;
+        } else if (shirtIdx < FABRIC_CLOSEUP_SLOT_INDEX) {
+          packed[shirtIdx++] = u;
+        }
+      }
+      const fabricMedia = loadFabricCloseupMediaMap();
+      const fabricCode = extractFabricArticleCode(
+        String(row.sku || ''),
+        String(row.name || row.sku || '')
       );
+      if (fabricCode && fabricMedia.has(fabricCode)) {
+        packed[FABRIC_CLOSEUP_SLOT_INDEX] = fabricMedia.get(fabricCode)!;
+      }
+      const galleryArr = canonicalizeGallerySlots(packed);
       const primaryImg =
         resolveListingImage({ gallery: galleryArr }) ||
         '/src/assets/images/shirt_white_signature_1795248293653.jpg';
