@@ -66,7 +66,7 @@ export const TailoringZoneSketch: React.FC<{
         className={`${
           isDiagram ? 'w-56 h-56' : 'w-12 h-12'
         } rounded-none bg-[#F0F0F0] border border-black/10 overflow-hidden relative shrink-0 ${
-          onActivate ? 'cursor-pointer hover:border-[#142B4E]/ : ''
+          onActivate ? 'cursor-pointer hover:border-[#142B4E]' : ''
         }`}
       >
         <img
