@@ -726,7 +726,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                       }
                       className={`relative aspect-[4/5] overflow-hidden bg-[#F3F3F3] border transition-all cursor-pointer ${
                         active
-                          ? 'border-[#142B4E] ring-1 ring-[#142B4E]/
+                          ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
                           : 'border-transparent opacity-80 hover:opacity-100'
                       }`}
                     >
