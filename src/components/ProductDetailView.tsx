@@ -47,7 +47,6 @@ import {
   isProductVideoUrl,
   PRODUCT_GALLERY_SLOTS,
   resolveGallerySlotsForDisplay,
-  resolveListingSlotIndex,
 } from '../utils/productGallery.ts';
 
 interface ProductDetailViewProps {
@@ -182,23 +181,6 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     () => gallerySlots.map((s) => PRODUCT_GALLERY_SLOTS[s.index]),
     [gallerySlots]
   );
-  const defaultGalleryIndex = useMemo(() => {
-    const listingCanon = resolveListingSlotIndex(
-      product.gallery,
-      product.listing_slot_index,
-      product.primary_image
-    );
-    const at = gallerySlots.findIndex((s) => s.index === listingCanon);
-    if (at >= 0) return at;
-    const firstFilled = gallery.findIndex(Boolean);
-    return firstFilled >= 0 ? firstFilled : 0;
-  }, [gallerySlots, gallery, product.gallery, product.listing_slot_index, product.primary_image]);
-  const [activeGalleryIndex, setActiveGalleryIndex] = useState(defaultGalleryIndex);
-  useEffect(() => {
-    setActiveGalleryIndex(defaultGalleryIndex);
-    setMobileSlide(defaultGalleryIndex);
-  }, [product.id, defaultGalleryIndex]);
-
   const orderedCollars = useMemo(
     () => resolveOrderedTailoringOptions('collar', product.collars, tailoringOptions),
     [product.collars, tailoringOptions]
@@ -294,6 +276,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     setLightboxIndex(null);
     setLightboxZoomed(false);
     setFitDrawerOpen(false);
+    setMobileSlide(0);
     setFit((prev) =>
       resolvedFitOptions.some((o) => o.value === prev)
         ? prev
@@ -594,11 +577,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <ChevronLeft className="w-4 h-4" />
           </button>
 
-          {/* Light gallery: large main listing image + thumbnail strip (fixed slots) */}
-          <div className="px-3 md:px-0 space-y-2.5" data-testid="pdp-light-gallery">
-            <motion.div
-              style={{ y: yColLeft }}
-              className="relative w-full aspect-[4/5] md:aspect-[3/4] lg:min-h-[520px] bg-[#E8E8E8] overflow-hidden"
+          {/* MOBILE ONLY (< md): Compact Swipeable Image Slider (fixed slots) */}
+          <div className="md:hidden px-3" data-testid="mobile-pdp-slider">
+            <div
+              className="relative aspect-[4/3] bg-[#E8E8E8] overflow-hidden"
               onTouchStart={(e) => {
                 touchStartX.current = e.touches[0]?.clientX ?? null;
               }}
@@ -607,66 +589,50 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 const endX = e.changedTouches[0]?.clientX ?? touchStartX.current;
                 const diff = touchStartX.current - endX;
                 if (Math.abs(diff) > 40 && gallery.length > 1) {
-                  setActiveGalleryIndex((prev) => {
-                    const next =
-                      diff > 0
-                        ? (prev + 1) % gallery.length
-                        : prev === 0
-                          ? gallery.length - 1
-                          : prev - 1;
-                    setMobileSlide(next);
-                    return next;
-                  });
+                  setMobileSlide((prev) =>
+                    diff > 0
+                      ? (prev + 1) % gallery.length
+                      : prev === 0
+                      ? gallery.length - 1
+                      : prev - 1
+                  );
                 }
                 touchStartX.current = null;
               }}
             >
-              {gallery[activeGalleryIndex] ? (
+              {gallery[mobileSlide] ? (
                 <button
                   type="button"
                   onClick={() => {
-                    if (isProductVideoUrl(gallery[activeGalleryIndex] || '')) return;
-                    setLightboxIndex(activeGalleryIndex);
+                    if (isProductVideoUrl(gallery[mobileSlide] || '')) return;
+                    setLightboxIndex(mobileSlide);
                     setLightboxZoomed(false);
                   }}
-                  className={`absolute inset-0 block group ${
-                    isProductVideoUrl(gallery[activeGalleryIndex])
-                      ? 'cursor-default'
-                      : 'cursor-zoom-in'
+                  className={`absolute inset-0 block ${
+                    isProductVideoUrl(gallery[mobileSlide]) ? 'cursor-default' : 'cursor-zoom-in'
                   }`}
-                  aria-label={`${product.title} — ${gallerySlotMeta[activeGalleryIndex]?.label || `view ${activeGalleryIndex + 1}`}`}
+                  aria-label={`${product.title} slide ${mobileSlide + 1}`}
                 >
                   <ProductGalleryMedia
-                    src={gallery[activeGalleryIndex]}
-                    alt={`${product.title} ${gallerySlotMeta[activeGalleryIndex]?.label || ''}`}
-                    className="absolute inset-0 w-full h-full transition-opacity duration-300"
-                    fitClassName="object-cover object-center"
+                    src={gallery[mobileSlide]}
+                    alt={`${product.title} slide ${mobileSlide + 1}`}
+                    className="w-full h-full"
+                    fitClassName="object-cover"
                   />
-                  {!isProductVideoUrl(gallery[activeGalleryIndex]) && (
-                    <span className="absolute bottom-3 right-3 w-8 h-8 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none z-10">
-                      <ZoomIn className="w-4 h-4" />
-                    </span>
-                  )}
                 </button>
               ) : (
                 <div
-                  className="absolute inset-0 bg-[#E8E8E8] flex flex-col items-center justify-center gap-1.5 text-neutral-400"
-                  aria-label={`${gallerySlotMeta[activeGalleryIndex]?.label || `Slot ${activeGalleryIndex + 1}`} unavailable`}
+                  className="absolute inset-0 bg-[#E8E8E8] flex flex-col items-center justify-center gap-1 text-neutral-400"
+                  aria-label={`${gallerySlotMeta[mobileSlide]?.label || `Slot ${mobileSlide + 1}`} unavailable`}
                 >
                   <span className="text-[11px] uppercase tracking-wider">
-                    {gallerySlotMeta[activeGalleryIndex]?.kind === 'video'
-                      ? 'Video'
-                      : gallerySlotMeta[activeGalleryIndex]?.shortLabel ||
-                        `Slot ${activeGalleryIndex + 1}`}
-                  </span>
-                  <span className="text-[10px] text-neutral-300">
-                    {gallerySlotMeta[activeGalleryIndex]?.label || 'Coming soon'}
+                    {gallerySlotMeta[mobileSlide]?.shortLabel || `Slot ${mobileSlide + 1}`}
                   </span>
                 </div>
               )}
 
-              <span className="absolute top-3 right-3 px-2 py-0.5 bg-white/90 border border-black/5 text-[10px] font-mono-tabular text-neutral-600">
-                {activeGalleryIndex + 1} / {gallery.length}
+              <span className="absolute top-3 right-3 px-2 py-0.5 bg-white/90 border border-black/10 text-[11px] font-mono-tabular text-[#1A1A1A]">
+                {mobileSlide + 1} / {gallery.length}
               </span>
 
               {gallery.length > 1 && (
@@ -674,95 +640,170 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      setActiveGalleryIndex((prev) => {
-                        const next = prev === 0 ? gallery.length - 1 : prev - 1;
-                        setMobileSlide(next);
-                        return next;
-                      })
+                      setMobileSlide((prev) => (prev === 0 ? gallery.length - 1 : prev - 1))
                     }
                     aria-label="Previous product image"
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white border border-black/5 flex items-center justify-center text-[#1A1A1A] cursor-pointer"
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 hover:bg-white border border-black/10 flex items-center justify-center text-[#1A1A1A] shadow cursor-pointer"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      setActiveGalleryIndex((prev) => {
-                        const next = (prev + 1) % gallery.length;
-                        setMobileSlide(next);
-                        return next;
-                      })
-                    }
+                    onClick={() => setMobileSlide((prev) => (prev + 1) % gallery.length)}
                     aria-label="Next product image"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white border border-black/5 flex items-center justify-center text-[#1A1A1A] cursor-pointer"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 hover:bg-white border border-black/10 flex items-center justify-center text-[#1A1A1A] shadow cursor-pointer"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </>
               )}
-            </motion.div>
+            </div>
 
-            {gallery.length > 0 && (
-              <motion.div
-                style={{ y: yColRight }}
-                data-testid="desktop-pdp-gallery"
-                className="grid grid-cols-6 gap-1.5 md:gap-2"
-              >
-                {gallery.map((thumb, idx) => {
-                  const active = idx === activeGalleryIndex;
-                  return (
+            {gallery.length > 1 && (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-center justify-center gap-1.5">
+                  {gallery.map((thumb, idx) => (
                     <button
-                      key={`gallery-thumb-${idx}`}
+                      key={`dot-${idx}`}
                       type="button"
-                      onClick={() => {
-                        setActiveGalleryIndex(idx);
-                        setMobileSlide(idx);
-                      }}
-                      onDoubleClick={() => {
-                        if (!thumb || isProductVideoUrl(thumb)) return;
-                        setLightboxIndex(idx);
-                        setLightboxZoomed(false);
-                      }}
-                      aria-label={
-                        thumb
-                          ? `Show ${gallerySlotMeta[idx]?.label || `image ${idx + 1}`}`
-                          : `${gallerySlotMeta[idx]?.label || `Slot ${idx + 1}`} unavailable`
-                      }
-                      className={`relative aspect-[4/5] overflow-hidden bg-[#E8E8E8] border transition-all cursor-pointer ${
-                        active
-                          ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
-                          : 'border-transparent opacity-80 hover:opacity-100'
+                      onClick={() => setMobileSlide(idx)}
+                      aria-label={`Select image ${idx + 1}`}
+                      className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                        idx === mobileSlide
+                          ? 'w-5 bg-[#142B4E]'
+                          : thumb
+                            ? 'w-1.5 bg-neutral-300'
+                            : 'w-1.5 bg-neutral-200'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  {gallery.map((thumb, idx) => (
+                    <button
+                      key={`mobile-thumb-${idx}`}
+                      type="button"
+                      onClick={() => setMobileSlide(idx)}
+                      className={`w-10 h-11 shrink-0 overflow-hidden border-2 bg-[#E8E8E8] cursor-pointer ${
+                        idx === mobileSlide ? 'border-[#142B4E]' : 'border-transparent opacity-70'
                       }`}
                     >
                       {thumb ? (
                         isProductVideoUrl(thumb) ? (
-                          <div className="absolute inset-0 bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
+                          <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
                             Video
                           </div>
                         ) : (
-                          <img
-                            src={thumb}
-                            alt=""
-                            className="absolute inset-0 w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                          <img src={thumb} alt="" className="w-full h-full object-cover" />
                         )
                       ) : (
-                        <span className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-[8px] uppercase tracking-wider text-neutral-400 px-0.5 text-center leading-tight bg-[#E8E8E8]">
-                          <span>
-                            {gallerySlotMeta[idx]?.kind === 'video'
-                              ? 'Video'
-                              : gallerySlotMeta[idx]?.shortLabel?.replace(/^\d+\s·\s/, '') ||
-                                idx + 1}
-                          </span>
-                        </span>
+                        <div className="w-full h-full bg-[#E8E8E8]" />
                       )}
                     </button>
-                  );
-                })}
-              </motion.div>
+                  ))}
+                </div>
+              </div>
             )}
+          </div>
+
+          {/* DESKTOP: fixed 6 slots — missing media = light gray placeholder */}
+          <div
+            data-testid="desktop-pdp-gallery"
+            className="hidden md:grid md:grid-cols-2 gap-3"
+          >
+            <motion.div style={{ y: yColLeft }} className="space-y-3">
+              {gallery
+                .map((imgUrl, idx) => ({ imgUrl, idx }))
+                .filter((_, pos) => pos % 2 === 0)
+                .map(({ imgUrl, idx }) => (
+                  <button
+                    key={`gallery-slot-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      if (!imgUrl || isProductVideoUrl(imgUrl)) return;
+                      setLightboxIndex(idx);
+                      setLightboxZoomed(false);
+                    }}
+                    aria-label={
+                      imgUrl
+                        ? `Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`
+                        : `${gallerySlotMeta[idx]?.label || `Slot ${idx + 1}`} unavailable`
+                    }
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E8E8] overflow-hidden text-left block w-full ${
+                      imgUrl && !isProductVideoUrl(imgUrl) ? 'cursor-zoom-in' : 'cursor-default'
+                    }`}
+                  >
+                    {imgUrl ? (
+                      <>
+                        <ProductGalleryMedia
+                          src={imgUrl}
+                          alt={`${product.title} view ${idx + 1}`}
+                          className="absolute inset-0 w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                          fitClassName="object-cover object-center"
+                        />
+                        {!isProductVideoUrl(imgUrl) && (
+                          <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-neutral-400 pointer-events-none">
+                        <span className="text-[11px] uppercase tracking-wider">
+                          {gallerySlotMeta[idx]?.shortLabel || `Slot ${idx + 1}`}
+                        </span>
+                      </span>
+                    )}
+                  </button>
+                ))}
+            </motion.div>
+
+            <motion.div style={{ y: yColRight }} className="space-y-3">
+              {gallery
+                .map((imgUrl, idx) => ({ imgUrl, idx }))
+                .filter((_, pos) => pos % 2 === 1)
+                .map(({ imgUrl, idx }) => (
+                  <button
+                    key={`gallery-slot-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      if (!imgUrl || isProductVideoUrl(imgUrl)) return;
+                      setLightboxIndex(idx);
+                      setLightboxZoomed(false);
+                    }}
+                    aria-label={
+                      imgUrl
+                        ? `Open gallery media ${idx + 1} of ${gallery.length} for ${product.title}`
+                        : `${gallerySlotMeta[idx]?.label || `Slot ${idx + 1}`} unavailable`
+                    }
+                    className={`group relative aspect-[3/4] min-h-[280px] lg:min-h-[340px] bg-[#E8E8E8] overflow-hidden text-left block w-full ${
+                      imgUrl && !isProductVideoUrl(imgUrl) ? 'cursor-zoom-in' : 'cursor-default'
+                    }`}
+                  >
+                    {imgUrl ? (
+                      <>
+                        <ProductGalleryMedia
+                          src={imgUrl}
+                          alt={`${product.title} view ${idx + 1}`}
+                          className="absolute inset-0 w-full h-full transition-transform duration-500 group-hover:scale-[1.02]"
+                          fitClassName="object-cover object-center"
+                        />
+                        {!isProductVideoUrl(imgUrl) && (
+                          <span className="absolute bottom-2.5 right-2.5 w-7 h-7 bg-white/85 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-neutral-400 pointer-events-none">
+                        <span className="text-[11px] uppercase tracking-wider">
+                          {gallerySlotMeta[idx]?.shortLabel || `Slot ${idx + 1}`}
+                        </span>
+                      </span>
+                    )}
+                  </button>
+                ))}
+            </motion.div>
           </div>
         </div>
 

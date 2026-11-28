@@ -808,13 +808,13 @@ export const B2BView: React.FC<B2BViewProps> = ({
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true, amount: 0.1 }}
                   transition={{ duration: 0.4, delay: (idx % 2) * 0.06 }}
-                  className="aspect-[3/4] min-h-[260px] bg-[#E8E6E2] overflow-hidden"
+                  className="relative aspect-[3/4] min-h-[260px] bg-[#E8E6E2] overflow-hidden"
                 >
                   <ProductGalleryMedia
                     src={imgUrl}
                     alt={`${activeProduct.title} ${idx + 1}`}
-                    className="w-full h-full hover:scale-[1.02] transition-transform duration-300"
-                    fitClassName="object-contain object-center"
+                    className="absolute inset-0 w-full h-full hover:scale-[1.02] transition-transform duration-300"
+                    fitClassName="object-cover object-center"
                   />
                 </motion.div>
               ))}
