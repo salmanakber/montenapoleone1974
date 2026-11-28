@@ -598,7 +598,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           <div className="px-3 md:px-0 space-y-2.5" data-testid="pdp-light-gallery">
             <motion.div
               style={{ y: yColLeft }}
-              className="relative w-full aspect-[4/5] md:aspect-[3/4] lg:min-h-[520px] bg-[#F3F3F3] overflow-hidden"
+              className="relative w-full aspect-[4/5] md:aspect-[3/4] lg:min-h-[520px] bg-[#E8E8E8] overflow-hidden"
               onTouchStart={(e) => {
                 touchStartX.current = e.touches[0]?.clientX ?? null;
               }}
@@ -629,7 +629,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     setLightboxIndex(activeGalleryIndex);
                     setLightboxZoomed(false);
                   }}
-                  className={`w-full h-full block group ${
+                  className={`absolute inset-0 block group ${
                     isProductVideoUrl(gallery[activeGalleryIndex])
                       ? 'cursor-default'
                       : 'cursor-zoom-in'
@@ -639,23 +639,28 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   <ProductGalleryMedia
                     src={gallery[activeGalleryIndex]}
                     alt={`${product.title} ${gallerySlotMeta[activeGalleryIndex]?.label || ''}`}
-                    className="w-full h-full transition-opacity duration-300"
-                    fitClassName="object-contain object-center"
+                    className="absolute inset-0 w-full h-full transition-opacity duration-300"
+                    fitClassName="object-cover object-center"
                   />
                   {!isProductVideoUrl(gallery[activeGalleryIndex]) && (
-                    <span className="absolute bottom-3 right-3 w-8 h-8 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none">
+                    <span className="absolute bottom-3 right-3 w-8 h-8 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[#1A1A1A] pointer-events-none z-10">
                       <ZoomIn className="w-4 h-4" />
                     </span>
                   )}
                 </button>
               ) : (
                 <div
-                  className="w-full h-full bg-[#F3F3F3] flex flex-col items-center justify-center gap-1 text-neutral-400"
+                  className="absolute inset-0 bg-[#E8E8E8] flex flex-col items-center justify-center gap-1.5 text-neutral-400"
                   aria-label={`${gallerySlotMeta[activeGalleryIndex]?.label || `Slot ${activeGalleryIndex + 1}`} unavailable`}
                 >
                   <span className="text-[11px] uppercase tracking-wider">
-                    {gallerySlotMeta[activeGalleryIndex]?.shortLabel ||
-                      `Slot ${activeGalleryIndex + 1}`}
+                    {gallerySlotMeta[activeGalleryIndex]?.kind === 'video'
+                      ? 'Video'
+                      : gallerySlotMeta[activeGalleryIndex]?.shortLabel ||
+                        `Slot ${activeGalleryIndex + 1}`}
+                  </span>
+                  <span className="text-[10px] text-neutral-300">
+                    {gallerySlotMeta[activeGalleryIndex]?.label || 'Coming soon'}
                   </span>
                 </div>
               )}
@@ -724,7 +729,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                           ? `Show ${gallerySlotMeta[idx]?.label || `image ${idx + 1}`}`
                           : `${gallerySlotMeta[idx]?.label || `Slot ${idx + 1}`} unavailable`
                       }
-                      className={`relative aspect-[4/5] overflow-hidden bg-[#F3F3F3] border transition-all cursor-pointer ${
+                      className={`relative aspect-[4/5] overflow-hidden bg-[#E8E8E8] border transition-all cursor-pointer ${
                         active
                           ? 'border-[#142B4E] ring-1 ring-[#142B4E]'
                           : 'border-transparent opacity-80 hover:opacity-100'
@@ -732,20 +737,25 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     >
                       {thumb ? (
                         isProductVideoUrl(thumb) ? (
-                          <div className="w-full h-full bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
+                          <div className="absolute inset-0 bg-[#142B4E] text-white text-[8px] uppercase tracking-wider flex items-center justify-center">
                             Video
                           </div>
                         ) : (
                           <img
                             src={thumb}
                             alt=""
-                            className="w-full h-full object-cover"
+                            className="absolute inset-0 w-full h-full object-cover"
                             referrerPolicy="no-referrer"
                           />
                         )
                       ) : (
-                        <span className="absolute inset-0 flex items-center justify-center text-[8px] uppercase tracking-wider text-neutral-400 px-0.5 text-center leading-tight">
-                          {gallerySlotMeta[idx]?.shortLabel?.replace(/^\d+\s·\s/, '') || idx + 1}
+                        <span className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-[8px] uppercase tracking-wider text-neutral-400 px-0.5 text-center leading-tight bg-[#E8E8E8]">
+                          <span>
+                            {gallerySlotMeta[idx]?.kind === 'video'
+                              ? 'Video'
+                              : gallerySlotMeta[idx]?.shortLabel?.replace(/^\d+\s·\s/, '') ||
+                                idx + 1}
+                          </span>
                         </span>
                       )}
                     </button>

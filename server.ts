@@ -3438,6 +3438,127 @@ app.put('/api/admin/products/:id', requireStaffOrOwner, (req: AuthedRequest, res
   res.json({ ok: true });
 });
 
+/** AI SEO generator for a product localization (uses Gemini/OpenAI keys from AI settings). */
+app.post('/api/admin/products/generate-seo', requirePermission('manage_products'), async (req: AuthedRequest, res) => {
+  const b = req.body || {};
+  const regionCode = parseRegion(b.region || 'en');
+  const title = String(b.title || '').trim();
+  const subtitle = String(b.subtitle || '').trim();
+  const description = String(b.description || '').trim().slice(0, 1200);
+  const fabric = String(b.fabric_spec || '').trim();
+  const category = String(b.category_slug || '').trim();
+  const sku = String(b.sku || '').trim();
+  if (!title) {
+    res.status(400).json({ error: 'Product title is required to generate SEO.' });
+    return;
+  }
+
+  const aiSettings = getAiSettingsInternal();
+  const openaiKey = (aiSettings.openaiApiKey || getResolvedSecret('OPENAI_API_KEY') || '').trim();
+  const geminiKey = (aiSettings.geminiApiKey || getResolvedSecret('GEMINI_API_KEY') || '').trim();
+  const useOpenai = aiSettings.activeProvider === 'openai';
+  if ((useOpenai && !openaiKey) || (!useOpenai && !geminiKey)) {
+    res.status(400).json({
+      error: 'Add a Gemini or OpenAI API key under Admin → AI settings before generating SEO.',
+    });
+    return;
+  }
+
+  const languageName =
+    regionCode === 'no'
+      ? 'Norwegian'
+      : regionCode === 'it'
+        ? 'Italian'
+        : regionCode === 'vn'
+          ? 'Vietnamese'
+          : 'English';
+
+  const prompt = `You write SEO for MONTE NAPOLEONE 1974, an Italian luxury shirt atelier (Treviso 1974, Oslo showroom).
+Write in ${languageName} for region ${regionCode}.
+Product SKU: ${sku || 'n/a'}
+Title: ${title}
+Subtitle: ${subtitle || 'n/a'}
+Fabric: ${fabric || 'n/a'}
+Category: ${category || 'n/a'}
+Description: ${description || 'n/a'}
+
+Return ONLY valid JSON with:
+- "seo_title": max ~60 characters, brand-aware, no clickbait
+- "seo_description": 120–160 characters, elegant and factual
+- "seo_keywords": 6–10 comma-separated keywords relevant to this shirt`;
+
+  try {
+    let rawText = '';
+    if (useOpenai) {
+      const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: aiSettings.openaiModel || 'gpt-4o-mini',
+          temperature: 0.4,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: 'You return only valid JSON for product SEO fields.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+      const openaiData = (await openaiRes.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
+      if (!openaiRes.ok) {
+        res.status(400).json({
+          error: openaiData.error?.message || `OpenAI API returned HTTP ${openaiRes.status}`,
+        });
+        return;
+      }
+      rawText = openaiData.choices?.[0]?.message?.content || '{}';
+    } else {
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        apiVersion: 'v1beta',
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+      const response = await ai.models.generateContent({
+        model: aiSettings.geminiModel || 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.4,
+        },
+      });
+      rawText = String(response.text || '{}');
+    }
+
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      const m = rawText.match(/\{[\s\S]*\}/);
+      parsed = m ? (JSON.parse(m[0]) as Record<string, unknown>) : {};
+    }
+
+    const seo_title = String(parsed.seo_title || '').trim().slice(0, 70);
+    const seo_description = String(parsed.seo_description || '').trim().slice(0, 180);
+    const seo_keywords = String(parsed.seo_keywords || '').trim().slice(0, 240);
+    if (!seo_title && !seo_description) {
+      res.status(502).json({ error: 'AI returned empty SEO fields. Try again.' });
+      return;
+    }
+
+    logAudit(req.authUser!, 'PRODUCT_SEO_GENERATED', sku || title, `region=${regionCode}`);
+    res.json({ ok: true, seo_title, seo_description, seo_keywords, region: regionCode });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed to generate SEO',
+    });
+  }
+});
+
 app.post('/api/admin/products/bulk-delete', requirePermission('manage_products'), (req: AuthedRequest, res) => {
   const productIds = Array.isArray(req.body?.productIds)
     ? req.body.productIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)

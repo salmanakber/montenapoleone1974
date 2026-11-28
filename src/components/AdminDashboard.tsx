@@ -22,6 +22,7 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  Loader2,
   Lock,
   LogOut,
   Mail,
@@ -185,6 +186,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   } | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [adminDataLoading, setAdminDataLoading] = useState(false);
+  const [seoAiBusyRegion, setSeoAiBusyRegion] = useState<RegionCode | null>(null);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [media, setMedia] = useState<MediaAsset[]>([]);
   const [b2bList, setB2bList] = useState<B2BInquiry[]>([]);
@@ -405,6 +408,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const loadAdminData = useCallback(async () => {
     if (!authToken || !authUser) return;
+    setAdminDataLoading(true);
     const headers = { Authorization: `Bearer ${authToken}` };
 
     const reqs: Promise<void>[] = [
@@ -513,8 +517,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       );
     }
 
-    await Promise.all(reqs);
+    try {
+      await Promise.all(reqs);
+    } finally {
+      setAdminDataLoading(false);
+    }
   }, [authToken, authUser]);
+
+  const handleGenerateProductSeo = async (rc: RegionCode) => {
+    if (!authToken || !editingProduct) return;
+    setSeoAiBusyRegion(rc);
+    try {
+      const loc = editingProduct.localizations?.[rc];
+      const res = await fetch('/api/admin/products/generate-seo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          region: rc,
+          sku: editingProduct.sku,
+          title: loc?.title || editingProduct.title,
+          subtitle: loc?.subtitle || editingProduct.subtitle,
+          description: loc?.description || editingProduct.description,
+          fabric_spec: editingProduct.fabric_spec,
+          category_slug: editingProduct.category_slug,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        window.alert(data.error || 'Could not generate SEO.');
+        return;
+      }
+      setEditingProduct((prev) => {
+        if (!prev?.localizations?.[rc]) return prev;
+        return {
+          ...prev,
+          localizations: {
+            ...prev.localizations,
+            [rc]: {
+              ...prev.localizations[rc],
+              seo_title: String(data.seo_title || prev.localizations[rc].seo_title || ''),
+              seo_description: String(
+                data.seo_description || prev.localizations[rc].seo_description || ''
+              ),
+              seo_keywords: String(data.seo_keywords || prev.localizations[rc].seo_keywords || ''),
+            },
+          },
+        };
+      });
+    } catch {
+      window.alert('Network error generating SEO.');
+    } finally {
+      setSeoAiBusyRegion(null);
+    }
+  };
 
   useEffect(() => {
     if (initialTab) {
@@ -2138,7 +2196,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             (hasPermission(authUser, 'manage_products') ||
               hasPermission(authUser, 'manage_inventory') ||
               hasPermission(authUser, 'manage_pricing')) && (
-            <div className="space-y-5">
+            <div className="space-y-5 relative">
+              {adminDataLoading && products.length === 0 && (
+                <div
+                  data-testid="admin-products-loading"
+                  className="absolute inset-0 z-20 bg-white/80 flex flex-col items-center justify-center gap-3 min-h-[240px]"
+                >
+                  <Loader2 className="w-8 h-8 text-[#142B4E] animate-spin" />
+                  <span className="text-xs uppercase tracking-wider text-neutral-600">
+                    Loading products…
+                  </span>
+                </div>
+              )}
+              {adminDataLoading && products.length > 0 && (
+                <div className="flex items-center gap-2 text-[11px] text-neutral-500 px-1">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#142B4E]" />
+                  Refreshing catalog…
+                </div>
+              )}
               <div className="border-b border-neutral-200 pb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h1 className="text-base font-semibold uppercase tracking-wide">
@@ -4193,7 +4268,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {editingProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-black/50" onClick={() => setEditingProduct(null)} />
-          <div className="relative w-full max-w-4xl bg-white border border-black/15 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+          <div className="relative w-full max-w-6xl bg-white border border-black/15 shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
             <div className="shrink-0 px-6 pt-5 pb-0 space-y-3 border-b border-black/10 bg-white">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wider">
@@ -4237,209 +4312,259 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             {editProductTab === 'gallery' && (
             <div
               data-testid="edit-product-gallery-editor"
-              className="border border-neutral-200 bg-[#FAFAFA] p-4 space-y-3 text-xs"
+              className="border border-neutral-200 bg-[#F7F7F7] p-4 space-y-3 text-xs"
             >
-              <div>
-                <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
-                  Product Gallery — Fixed 6 Slots
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <div className="font-semibold uppercase tracking-wider text-[#142B4E]">
+                    Product Gallery
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-0.5 max-w-2xl">
+                    Listing preview on the right. Slot cards on the left — drag images between
+                    fixed slots to swap. Fabric files always pin to slot 5; video to slot 6.
+                  </p>
                 </div>
-                <p className="text-[11px] text-neutral-500 mt-0.5 max-w-3xl">
-                  Slot labels stay fixed. Drag an image onto another slot to swap media only.
-                  Fabric close-up files always pin to slot 5; videos to slot 6. Empty visible slots
-                  show gray on the product page — uncheck “Show on product page” to hide a slot.
-                </p>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                {PRODUCT_GALLERY_SLOTS.map((slot) => {
-                  const idx = slot.index;
-                  const slotUrl = editGallerySlots[idx] || '';
-                  const slotVisible = editGalleryVisibility[idx] !== false;
-                  const isListing =
-                    Boolean(slotUrl) &&
-                    !isProductVideoUrl(slotUrl) &&
-                    resolveListingSlotIndex(
-                      editGallerySlots,
-                      editListingSlotIndex,
-                      editingProduct.primary_image
-                    ) === idx;
-                  const isDragOver = dragOverGalleryIdx === idx && dragGalleryIdx !== idx;
-                  return (
-                    <div
-                      key={slot.id}
-                      data-testid={`gallery-slot-${idx}`}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
-                          setDragOverGalleryIdx(idx);
-                        }
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const from =
-                          dragGalleryIdx ??
-                          Number(e.dataTransfer.getData('text/plain'));
-                        if (Number.isFinite(from)) handleMoveGallerySlot(Number(from), idx);
-                      }}
-                      className={`bg-white border p-2 space-y-1.5 transition-colors ${
-                        isListing ? 'border-[#142B4E] border-2' : 'border-neutral-200'
-                      } ${slotVisible ? '' : 'opacity-70'} ${
-                        isDragOver ? 'ring-2 ring-[#142B4E] bg-[#F3F6FA]' : ''
-                      }`}
-                    >
-                      <div className="space-y-0.5 min-h-[42px]">
-                        <div className="flex items-center justify-between gap-1">
-                          <span
-                            className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
-                              slot.kind === 'video'
-                                ? 'bg-[#4F8A47] text-white'
-                                : isListing
-                                  ? 'bg-[#142B4E] text-white'
-                                  : 'bg-neutral-100 text-[#142B4E]'
+              {(() => {
+                const listingIdx = resolveListingSlotIndex(
+                  editGallerySlots,
+                  editListingSlotIndex,
+                  editingProduct.primary_image
+                );
+                const listingUrl = editGallerySlots[listingIdx] || '';
+                const listingMeta = PRODUCT_GALLERY_SLOTS[listingIdx];
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                    <div className="lg:col-span-5 space-y-2.5 max-h-[62vh] overflow-y-auto pr-1">
+                      {PRODUCT_GALLERY_SLOTS.map((slot) => {
+                        const idx = slot.index;
+                        const slotUrl = editGallerySlots[idx] || '';
+                        const slotVisible = editGalleryVisibility[idx] !== false;
+                        const isListing =
+                          Boolean(slotUrl) &&
+                          !isProductVideoUrl(slotUrl) &&
+                          listingIdx === idx;
+                        const isDragOver = dragOverGalleryIdx === idx && dragGalleryIdx !== idx;
+                        return (
+                          <div
+                            key={slot.id}
+                            data-testid={`gallery-slot-${idx}`}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              if (dragGalleryIdx !== null && dragGalleryIdx !== idx) {
+                                setDragOverGalleryIdx(idx);
+                              }
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverGalleryIdx === idx) setDragOverGalleryIdx(null);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from =
+                                dragGalleryIdx ?? Number(e.dataTransfer.getData('text/plain'));
+                              if (Number.isFinite(from)) handleMoveGallerySlot(Number(from), idx);
+                            }}
+                            className={`bg-white border p-2.5 flex gap-2.5 transition-colors ${
+                              isListing ? 'border-[#142B4E] border-2' : 'border-neutral-200'
+                            } ${slotVisible ? '' : 'opacity-60'} ${
+                              isDragOver ? 'ring-2 ring-[#142B4E] bg-[#F3F6FA]' : ''
                             }`}
                           >
-                            {slot.kind === 'video' ? 'Video' : `#${idx + 1}`}
-                          </span>
-                          {slotUrl && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditGallerySlots((prev) => {
-                                  const next = normalizeGallerySlots(prev);
-                                  next[idx] = '';
-                                  return next;
-                                });
-                                if (editListingSlotIndex === idx) {
-                                  const nextSlots = normalizeGallerySlots(editGallerySlots);
-                                  nextSlots[idx] = '';
-                                  setEditListingSlotIndex(
-                                    resolveListingSlotIndex(nextSlots, null, null)
-                                  );
-                                }
+                            <div
+                              draggable={Boolean(slotUrl)}
+                              onDragStart={(e) => {
+                                if (!slotUrl) return;
+                                setDragGalleryIdx(idx);
+                                e.dataTransfer.setData('text/plain', String(idx));
+                                e.dataTransfer.effectAllowed = 'move';
                               }}
-                              aria-label={`Clear ${slot.label}`}
-                              className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer"
+                              onDragEnd={() => {
+                                setDragGalleryIdx(null);
+                                setDragOverGalleryIdx(null);
+                              }}
+                              className={`w-20 h-24 shrink-0 bg-[#ECECEC] border border-dashed border-neutral-300 overflow-hidden relative flex items-center justify-center ${
+                                slotUrl ? 'cursor-grab active:cursor-grabbing' : ''
+                              } ${dragGalleryIdx === idx ? 'opacity-40' : ''}`}
                             >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                        <div className="text-[10px] font-semibold text-[#1A1A1A] leading-snug">
-                          {slot.label}
-                        </div>
-                        <div className="text-[9px] text-neutral-500 leading-snug">{slot.hint}</div>
-                      </div>
+                              {slotUrl ? (
+                                isProductVideoUrl(slotUrl) ? (
+                                  <ProductGalleryMedia
+                                    src={slotUrl}
+                                    alt={slot.label}
+                                    className="w-full h-full pointer-events-none"
+                                    fitClassName="object-cover"
+                                  />
+                                ) : (
+                                  <img
+                                    src={slotUrl}
+                                    alt={slot.label}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover pointer-events-none"
+                                  />
+                                )
+                              ) : (
+                                <span className="text-[8px] text-neutral-400 text-center px-1 uppercase tracking-wider">
+                                  {slot.kind === 'video' ? 'Video' : 'Empty'}
+                                </span>
+                              )}
+                              {isListing && (
+                                <span className="absolute top-0.5 left-0.5 bg-[#142B4E] text-white text-[7px] uppercase px-1">
+                                  List
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0 space-y-1.5">
+                              <div className="flex items-start justify-between gap-1">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
+                                        slot.kind === 'video'
+                                          ? 'bg-[#4F8A47] text-white'
+                                          : isListing
+                                            ? 'bg-[#142B4E] text-white'
+                                            : 'bg-neutral-100 text-[#142B4E]'
+                                      }`}
+                                    >
+                                      {slot.kind === 'video' ? 'Video' : `#${idx + 1}`}
+                                    </span>
+                                    <span className="text-[11px] font-semibold text-[#1A1A1A] truncate">
+                                      {slot.label}
+                                    </span>
+                                  </div>
+                                  <div className="text-[9px] text-neutral-500 mt-0.5">{slot.hint}</div>
+                                </div>
+                                {slotUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditGallerySlots((prev) => {
+                                        const next = normalizeGallerySlots(prev);
+                                        next[idx] = '';
+                                        return next;
+                                      });
+                                      if (editListingSlotIndex === idx) {
+                                        const nextSlots = normalizeGallerySlots(editGallerySlots);
+                                        nextSlots[idx] = '';
+                                        setEditListingSlotIndex(
+                                          resolveListingSlotIndex(nextSlots, null, null)
+                                        );
+                                      }
+                                    }}
+                                    aria-label={`Clear ${slot.label}`}
+                                    className="p-0.5 text-red-500 hover:text-red-700 cursor-pointer shrink-0"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
+                                  className="px-2 py-1 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] cursor-pointer bg-[#FAFAFA]"
+                                >
+                                  {slot.kind === 'video' ? 'Choose video' : 'Choose image'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={() => handleMoveGallerySlot(idx, idx - 1)}
+                                  className="px-2 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
+                                >
+                                  ←
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === PRODUCT_GALLERY_SLOTS.length - 1}
+                                  onClick={() => handleMoveGallerySlot(idx, idx + 1)}
+                                  className="px-2 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
+                                >
+                                  →
+                                </button>
+                                {slotUrl && slot.kind !== 'video' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditListingSlotIndex(idx)}
+                                    className={`px-2 py-1 text-[9px] uppercase tracking-wider font-semibold cursor-pointer ${
+                                      isListing
+                                        ? 'bg-[#142B4E] text-white'
+                                        : 'border border-neutral-300 text-neutral-600'
+                                    }`}
+                                  >
+                                    {isListing ? 'Listing' : 'Use as listing'}
+                                  </button>
+                                )}
+                              </div>
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={slotVisible}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setEditGalleryVisibility((prev) => {
+                                      const next = normalizeGalleryVisibility(prev);
+                                      next[idx] = checked;
+                                      return next;
+                                    });
+                                  }}
+                                  className="accent-[#142B4E]"
+                                />
+                                <span className="text-[9px] text-neutral-600">Show on product page</span>
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
 
-                      <div
-                        draggable={Boolean(slotUrl)}
-                        onDragStart={(e) => {
-                          if (!slotUrl) return;
-                          setDragGalleryIdx(idx);
-                          e.dataTransfer.setData('text/plain', String(idx));
-                          e.dataTransfer.effectAllowed = 'move';
-                        }}
-                        onDragEnd={() => {
-                          setDragGalleryIdx(null);
-                          setDragOverGalleryIdx(null);
-                        }}
-                        className={`aspect-[4/5] w-full bg-[#F1F1F1] border border-dashed border-neutral-300 overflow-hidden flex items-center justify-center relative ${
-                          slotUrl ? 'cursor-grab active:cursor-grabbing' : ''
-                        } ${dragGalleryIdx === idx ? 'opacity-50' : ''}`}
-                      >
-                        {slotUrl ? (
-                          isProductVideoUrl(slotUrl) ? (
+                    <div className="lg:col-span-7 lg:sticky lg:top-0">
+                      <div className="bg-white border border-neutral-200 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                              Listing preview
+                            </div>
+                            <div className="text-[12px] font-semibold text-[#142B4E]">
+                              {listingMeta?.label || 'Main image'}
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 bg-[#142B4E] text-white text-[9px] uppercase tracking-wider">
+                            Catalog card
+                          </span>
+                        </div>
+                        <div className="relative aspect-[3/4] max-h-[56vh] w-full bg-[#ECECEC] overflow-hidden border border-neutral-200">
+                          {listingUrl && !isProductVideoUrl(listingUrl) ? (
+                            <img
+                              src={listingUrl}
+                              alt="Listing preview"
+                              referrerPolicy="no-referrer"
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                          ) : listingUrl && isProductVideoUrl(listingUrl) ? (
                             <ProductGalleryMedia
-                              src={slotUrl}
-                              alt={slot.label}
-                              className="w-full h-full pointer-events-none"
+                              src={listingUrl}
+                              alt="Listing preview"
+                              className="absolute inset-0 w-full h-full"
                               fitClassName="object-cover"
                             />
                           ) : (
-                            <img
-                              src={slotUrl}
-                              alt={slot.label}
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover pointer-events-none"
-                            />
-                          )
-                        ) : (
-                          <span className="text-[9px] text-neutral-400 text-center px-1">
-                            {slot.kind === 'video' ? 'No video' : 'Drop image here'}
-                          </span>
-                        )}
-                        {isListing && (
-                          <span className="absolute top-1 left-1 bg-[#142B4E] text-white text-[8px] uppercase tracking-wider px-1.5 py-0.5">
-                            Listing
-                          </span>
-                        )}
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-1">
+                              <ImageIcon className="w-8 h-8 opacity-40" />
+                              <span className="text-[11px] uppercase tracking-wider">No listing image</span>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-neutral-500 leading-relaxed">
+                          This large preview is the catalog / hover card image. Use “Use as listing”
+                          on any shirt slot (not fabric or video) to change it.
+                        </p>
                       </div>
-
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => handleMoveGallerySlot(idx, idx - 1)}
-                          aria-label={`Swap image with previous slot`}
-                          className="flex-1 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
-                        >
-                          ←
-                        </button>
-                        <button
-                          type="button"
-                          disabled={idx === PRODUCT_GALLERY_SLOTS.length - 1}
-                          onClick={() => handleMoveGallerySlot(idx, idx + 1)}
-                          aria-label={`Swap image with next slot`}
-                          className="flex-1 py-1 border border-neutral-300 text-neutral-600 disabled:opacity-30 cursor-pointer text-[10px]"
-                        >
-                          →
-                        </button>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setMediaPickerTarget({ type: 'gallery', index: idx })}
-                        className="w-full py-1.5 border border-neutral-300 hover:border-[#142B4E] text-[#142B4E] text-[10px] font-medium cursor-pointer bg-[#FAFAFA]"
-                      >
-                        {slot.kind === 'video' ? 'Choose Video' : 'Choose Image'}
-                      </button>
-                      <label className="flex items-center gap-1.5 px-0.5 py-0.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={slotVisible}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setEditGalleryVisibility((prev) => {
-                              const next = normalizeGalleryVisibility(prev);
-                              next[idx] = checked;
-                              return next;
-                            });
-                          }}
-                          className="accent-[#142B4E]"
-                        />
-                        <span className="text-[9px] text-neutral-600 leading-snug">
-                          Show on product page
-                        </span>
-                      </label>
-                      {slotUrl && slot.kind !== 'video' && (
-                        <button
-                          type="button"
-                          onClick={() => setEditListingSlotIndex(idx)}
-                          className={`w-full py-1 text-[9px] uppercase tracking-wider font-semibold cursor-pointer ${
-                            isListing
-                              ? 'bg-[#142B4E] text-white'
-                              : 'border border-neutral-300 text-neutral-600 hover:border-[#142B4E] hover:text-[#142B4E]'
-                          }`}
-                        >
-                          {isListing ? 'Listing image' : 'Use as listing'}
-                        </button>
-                      )}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })()}
             </div>
             )}
 
@@ -4987,68 +5112,100 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
 
                     {/* Per-Region Product SEO Fields */}
-                    <div className="pt-2 border-t border-neutral-200 space-y-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#142B4E]">
-                        Search Engine Optimization ({rc.toUpperCase()})
+                    <div className="pt-3 mt-1 border-t border-neutral-200 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#142B4E]">
+                          SEO · {rc.toUpperCase()}
+                        </div>
+                        {hasPermission(authUser, 'manage_products') && (
+                          <button
+                            type="button"
+                            disabled={seoAiBusyRegion === rc}
+                            onClick={() => void handleGenerateProductSeo(rc)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-[#142B4E] text-[#142B4E] hover:bg-[#142B4E] hover:text-white text-[10px] uppercase tracking-wider font-semibold cursor-pointer disabled:opacity-50"
+                          >
+                            {seoAiBusyRegion === rc ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3 h-3" />
+                            )}
+                            {seoAiBusyRegion === rc ? 'Generating…' : 'AI generate SEO'}
+                          </button>
+                        )}
                       </div>
-                      <input
-                        disabled={!hasPermission(authUser, 'manage_products')}
-                        value={loc.seo_title || ''}
-                        onChange={(e) =>
-                          setEditingProduct((prev) =>
-                            prev && prev.localizations
-                              ? {
-                                  ...prev,
-                                  localizations: {
-                                    ...prev.localizations,
-                                    [rc]: { ...loc, seo_title: e.target.value },
-                                  },
-                                }
-                              : prev
-                          )
-                        }
-                        placeholder="SEO Title (leave blank for auto-optimized title)"
-                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
-                      />
-                      <textarea
-                        rows={2}
-                        disabled={!hasPermission(authUser, 'manage_products')}
-                        value={loc.seo_description || ''}
-                        onChange={(e) =>
-                          setEditingProduct((prev) =>
-                            prev && prev.localizations
-                              ? {
-                                  ...prev,
-                                  localizations: {
-                                    ...prev.localizations,
-                                    [rc]: { ...loc, seo_description: e.target.value },
-                                  },
-                                }
-                              : prev
-                          )
-                        }
-                        placeholder="Meta Description (120–160 chars)"
-                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
-                      />
-                      <input
-                        disabled={!hasPermission(authUser, 'manage_products')}
-                        value={loc.seo_keywords || ''}
-                        onChange={(e) =>
-                          setEditingProduct((prev) =>
-                            prev && prev.localizations
-                              ? {
-                                  ...prev,
-                                  localizations: {
-                                    ...prev.localizations,
-                                    [rc]: { ...loc, seo_keywords: e.target.value },
-                                  },
-                                }
-                              : prev
-                          )
-                        }
-                        placeholder="SEO Keywords (comma-separated, e.g. Italian linen shirt, Oslo dress shirt)"
-                        className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
-                      />
+                      <label className="block space-y-0.5">
+                        <span className="text-[9px] uppercase tracking-wider text-neutral-500">
+                          Meta title
+                        </span>
+                        <input
+                          disabled={!hasPermission(authUser, 'manage_products')}
+                          value={loc.seo_title || ''}
+                          onChange={(e) =>
+                            setEditingProduct((prev) =>
+                              prev && prev.localizations
+                                ? {
+                                    ...prev,
+                                    localizations: {
+                                      ...prev.localizations,
+                                      [rc]: { ...loc, seo_title: e.target.value },
+                                    },
+                                  }
+                                : prev
+                            )
+                          }
+                          placeholder="SEO title (≈ 50–60 chars)"
+                          className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                        />
+                      </label>
+                      <label className="block space-y-0.5">
+                        <span className="text-[9px] uppercase tracking-wider text-neutral-500">
+                          Meta description
+                        </span>
+                        <textarea
+                          rows={3}
+                          disabled={!hasPermission(authUser, 'manage_products')}
+                          value={loc.seo_description || ''}
+                          onChange={(e) =>
+                            setEditingProduct((prev) =>
+                              prev && prev.localizations
+                                ? {
+                                    ...prev,
+                                    localizations: {
+                                      ...prev.localizations,
+                                      [rc]: { ...loc, seo_description: e.target.value },
+                                    },
+                                  }
+                                : prev
+                            )
+                          }
+                          placeholder="Meta description (120–160 chars)"
+                          className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                        />
+                      </label>
+                      <label className="block space-y-0.5">
+                        <span className="text-[9px] uppercase tracking-wider text-neutral-500">
+                          Keywords
+                        </span>
+                        <input
+                          disabled={!hasPermission(authUser, 'manage_products')}
+                          value={loc.seo_keywords || ''}
+                          onChange={(e) =>
+                            setEditingProduct((prev) =>
+                              prev && prev.localizations
+                                ? {
+                                    ...prev,
+                                    localizations: {
+                                      ...prev.localizations,
+                                      [rc]: { ...loc, seo_keywords: e.target.value },
+                                    },
+                                  }
+                                : prev
+                            )
+                          }
+                          placeholder="Italian linen shirt, Oslo dress shirt, …"
+                          className="w-full px-2.5 py-1.5 border border-neutral-300 bg-white text-[11px]"
+                        />
+                      </label>
                     </div>
                   </div>
                 );
